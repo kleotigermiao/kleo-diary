@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kleo日記">
+<meta name="theme-color" content="#EFF3EE">
+<title>Kleo 健康記錄</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231F3A3D'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E🐾%3C/text%3E%3C/svg%3E">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Archivo+Narrow:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root{
+  --paper:#EFF3EE;
+  --paper-raised:#F8FAF7;
+  --ink:#1F3A3D;
+  --ink-soft:#5A6E6E;
+  --line:#C8D3C9;
+  --low:#3B6E8F;
+  --normal:#3F7A5C;
+  --high:#D6622C;
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;}
+body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-behavior-y:contain;}
+
+.topbar{
+  position:sticky;top:0;z-index:20;
+  background:var(--paper);
+  border-bottom:1px solid var(--line);
+  padding:calc(18px + var(--safe-top)) 18px 14px;
+}
+.topbar-row{display:flex;justify-content:space-between;align-items:flex-start;}
+.topbar h1{
+  font-family:'Archivo Narrow',sans-serif;
+  font-weight:700;
+  font-size:22px;
+  letter-spacing:0.01em;
+  margin:0 0 2px;
+}
+.topbar .sub{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11px;
+  color:var(--ink-soft);
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+}
+.sync-btn{
+  background:none;border:1px solid var(--line);border-radius:8px;
+  padding:6px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;
+  color:var(--ink-soft);cursor:pointer;white-space:nowrap;
+}
+.sync-btn:active{background:var(--line);}
+.legend{
+  display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;
+}
+.legend span{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:10.5px; color:var(--ink-soft);
+  display:flex; align-items:center; gap:5px;
+}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.dot.low{background:var(--low);} .dot.normal{background:var(--normal);} .dot.high{background:var(--high);}
+
+main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
+
+.empty{
+  text-align:center; padding:80px 20px; color:var(--ink-soft);
+}
+.empty .glyph{font-size:34px;margin-bottom:10px;opacity:0.5;}
+.empty p{font-size:14px;line-height:1.6;max-width:280px;margin:6px auto 0;}
+
+.day-card{
+  background:var(--paper-raised);
+  border:1px solid var(--line);
+  border-radius:10px;
+  margin-bottom:16px;
+  overflow:hidden;
+}
+.day-head{
+  display:flex; justify-content:space-between; align-items:baseline;
+  padding:13px 16px 10px;
+  border-bottom:1px dashed var(--line);
+}
+.day-head .date{
+  font-family:'Archivo Narrow',sans-serif; font-weight:700; font-size:17px;
+}
+.day-head .weekday{
+  font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);
+  text-transform:uppercase; letter-spacing:0.05em;
+}
+
+.strip{
+  padding:12px 16px 6px;
+  display:flex; align-items:center; gap:2px; overflow-x:auto;
+}
+.strip .seg{flex:1; min-width:14px; height:26px; position:relative;}
+.strip svg{width:100%;height:26px;display:block;}
+.strip .noval{width:100%; height:1px; background:var(--line);}
+.strip-label{
+  font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--ink-soft);
+  padding:0 16px 10px; text-align:right;
+}
+
+.section{padding:4px 16px 12px;}
+.row{
+  display:flex; gap:10px; padding:6px 0; font-size:13px; line-height:1.5;
+  border-bottom:1px solid #00000008; align-items:center;
+}
+.row:last-child{border-bottom:none;}
+.row .icon{width:18px;text-align:center;flex-shrink:0;opacity:0.85;}
+.row .time{
+  font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft);
+  flex-shrink:0; width:42px;
+}
+.row .val{flex:1; word-break:break-word;}
+.row .val .tag{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px;}
+.row .val .tag.high{color:var(--high);}
+.row .val .tag.low{color:var(--low);}
+.row .val .tag.normal{color:var(--normal);}
+.row .del{
+  flex-shrink:0; background:none; border:none; color:var(--ink-soft);
+  font-size:15px; cursor:pointer; padding:0 4px; opacity:0.4;
+}
+.row .del:hover{opacity:1;}
+.row .edit{
+  flex-shrink:0; background:none; border:none; color:var(--ink-soft);
+  font-size:14px; cursor:pointer; padding:0 4px; opacity:0.4;
+}
+.row .edit:hover{opacity:1;}
+.row .thumb{
+  width:32px; height:32px; border-radius:6px; object-fit:cover;
+  border:1px solid var(--line); cursor:pointer; flex-shrink:0;
+}
+
+.notes{
+  background:#00000005; border-radius:6px; padding:9px 11px;
+  font-size:12.5px; line-height:1.7; color:var(--ink);
+  margin-top:4px; white-space:pre-wrap;
+}
+.notes-row{display:flex; gap:8px; align-items:flex-start; margin-top:4px;}
+.notes-text{
+  flex:1; background:#00000005; border-radius:6px; padding:9px 11px;
+  font-size:12.5px; line-height:1.7; color:var(--ink);
+}
+.notes-placeholder{color:var(--ink-soft); font-style:italic;}
+.notes-row .note-edit-btn{
+  flex-shrink:0; background:none; border:none; color:var(--ink-soft);
+  font-size:14px; cursor:pointer; padding:6px 4px; opacity:0.5;
+}
+.notes-row .note-edit-btn:hover{opacity:1;}
+
+.fab{
+  position:fixed; bottom:calc(20px + var(--safe-bottom)); right:20px; z-index:30;
+  width:56px; height:56px; border-radius:50%;
+  background:var(--ink); color:var(--paper-raised);
+  border:none; font-size:26px; cursor:pointer;
+  box-shadow:0 6px 18px rgba(31,58,61,0.35);
+  display:flex; align-items:center; justify-content:center;
+}
+.fab:active{transform:scale(0.92);}
+
+.sheet-backdrop{
+  position:fixed; inset:0; background:rgba(31,58,61,0.45);
+  z-index:40; opacity:0; pointer-events:none; transition:opacity 0.2s ease;
+}
+.sheet-backdrop.open{opacity:1; pointer-events:auto;}
+.sheet{
+  position:fixed; left:0; right:0; bottom:0; z-index:50;
+  background:var(--paper-raised);
+  border-radius:18px 18px 0 0;
+  padding:8px 20px calc(28px + var(--safe-bottom));
+  max-width:640px; margin:0 auto;
+  transform:translateY(100%); transition:transform 0.25s cubic-bezier(.2,.8,.2,1);
+  max-height:86vh; overflow-y:auto;
+}
+.sheet.open{transform:translateY(0);}
+.sheet-handle{width:36px;height:4px;background:var(--line);border-radius:2px;margin:8px auto 14px;}
+.sheet h2{font-family:'Archivo Narrow',sans-serif; font-size:18px; margin:0 0 14px;}
+.cat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:18px;}
+.cat-btn{
+  background:var(--paper); border:1px solid var(--line); border-radius:10px;
+  padding:10px 4px; text-align:center; cursor:pointer; font-size:11px;
+  color:var(--ink-soft); display:flex; flex-direction:column; gap:5px; align-items:center;
+}
+.cat-btn .ic{font-size:18px;}
+.cat-btn.active{background:var(--ink); color:var(--paper-raised); border-color:var(--ink);}
+
+label{
+  display:block; font-family:'IBM Plex Mono',monospace; font-size:10.5px;
+  text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);
+  margin:14px 0 5px;
+}
+input, textarea{
+  width:100%; border:1px solid var(--line); border-radius:8px;
+  padding:10px 12px; font-size:15px; font-family:inherit; background:var(--paper);
+  color:var(--ink);
+}
+input:focus, textarea:focus{outline:2px solid var(--ink); outline-offset:1px;}
+textarea{resize:vertical; min-height:64px;}
+.row2{display:flex; gap:10px;}
+.row2 > div{flex:1;}
+
+.save-btn{
+  width:100%; margin-top:20px; padding:13px; border:none; border-radius:10px;
+  background:var(--ink); color:var(--paper-raised); font-size:15px; font-weight:600;
+  cursor:pointer; font-family:'Inter',sans-serif;
+}
+.save-btn:active{opacity:0.85;}
+.close-x{
+  position:absolute; top:14px; right:18px; background:none; border:none;
+  font-size:20px; color:var(--ink-soft); cursor:pointer;
+}
+
+.option-grid{display:flex;flex-wrap:wrap;gap:8px;}
+.option-btn{
+  background:var(--paper); border:1px solid var(--line); border-radius:20px;
+  padding:8px 14px; font-size:13px; color:var(--ink); cursor:pointer;
+  font-family:'Inter',sans-serif;
+}
+.option-btn.active{background:var(--ink); color:var(--paper-raised); border-color:var(--ink);}
+
+#photoField label{margin-top:14px;}
+#fPhoto{font-size:13px; font-family:'Inter',sans-serif; color:var(--ink-soft);}
+
+.lightbox{
+  position:fixed; inset:0; z-index:60; background:rgba(31,58,61,0.85);
+  display:none; align-items:center; justify-content:center; padding:24px;
+}
+.lightbox.open{display:flex;}
+.lightbox img{max-width:100%; max-height:100%; border-radius:8px;}
+
+/* Sync modal */
+.sync-sheet{
+  position:fixed; left:0; right:0; bottom:0; z-index:55;
+  background:var(--paper-raised); border-radius:18px 18px 0 0;
+  padding:8px 20px calc(28px + var(--safe-bottom));
+  max-width:640px; margin:0 auto; max-height:80vh; overflow-y:auto;
+  transform:translateY(100%); transition:transform 0.25s cubic-bezier(.2,.8,.2,1);
+}
+.sync-sheet.open{transform:translateY(0);}
+.sync-sheet p{font-size:13.5px;line-height:1.7;color:var(--ink-soft);}
+.sync-sheet textarea{height:180px;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+.copy-btn{
+  width:100%;margin-top:12px;padding:12px;border:1px solid var(--ink);border-radius:10px;
+  background:none;color:var(--ink);font-weight:600;cursor:pointer;font-size:14px;
+}
+
+.report-toolbar{
+  position:sticky;top:0;z-index:15;background:var(--paper);
+  border-bottom:1px solid var(--line);
+  padding:calc(14px + var(--safe-top)) 16px 12px;
+  display:flex;justify-content:space-between;gap:10px;
+}
+#reportContent{
+  max-width:680px;margin:0 auto;padding:24px 20px 60px;
+  font-family:'Inter',sans-serif;color:var(--ink);
+}
+.report-header{margin-bottom:22px;border-bottom:2px solid var(--ink);padding-bottom:14px;}
+.report-header h1{
+  font-family:'Archivo Narrow',sans-serif;font-size:24px;margin:0 0 4px;
+}
+.report-header .meta{
+  font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft);
+}
+.report-stats{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:24px;
+}
+.stat-box{
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:8px;
+  padding:12px;text-align:center;
+}
+.stat-box .num{font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:22px;}
+.stat-box .lbl{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink-soft);text-transform:uppercase;margin-top:2px;}
+.stat-box.low .num{color:var(--low);} .stat-box.high .num{color:var(--high);}
+
+.report-chart-wrap{
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;
+  padding:16px;margin-bottom:24px;
+}
+.report-chart-wrap h3{
+  font-family:'Archivo Narrow',sans-serif;font-size:14px;margin:0 0 12px;
+}
+.chart-legend{
+  display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px;
+}
+.chart-legend span{
+  display:flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;
+  font-size:10px;color:var(--ink-soft);
+}
+.chart-legend i{
+  width:8px;height:8px;border-radius:50%;display:inline-block;
+}
+
+.report-day{margin-bottom:18px;page-break-inside:avoid;}
+.report-day h4{
+  font-family:'Archivo Narrow',sans-serif;font-size:14px;
+  border-bottom:1px dashed var(--line);padding-bottom:5px;margin:0 0 8px;
+}
+.report-day .r-row{font-size:12.5px;line-height:1.7;padding-left:4px;}
+.report-day .r-row b{font-family:'IBM Plex Mono',monospace;}
+.report-day .r-notes{
+  background:#00000005;border-radius:6px;padding:8px 10px;font-size:12px;
+  line-height:1.6;margin-top:6px;white-space:pre-wrap;
+}
+.no-data-msg{text-align:center;color:var(--ink-soft);padding:40px 20px;font-size:13px;}
+
+.report-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.report-table{
+  width:100%;border-collapse:collapse;font-size:11.5px;
+  font-family:'IBM Plex Mono',monospace;
+}
+.report-table th{
+  background:var(--ink);color:var(--paper-raised);
+  font-family:'Inter',sans-serif;font-weight:600;font-size:11px;
+  padding:8px 7px;text-align:left;white-space:nowrap;position:sticky;top:0;
+}
+.report-table td{
+  border:1px solid var(--line);padding:7px;vertical-align:top;
+  line-height:1.6;white-space:nowrap;
+}
+.report-table td.rt-date{
+  font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:13px;
+  white-space:nowrap;background:var(--paper-raised);
+}
+.report-table td.rt-date .rt-weekday{
+  font-family:'IBM Plex Mono',monospace;font-weight:400;font-size:9.5px;color:var(--ink-soft);
+}
+.report-table td.rt-notes{
+  white-space:normal;min-width:180px;font-family:'Inter',sans-serif;font-size:11.5px;
+}
+.report-table tbody tr:nth-child(even){background:#00000004;}
+
+@media print{
+  .report-toolbar{display:none;}
+  body{padding-bottom:0;background:white;}
+  #reportContent{padding:0;max-width:100%;}
+  .report-day{page-break-inside:avoid;}
+  .report-table{font-size:9.5px;}
+  .report-table th{position:static;}
+  .report-table-wrap{overflow-x:visible;}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .sheet, .sheet-backdrop, .fab, .sync-sheet{transition:none;}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-row">
+    <div>
+      <h1>Kleo 健康記錄</h1>
+      <div class="sub" id="statusSub">糖尿病照護日誌 · 本機儲存</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+      <button class="sync-btn" id="googleAuthBtn">登入 Google 同步</button>
+      <button class="sync-btn" id="backupBtn">完整備份</button>
+      <button class="sync-btn" id="importBtn">匯入</button>
+      <button class="sync-btn" id="reportBtn">報表</button>
+    </div>
+  </div>
+  <div class="legend">
+    <span><span class="dot low"></span>偏低</span>
+    <span><span class="dot normal"></span>正常範圍</span>
+    <span><span class="dot high"></span>偏高</span>
+  </div>
+</div>
+
+<main id="main"></main>
+
+<button class="fab" id="fabBtn" aria-label="新增記錄">+</button>
+
+<div class="sheet-backdrop" id="backdrop"></div>
+<div class="sheet" id="sheet">
+  <button class="close-x" id="closeSheet" aria-label="關閉">✕</button>
+  <div class="sheet-handle"></div>
+  <h2>新增記錄</h2>
+
+  <div class="cat-grid" id="catGrid">
+    <button class="cat-btn" data-cat="food"><span class="ic">🍽️</span>飲食</button>
+    <button class="cat-btn" data-cat="water"><span class="ic">💧</span>飲水</button>
+    <button class="cat-btn" data-cat="glucose"><span class="ic">🩸</span>血糖</button>
+    <button class="cat-btn" data-cat="insulin"><span class="ic">💉</span>胰島素</button>
+    <button class="cat-btn" data-cat="urine"><span class="ic">🚽</span>排尿</button>
+    <button class="cat-btn" data-cat="stool"><span class="ic">💩</span>排便</button>
+    <button class="cat-btn" data-cat="vomit"><span class="ic">🤮</span>嘔吐</button>
+    <button class="cat-btn" data-cat="med"><span class="ic">💊</span>用藥</button>
+    <button class="cat-btn" data-cat="note"><span class="ic">📝</span>備註</button>
+  </div>
+
+  <div class="row2">
+    <div><label>日期</label><input type="date" id="fDate"></div>
+    <div id="timeWrap"><label>時間</label><input type="time" id="fTime"></div>
+  </div>
+
+  <div id="dynamicFields"></div>
+
+  <div id="photoField">
+    <label>照片（可選）</label>
+    <input type="file" accept="image/*" id="fPhoto">
+    <div id="photoPreviewWrap" style="display:none;margin-top:8px;">
+      <img id="photoPreview" style="max-width:100%;border-radius:8px;border:1px solid var(--line);">
+      <button type="button" id="clearPhoto" style="margin-top:6px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">移除照片</button>
+    </div>
+  </div>
+
+  <button class="save-btn" id="saveBtn">儲存</button>
+</div>
+
+<div class="lightbox" id="lightbox"><img id="lightboxImg" src="" alt="放大照片"></div>
+
+<div class="sheet-backdrop" id="reportBackdrop"></div>
+<div class="sync-sheet" id="reportConfigSheet">
+  <button class="close-x" id="closeReportConfig" aria-label="關閉">✕</button>
+  <div class="sheet-handle"></div>
+  <h2>產生報表</h2>
+  <p>選擇要涵蓋的日期範圍。</p>
+  <div class="cat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">
+    <button class="cat-btn range-btn active" data-range="week">最近一週</button>
+    <button class="cat-btn range-btn" data-range="month">最近一個月</button>
+    <button class="cat-btn range-btn" data-range="custom">自訂</button>
+  </div>
+  <div class="row2" id="customRangeRow" style="display:none;">
+    <div><label>起始日期</label><input type="date" id="rangeStart"></div>
+    <div><label>結束日期</label><input type="date" id="rangeEnd"></div>
+  </div>
+  <label>版面</label>
+  <div class="cat-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:4px;">
+    <button class="cat-btn layout-btn active" data-layout="table">表格（列印/PDF用）</button>
+    <button class="cat-btn layout-btn" data-layout="card">卡片（螢幕閱讀用）</button>
+  </div>
+  <button class="save-btn" id="genReportBtn">產生報表</button>
+</div>
+
+<div id="reportView" style="display:none;">
+  <div class="report-toolbar">
+    <button class="sync-btn" id="backFromReport">← 返回</button>
+    <div style="display:flex;gap:6px;">
+      <button class="sync-btn" id="csvReportBtn">下載 CSV</button>
+      <button class="sync-btn" id="printReportBtn">列印 / 存成PDF</button>
+    </div>
+  </div>
+  <div id="reportContent"></div>
+</div>
+
+<div class="sheet-backdrop" id="importBackdrop"></div>
+<div class="sync-sheet" id="importSheet">
+  <button class="close-x" id="closeImportSheet" aria-label="關閉">✕</button>
+  <div class="sheet-handle"></div>
+  <h2>匯入資料</h2>
+
+  <label>方式一：從完整備份(.zip)還原（含照片）</label>
+  <input type="file" accept=".zip" id="restoreZipInput">
+
+  <label style="margin-top:22px;">方式二：貼上Claude整理好的JSON文字（不含照片）</label>
+  <p>把你的Markdown日記給Claude，請它轉換成這個格式，貼上後按「匯入」。既有的記錄不會被覆蓋，新資料會合併進去。</p>
+  <textarea id="importText" placeholder='貼上JSON格式的資料…' style="height:150px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></textarea>
+  <button class="save-btn" id="doImportBtn">匯入 JSON 文字</button>
+</div>
+
+<script>
+const STORAGE_KEY = 'kleo-diary-data-v1';
+let data = {};
+let currentCat = 'glucose';
+
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function nowTime(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+
+function load(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    data = raw ? JSON.parse(raw) : {};
+  }catch(e){ data = {}; }
+  render();
+}
+function save(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem('kleo-last-modified', String(Date.now()));
+    if(typeof pushToDrive === 'function') pushToDrive();
+    return true;
+  }catch(e){
+    alert('儲存失敗：' + e.message + '（可能是照片太多佔滿本機空間，建議先同步到Drive後清除舊照片）');
+    return false;
+  }
+}
+
+function glucoseLevel(v){
+  if(v < 6) return 'low';
+  if(v > 15) return 'high';
+  return 'normal';
+}
+function weekdayName(dateStr){
+  const days = ['週日','週一','週二','週三','週四','週五','週六'];
+  return days[new Date(dateStr+'T00:00:00').getDay()];
+}
+function formatDateLabel(dateStr){
+  const [y,m,d] = dateStr.split('-');
+  return `${parseInt(m)}/${parseInt(d)}`;
+}
+
+function buildStrip(glucoseEntries){
+  if(!glucoseEntries || glucoseEntries.length===0){
+    return '<div class="strip"><div class="noval"></div></div><div class="strip-label">尚無血糖數據</div>';
+  }
+  const sorted = [...glucoseEntries].sort((a,b)=>a.time.localeCompare(b.time));
+  const vals = sorted.map(e=>e.value);
+  const min = Math.min(...vals, 4), max = Math.max(...vals, 20);
+  const range = max - min || 1;
+  const colors = {low:'#3B6E8F', normal:'#3F7A5C', high:'#D6622C'};
+  const w = Math.max(sorted.length*40,200);
+  const stepX = w / (sorted.length+1);
+  let svg = `<svg viewBox="0 0 ${w} 26" preserveAspectRatio="none">`;
+  svg += `<line x1="0" y1="13" x2="${w}" y2="13" stroke="#C8D3C9" stroke-width="1"/>`;
+  sorted.forEach((e,i)=>{
+    const x = stepX*(i+1);
+    const norm = (e.value - min)/range;
+    const y = 24 - norm*20;
+    svg += `<circle cx="${x}" cy="${y}" r="4.2" fill="${colors[glucoseLevel(e.value)]}"/>`;
+  });
+  svg += `</svg>`;
+  const lastVal = sorted[sorted.length-1];
+  return `<div class="strip"><div class="seg" style="flex:1;min-width:${w}px">${svg}</div></div>
+    <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
+}
+
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食'};
+const FOOD_OPTIONS = {
+  '乾糧': ['Young Again Lid Zero Mature'],
+  '罐頭': ['Tiki Ahi Tuna'],
+  '零食': ['Young Again Lid Zero TruCarnivore Treats','Young Again Zero TruCarnivore Treats','凍乾 Pure Bites Tuna','凍乾 Ocean White Fish']
+};
+const FIXED_OPTIONS = {
+  vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
+  stool: ['正常','軟便','拉稀'],
+  urine: ['正常','量少','量多']
+};
+
+function renderRows(dateStr, cat, entries){
+  if(!entries || entries.length===0) return '';
+  const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
+  return sorted.map((e,idx)=>{
+    let valHtml = '';
+    if(cat==='glucose'){
+      valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>`;
+    } else if(cat==='insulin'){
+      valHtml = `<span class="tag normal">${e.dose}</span>`;
+    } else if(cat==='water'){
+      const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
+      valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
+    } else {
+      valHtml = e.note || '';
+    }
+    const thumbHtml = e.photo ? `<img class="thumb" src="${e.photo}" data-photo="${e.photo}">` : '';
+    return `<div class="row">
+      <span class="icon">${ICONS[cat]}</span>
+      <span class="time">${e.time}</span>
+      <span class="val">${valHtml}</span>
+      ${thumbHtml}
+      <button class="edit" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✎</button>
+      <button class="del" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.innerText = s;
+  return d.innerHTML;
+}
+
+function render(){
+  const main = document.getElementById('main');
+  const dates = Object.keys(data).sort().reverse();
+  if(dates.length===0){
+    main.innerHTML = `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
+    return;
+  }
+  main.innerHTML = dates.map(dateStr=>{
+    const day = data[dateStr];
+    const rowsHtml = ['food','water','glucose','insulin','urine','stool','vomit','med']
+      .map(cat=>renderRows(dateStr, cat, day[cat])).join('');
+    const notesHtml = `<div class="notes-row">
+      <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
+      <button class="note-edit-btn" data-date="${dateStr}">✎</button>
+    </div>`;
+    return `<div class="day-card">
+      <div class="day-head">
+        <span class="date">${formatDateLabel(dateStr)}</span>
+        <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
+      </div>
+      ${buildStrip(day.glucose)}
+      <div class="section">${rowsHtml}${notesHtml}</div>
+    </div>`;
+  }).join('');
+
+  main.querySelectorAll('.del').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const {date, cat, idx} = btn.dataset;
+      data[date][cat].splice(parseInt(idx),1);
+      save();
+      render();
+    });
+  });
+  main.querySelectorAll('.edit').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const {date, cat, idx} = btn.dataset;
+      openSheetForEdit(date, cat, parseInt(idx));
+    });
+  });
+  main.querySelectorAll('.thumb').forEach(img=>{
+    img.addEventListener('click', ()=>{
+      document.getElementById('lightboxImg').src = img.dataset.photo;
+      document.getElementById('lightbox').classList.add('open');
+    });
+  });
+  main.querySelectorAll('.note-edit-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      openSheetForEditNote(btn.dataset.date);
+    });
+  });
+}
+
+document.getElementById('lightbox').addEventListener('click', ()=>{
+  document.getElementById('lightbox').classList.remove('open');
+});
+
+// ---- Add-entry sheet ----
+const sheet = document.getElementById('sheet');
+const backdrop = document.getElementById('backdrop');
+const fabBtn = document.getElementById('fabBtn');
+const closeSheetBtn = document.getElementById('closeSheet');
+const fDate = document.getElementById('fDate');
+const fTime = document.getElementById('fTime');
+const dynamicFields = document.getElementById('dynamicFields');
+const timeWrap = document.getElementById('timeWrap');
+const photoField = document.getElementById('photoField');
+const fPhoto = document.getElementById('fPhoto');
+const photoPreviewWrap = document.getElementById('photoPreviewWrap');
+const photoPreview = document.getElementById('photoPreview');
+const clearPhotoBtn = document.getElementById('clearPhoto');
+let currentPhotoData = null;
+let editContext = null; // {date, cat, idx} when editing, null when creating new
+const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine'];
+
+function openSheet(){
+  editContext = null;
+  fDate.value = todayStr();
+  fTime.value = nowTime();
+  currentPhotoData = null;
+  fPhoto.value = '';
+  photoPreviewWrap.style.display = 'none';
+  document.querySelector('#sheet h2').textContent = '新增記錄';
+  document.getElementById('saveBtn').textContent = '儲存';
+  document.getElementById('catGrid').style.display = 'grid';
+  setCategory('glucose');
+  sheet.classList.add('open');
+  backdrop.classList.add('open');
+}
+
+function openSheetForEditNote(dateStr){
+  editContext = {date: dateStr, cat: 'note', isDayNote: true};
+  fDate.value = dateStr;
+  currentPhotoData = null;
+  fPhoto.value = '';
+  photoPreviewWrap.style.display = 'none';
+  document.querySelector('#sheet h2').textContent = '編輯備註';
+  document.getElementById('saveBtn').textContent = '儲存備註';
+  document.getElementById('catGrid').style.display = 'none';
+  setCategory('note');
+  document.getElementById('fVal').value = (data[dateStr] && data[dateStr].notes) || '';
+  sheet.classList.add('open');
+  backdrop.classList.add('open');
+}
+
+function openSheetForEdit(dateStr, cat, idx){
+  editContext = {date: dateStr, cat, idx};
+  const entry = data[dateStr][cat][idx];
+  fDate.value = dateStr;
+  fTime.value = entry.time || nowTime();
+  currentPhotoData = entry.photo || null;
+  fPhoto.value = '';
+  if(currentPhotoData){
+    photoPreview.src = currentPhotoData;
+    photoPreviewWrap.style.display = 'block';
+  } else {
+    photoPreviewWrap.style.display = 'none';
+  }
+  document.querySelector('#sheet h2').textContent = '編輯記錄';
+  document.getElementById('saveBtn').textContent = '儲存修改';
+  document.getElementById('catGrid').style.display = 'none'; // can't change category when editing
+  setCategory(cat);
+  const valEl = document.getElementById('fVal');
+  if(cat==='water'){
+    const baseEl = document.getElementById('fWaterBase');
+    const remEl = document.getElementById('fRemaining');
+    if(entry.base!=null && entry.remaining!=null){
+      baseEl.value = entry.base;
+      remEl.value = entry.remaining;
+    } else {
+      remEl.value = '';
+    }
+    valEl.value = entry.ml;
+    document.getElementById('waterResultDisplay').textContent =
+      (entry.base!=null && entry.remaining!=null)
+        ? `本次飲水量：${entry.base} - ${entry.remaining} = ${entry.ml} ml`
+        : `本次飲水量：${entry.ml} ml`;
+  } else if(cat==='food'){
+    const raw = entry.note || '';
+    const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
+    const mainPart = m ? m[1] : raw;
+    const detailPart = m ? m[2] : '';
+    const sepIdx = mainPart.indexOf('：');
+    const type = sepIdx>=0 ? mainPart.slice(0,sepIdx) : null;
+    const brand = sepIdx>=0 ? mainPart.slice(sepIdx+1) : null;
+    if(type && FOOD_OPTIONS[type]){
+      selectFoodType(type, false);
+      if(brand){
+        const brandBtn = Array.from(document.querySelectorAll('#foodBrandGrid .option-btn')).find(b=>b.dataset.opt===brand);
+        if(brandBtn){
+          brandBtn.classList.add('active');
+          valEl.value = mainPart;
+        }
+      }
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = detailPart || '';
+    } else {
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = raw;
+    }
+  } else {
+  const optsForCat = getOptionsForCat(cat);
+  if(optsForCat){
+    const raw = entry.note || '';
+    const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
+    const optionPart = m ? m[1] : raw;
+    const detailPart = m ? m[2] : '';
+    const matchedOpt = optsForCat.find(o=>o===optionPart);
+    if(matchedOpt){
+      valEl.value = matchedOpt;
+      document.querySelectorAll('.option-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.opt===matchedOpt);
+      });
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = detailPart || '';
+    } else {
+      // couldn't cleanly match a known option, just dump full text into detail
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = raw;
+    }
+  } else if(valEl){
+    if(cat==='glucose') valEl.value = entry.value;
+    else if(cat==='insulin') valEl.value = entry.dose;
+    else if(cat==='water') valEl.value = entry.ml;
+    else valEl.value = entry.note || '';
+  }
+  }
+  sheet.classList.add('open');
+  backdrop.classList.add('open');
+}
+function closeSheetFn(){
+  sheet.classList.remove('open');
+  backdrop.classList.remove('open');
+  editContext = null;
+  document.getElementById('catGrid').style.display = 'grid';
+}
+fabBtn.addEventListener('click', openSheet);
+closeSheetBtn.addEventListener('click', closeSheetFn);
+backdrop.addEventListener('click', closeSheetFn);
+
+document.getElementById('catGrid').addEventListener('click', (e)=>{
+  const btn = e.target.closest('.cat-btn');
+  if(!btn) return;
+  setCategory(btn.dataset.cat);
+});
+
+const WATER_BASE_KEY = 'kleo-water-base-v1';
+function loadWaterBase(){
+  try{
+    const raw = localStorage.getItem(WATER_BASE_KEY);
+    return raw ? parseFloat(raw) : 250;
+  }catch(e){ return 250; }
+}
+function saveWaterBase(v){
+  try{ localStorage.setItem(WATER_BASE_KEY, String(v)); }catch(e){}
+}
+
+const MED_TAGS_KEY = 'kleo-med-tags-v1';
+function loadMedTags(){
+  try{
+    const raw = localStorage.getItem(MED_TAGS_KEY);
+    return raw ? JSON.parse(raw) : ['gabapentin','ondansetron'];
+  }catch(e){ return ['gabapentin','ondansetron']; }
+}
+function saveMedTags(tags){
+  try{ localStorage.setItem(MED_TAGS_KEY, JSON.stringify(tags)); }catch(e){}
+}
+let medTags = loadMedTags();
+function renderMedTagButtons(){
+  return medTags.map(t=>`<button type="button" class="option-btn" data-opt="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+}
+function wireMedTagButtons(){
+  document.querySelectorAll('#medTagGrid .option-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#medTagGrid .option-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('fVal').value = btn.dataset.opt;
+    });
+  });
+}
+function renderFoodBrandButtons(type){
+  const brands = FOOD_OPTIONS[type] || [];
+  return brands.map(b=>`<button type="button" class="option-btn" data-opt="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('');
+}
+function wireFoodBrandButtons(){
+  document.querySelectorAll('#foodBrandGrid .option-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#foodBrandGrid .option-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const type = document.querySelector('#foodTypeGrid .option-btn.active').dataset.type;
+      document.getElementById('fVal').value = `${type}：${btn.dataset.opt}`;
+    });
+  });
+}
+function selectFoodType(type, autoSelectBrand){
+  document.querySelectorAll('#foodTypeGrid .option-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.type===type);
+  });
+  document.getElementById('foodBrandGrid').innerHTML = renderFoodBrandButtons(type);
+  wireFoodBrandButtons();
+  const brands = FOOD_OPTIONS[type] || [];
+  if(autoSelectBrand && brands.length===1){
+    const onlyBtn = document.querySelector('#foodBrandGrid .option-btn');
+    if(onlyBtn){
+      onlyBtn.classList.add('active');
+      document.getElementById('fVal').value = `${type}：${brands[0]}`;
+    }
+  }
+}
+
+function wireWaterInputs(){
+  const baseEl = document.getElementById('fWaterBase');
+  const remEl = document.getElementById('fRemaining');
+  const valEl = document.getElementById('fVal');
+  const displayEl = document.getElementById('waterResultDisplay');
+  function recompute(){
+    const base = parseFloat(baseEl.value);
+    const rem = parseFloat(remEl.value);
+    if(!isNaN(base) && !isNaN(rem)){
+      const consumed = base - rem;
+      valEl.value = consumed;
+      displayEl.textContent = `本次飲水量：${base} - ${rem} = ${consumed} ml`;
+    } else {
+      valEl.value = '';
+      displayEl.textContent = '本次飲水量：— ml';
+    }
+  }
+  baseEl.addEventListener('input', ()=>{
+    saveWaterBase(baseEl.value);
+    recompute();
+  });
+  remEl.addEventListener('input', recompute);
+}
+
+function getOptionsForCat(cat){
+  return FIXED_OPTIONS[cat] || (cat==='med' ? medTags : null);
+}
+
+function setCategory(cat){
+  currentCat = cat;
+  document.querySelectorAll('.cat-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.cat===cat);
+  });
+  timeWrap.style.display = 'block';
+  photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
+  if(cat==='glucose'){
+    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">`;
+  } else if(cat==='insulin'){
+    dynamicFields.innerHTML = `<label>劑量</label><input type="text" id="fVal" placeholder="例如 1u">`;
+  } else if(cat==='water'){
+    const currentBase = loadWaterBase();
+    if(!editContext){
+      const d = new Date();
+      d.setDate(d.getDate()-1);
+      fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      fTime.value = '08:00';
+    }
+    dynamicFields.innerHTML = `
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">💡 已自動將上方日期設為前一天，因為早上量的剩餘水量代表的是前一晚的飲水量。</p>
+      <label>固定水量 (ml)</label>
+      <input type="number" id="fWaterBase" value="${currentBase}">
+      <label>剩餘水量 (ml)</label>
+      <input type="number" id="fRemaining" placeholder="例如 50">
+      <input type="hidden" id="fVal">
+      <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
+    `;
+    wireWaterInputs();
+  } else if(cat==='note'){
+    timeWrap.style.display = 'none';
+    dynamicFields.innerHTML = `<label>當日備註</label><textarea id="fVal" placeholder="自由記錄今天的觀察…"></textarea>`;
+  } else if(cat==='med'){
+    dynamicFields.innerHTML = `
+      <label>藥物</label>
+      <div class="option-grid" id="medTagGrid">${renderMedTagButtons()}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input type="text" id="newTagInput" placeholder="新增藥物名稱…" style="flex:1;">
+        <button type="button" id="addTagBtn" style="flex-shrink:0;padding:0 16px;border:1px solid var(--ink);border-radius:8px;background:none;color:var(--ink);font-weight:600;cursor:pointer;">新增</button>
+      </div>
+      <input type="hidden" id="fVal">
+      <label>劑量 / 備註（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如 13:15、100mg…">
+    `;
+    wireMedTagButtons();
+    document.getElementById('addTagBtn').addEventListener('click', ()=>{
+      const input = document.getElementById('newTagInput');
+      const name = input.value.trim();
+      if(!name) return;
+      if(!medTags.includes(name)){
+        medTags.push(name);
+        saveMedTags(medTags);
+      }
+      document.getElementById('medTagGrid').innerHTML = renderMedTagButtons();
+      wireMedTagButtons();
+      document.querySelectorAll('#medTagGrid .option-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.opt===name);
+      });
+      document.getElementById('fVal').value = name;
+      input.value = '';
+    });
+  } else if(cat==='food'){
+    const foodTypes = Object.keys(FOOD_OPTIONS);
+    dynamicFields.innerHTML = `
+      <label>類型</label>
+      <div class="option-grid" id="foodTypeGrid">
+        ${foodTypes.map(t=>`<button type="button" class="option-btn" data-type="${t}">${t}</button>`).join('')}
+      </div>
+      <label>品項</label>
+      <div class="option-grid" id="foodBrandGrid"></div>
+      <input type="hidden" id="fVal">
+      <label>份量 / 備註（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如 30g、吃一半…">
+    `;
+    document.querySelectorAll('#foodTypeGrid .option-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=> selectFoodType(btn.dataset.type, true));
+    });
+    selectFoodType(foodTypes[0], true);
+  } else if(FIXED_OPTIONS[cat]){
+    const opts = FIXED_OPTIONS[cat];
+    dynamicFields.innerHTML = `
+      <label>狀況</label>
+      <div class="option-grid" id="optionGrid">
+        ${opts.map(o=>`<button type="button" class="option-btn" data-opt="${o}">${o}</button>`).join('')}
+      </div>
+      <input type="hidden" id="fVal">
+      <label>補充說明（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如顏色、份量、次數…">
+    `;
+    document.querySelectorAll('.option-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.option-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('fVal').value = btn.dataset.opt;
+      });
+    });
+  } else {
+    dynamicFields.innerHTML = `<label>描述</label><input type="text" id="fVal" placeholder="請輸入內容">`;
+  }
+}
+
+function compressImage(file, maxDim=900, quality=0.7){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim){
+          if(width > height){ height = Math.round(height*(maxDim/width)); width = maxDim; }
+          else { width = Math.round(width*(maxDim/height)); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+fPhoto.addEventListener('change', async ()=>{
+  const file = fPhoto.files[0];
+  if(!file) return;
+  try{
+    currentPhotoData = await compressImage(file);
+    photoPreview.src = currentPhotoData;
+    photoPreviewWrap.style.display = 'block';
+  }catch(e){ console.error('compress error', e); }
+});
+clearPhotoBtn.addEventListener('click', ()=>{
+  currentPhotoData = null;
+  fPhoto.value = '';
+  photoPreviewWrap.style.display = 'none';
+});
+
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  const dateStr = fDate.value || todayStr();
+  const time = fTime.value || nowTime();
+  const valEl = document.getElementById('fVal');
+  let rawVal = valEl ? valEl.value.trim() : '';
+  const detailEl = document.getElementById('fDetail');
+  if(detailEl && detailEl.value.trim()){
+    rawVal = rawVal ? `${rawVal}（${detailEl.value.trim()}）` : detailEl.value.trim();
+  }
+  const isDayNoteEdit = editContext && editContext.isDayNote;
+  if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],notes:''});
+
+  if(isDayNoteEdit){
+    // Overwrite (not append) the day's notes text
+    const oldDate = editContext.date;
+    if(!data[dateStr]) data[dateStr] = blankDay();
+    data[dateStr].notes = rawVal;
+    if(dateStr !== oldDate && data[oldDate]){
+      data[oldDate].notes = '';
+    }
+  } else if(editContext){
+    // Editing existing entry in place
+    const { date: oldDate, cat, idx } = editContext;
+    let updated;
+    if(cat==='glucose'){
+      updated = {time, value: parseFloat(rawVal), photo: currentPhotoData || undefined};
+    } else if(cat==='insulin'){
+      updated = {time, dose: rawVal, photo: currentPhotoData || undefined};
+    } else if(cat==='water'){
+      const baseEl = document.getElementById('fWaterBase');
+      const remEl = document.getElementById('fRemaining');
+      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined};
+    } else {
+      updated = {time, note: rawVal, photo: currentPhotoData || undefined};
+    }
+    if(dateStr !== oldDate){
+      // moved to a different day
+      data[oldDate][cat].splice(idx,1);
+      if(!data[dateStr]) data[dateStr] = blankDay();
+      if(!data[dateStr][cat]) data[dateStr][cat] = [];
+      data[dateStr][cat].push(updated);
+    } else {
+      data[oldDate][cat][idx] = updated;
+    }
+  } else {
+    // Creating new entry
+    if(!data[dateStr]) data[dateStr] = blankDay();
+    if(!data[dateStr].urine) data[dateStr].urine = [];
+    if(!data[dateStr].food) data[dateStr].food = [];
+    if(currentCat==='glucose'){
+      data[dateStr].glucose.push({time, value: parseFloat(rawVal), photo: currentPhotoData || undefined});
+    } else if(currentCat==='insulin'){
+      data[dateStr].insulin.push({time, dose: rawVal, photo: currentPhotoData || undefined});
+    } else if(currentCat==='water'){
+      const baseEl = document.getElementById('fWaterBase');
+      const remEl = document.getElementById('fRemaining');
+      data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined});
+    } else if(currentCat==='note'){
+      data[dateStr].notes = data[dateStr].notes ? data[dateStr].notes + '\n' + rawVal : rawVal;
+    } else {
+      data[dateStr][currentCat].push({time, note: rawVal, photo: currentPhotoData || undefined});
+    }
+  }
+
+  if(save()){
+    render();
+    currentPhotoData = null;
+    editContext = null;
+    fPhoto.value = '';
+    photoPreviewWrap.style.display = 'none';
+    closeSheetFn();
+  }
+});
+
+// ---- Report ----
+const reportBtn = document.getElementById('reportBtn');
+const reportConfigSheet = document.getElementById('reportConfigSheet');
+const reportBackdrop = document.getElementById('reportBackdrop');
+const closeReportConfig = document.getElementById('closeReportConfig');
+const customRangeRow = document.getElementById('customRangeRow');
+const rangeStart = document.getElementById('rangeStart');
+const rangeEnd = document.getElementById('rangeEnd');
+const genReportBtn = document.getElementById('genReportBtn');
+const reportView = document.getElementById('reportView');
+const reportContent = document.getElementById('reportContent');
+const backFromReport = document.getElementById('backFromReport');
+const printReportBtn = document.getElementById('printReportBtn');
+const csvReportBtn = document.getElementById('csvReportBtn');
+let selectedRange = 'week';
+let selectedLayout = 'table';
+let lastReportRange = null;
+
+reportBtn.addEventListener('click', ()=>{
+  const today = todayStr();
+  rangeEnd.value = today;
+  const d = new Date();
+  d.setDate(d.getDate()-7);
+  rangeStart.value = d.toISOString().slice(0,10);
+  reportConfigSheet.classList.add('open');
+  reportBackdrop.classList.add('open');
+});
+closeReportConfig.addEventListener('click', ()=>{
+  reportConfigSheet.classList.remove('open');
+  reportBackdrop.classList.remove('open');
+});
+reportBackdrop.addEventListener('click', ()=>{
+  reportConfigSheet.classList.remove('open');
+  reportBackdrop.classList.remove('open');
+});
+
+document.querySelectorAll('.range-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.range-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedRange = btn.dataset.range;
+    customRangeRow.style.display = selectedRange==='custom' ? 'flex' : 'none';
+  });
+});
+document.querySelectorAll('.layout-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.layout-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedLayout = btn.dataset.layout;
+  });
+});
+
+function getRangeDates(){
+  const today = new Date();
+  let start, end;
+  if(selectedRange==='week'){
+    end = todayStr();
+    const d = new Date(); d.setDate(d.getDate()-6);
+    start = d.toISOString().slice(0,10);
+  } else if(selectedRange==='month'){
+    end = todayStr();
+    const d = new Date(); d.setDate(d.getDate()-29);
+    start = d.toISOString().slice(0,10);
+  } else {
+    start = rangeStart.value;
+    end = rangeEnd.value;
+  }
+  return {start, end};
+}
+
+function buildGlucoseChart(allEntries, allInsulin){
+  if(allEntries.length===0) return '<p class="no-data-msg">此區間沒有血糖記錄</p>';
+
+  const toTs = e => new Date(e.date+'T'+e.time+':00').getTime();
+  const sorted = [...allEntries].sort((a,b)=>toTs(a)-toTs(b));
+  const tsMin = toTs(sorted[0]), tsMax = toTs(sorted[sorted.length-1]);
+  const tsRange = (tsMax - tsMin) || (1000*60*60*24);
+
+  const vals = sorted.map(e=>e.value);
+  const rawMin = Math.min(...vals), rawMax = Math.max(...vals);
+  const yMin = Math.floor(Math.min(rawMin, 4)/2)*2;
+  const yMax = Math.ceil(Math.max(rawMax, 20)/2)*2;
+  const yRange = yMax - yMin || 1;
+
+  const W = 900, H = 320;
+  const padL = 70, padR = 20, padT = 20, padB = 70;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+
+  const xFor = ts => padL + ((ts - tsMin)/tsRange) * chartW;
+  const yFor = v => padT + chartH - ((v - yMin)/yRange) * chartH;
+  const colors = {low:'#3B6E8F', normal:'#3F7A5C', high:'#D6622C'};
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;font-family:'IBM Plex Mono',monospace;">`;
+
+  // horizontal gridlines + y-axis labels, step of 2 mmol/L (or wider if range is large)
+  const yStep = yRange > 20 ? 5 : 2;
+  for(let v=yMin; v<=yMax; v+=yStep){
+    const y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1.5" opacity="0.6"/>`;
+    svg += `<text x="${padL-10}" y="${y+7}" font-size="20" fill="#5A6E6E" text-anchor="end">${v}</text>`;
+  }
+  // reference thresholds (low<6, high>15)
+  svg += `<line x1="${padL}" y1="${yFor(6)}" x2="${W-padR}" y2="${yFor(6)}" stroke="#3B6E8F" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#D6622C" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+
+  // insulin vertical markers
+  (allInsulin||[]).forEach(e=>{
+    const ts = toTs(e);
+    if(ts < tsMin || ts > tsMax) return;
+    const x = xFor(ts);
+    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#B23A48" stroke-width="2" stroke-dasharray="3,5" opacity="0.6"/>`;
+  });
+
+  // x-axis time labels: pick up to 5 evenly spaced ticks across the domain (fewer to avoid crowding at larger font size)
+  const tickCount = Math.min(5, sorted.length);
+  for(let i=0;i<=tickCount;i++){
+    const ts = tsMin + (tsRange * i/tickCount);
+    const d = new Date(ts);
+    const label1 = `${d.getMonth()+1}/${d.getDate()}`;
+    const label2 = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const x = padL + (chartW * i/tickCount);
+    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1.5"/>`;
+    svg += `<text x="${x}" y="${H-38}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
+    svg += `<text x="${x}" y="${H-16}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label2}</text>`;
+  }
+
+  // glucose line
+  let path = '';
+  sorted.forEach((e,i)=>{
+    const x = xFor(toTs(e)), y = yFor(e.value);
+    path += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  });
+  svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="4"/>`;
+  sorted.forEach(e=>{
+    const x = xFor(toTs(e)), y = yFor(e.value);
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="2"/>`;
+  });
+
+  svg += `</svg>`;
+
+  const legend = `<div class="chart-legend">
+    <span><i style="background:#6B4FA0"></i>血糖</span>
+    <span><i style="background:#B23A48;border-radius:0;width:2px;height:10px;"></i>胰島素時間</span>
+    <span><i style="background:#3B6E8F"></i>偏低</span>
+    <span><i style="background:#3F7A5C"></i>正常</span>
+    <span><i style="background:#D6622C"></i>偏高</span>
+  </div>`;
+  return legend + svg;
+}
+
+function generateReport(){
+  const {start, end} = getRangeDates();
+  if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
+  const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
+
+  const allGlucose = [];
+  dates.forEach(d=> (data[d].glucose||[]).forEach(e=> allGlucose.push({...e, date:d})));
+  allGlucose.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
+
+  const allInsulin = [];
+  dates.forEach(d=> (data[d].insulin||[]).forEach(e=> allInsulin.push({...e, date:d})));
+
+  const lowCount = allGlucose.filter(e=>glucoseLevel(e.value)==='low').length;
+  const highCount = allGlucose.filter(e=>glucoseLevel(e.value)==='high').length;
+  const avg = allGlucose.length ? (allGlucose.reduce((s,e)=>s+e.value,0)/allGlucose.length).toFixed(1) : '—';
+
+  let daysHtml = '';
+  if(dates.length===0){
+    daysHtml = '<p class="no-data-msg">此區間沒有任何記錄</p>';
+  } else if(selectedLayout === 'card'){
+    daysHtml = dates.map(d=>{
+      const day = data[d];
+      let rows = '';
+      (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">🍽️ <b>${e.time}</b> — ${e.note}</div>`);
+      (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">💧 <b>${e.time}</b> — ${e.ml} ml</div>`);
+      (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">🩸 <b>${e.time}</b> — ${e.value} mmol/L (${e.value<6?'偏低':e.value>15?'偏高':'正常'})</div>`);
+      (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">💉 <b>${e.time}</b> — ${e.dose}</div>`);
+      (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">🚽 <b>${e.time}</b> — ${e.note}</div>`);
+      (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">💩 <b>${e.time}</b> — ${e.note}</div>`);
+      (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">🤮 <b>${e.time}</b> — ${e.note}</div>`);
+      (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
+        rows += `<div class="r-row">💊 <b>${e.time}</b> — ${e.note}</div>`);
+      const notesHtml = day.notes ? `<div class="r-notes">${escapeHtml(day.notes)}</div>` : '';
+      return `<div class="report-day"><h4>${formatDateLabel(d)}（${weekdayName(d)}）· ${d}</h4>${rows}${notesHtml}</div>`;
+    }).join('');
+  } else {
+    const tableRows = dates.map(d=>{
+      const day = data[d];
+      const glucoseCell = (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} → ${e.value}`).join('<br>');
+      const insulinCell = (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.dose}`).join('<br>');
+      const vomitCell = (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.note}`).join('<br>');
+      const stoolCell = (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.note}`).join('<br>');
+      const urineCell = (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.note}`).join('<br>');
+      const waterCell = (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.ml}ml`).join('<br>');
+      const medCell = (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.note}`).join('<br>');
+      const foodCell = (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
+        .map(e=>`${e.time} ${e.note}`).join('<br>');
+      const notesCell = day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '';
+      return `<tr>
+        <td class="rt-date">${d}<br><span class="rt-weekday">${weekdayName(d)}</span></td>
+        <td>${foodCell}</td>
+        <td>${waterCell}</td>
+        <td>${glucoseCell}</td>
+        <td>${insulinCell}</td>
+        <td>${urineCell}</td>
+        <td>${stoolCell}</td>
+        <td>${vomitCell}</td>
+        <td>${medCell}</td>
+        <td class="rt-notes">${notesCell}</td>
+      </tr>`;
+    }).join('');
+    daysHtml = `<div class="report-table-wrap"><table class="report-table">
+      <thead><tr>
+        <th>日期</th><th>飲食</th><th>飲水</th><th>血糖<br>(時間→mmol/L)</th><th>胰島素<br>(時間 劑量)</th>
+        <th>排尿</th><th>排便</th><th>嘔吐</th><th>用藥</th><th>備註</th>
+      </tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>`;
+  }
+
+  lastReportRange = {start, end};
+
+  reportContent.innerHTML = `
+    <div class="report-header">
+      <h1>Kleo 健康記錄報表</h1>
+      <div class="meta">期間：${start} — ${end} ・ 產生時間：${new Date().toLocaleString('zh-TW')}</div>
+    </div>
+    <div class="report-stats">
+      <div class="stat-box"><div class="num">${allGlucose.length}</div><div class="lbl">血糖量測次數</div></div>
+      <div class="stat-box"><div class="num">${avg}</div><div class="lbl">平均值 mmol/L</div></div>
+      <div class="stat-box ${highCount>lowCount?'high':'low'}"><div class="num">${lowCount} / ${highCount}</div><div class="lbl">偏低 / 偏高次數</div></div>
+    </div>
+    <div class="report-chart-wrap">
+      <h3>血糖趨勢（藍虛線=6 mmol/L，橘虛線=15 mmol/L）</h3>
+      ${buildGlucoseChart(allGlucose, allInsulin)}
+    </div>
+    ${daysHtml}
+  `;
+
+  document.getElementById('main').style.display = 'none';
+  document.querySelector('.topbar').style.display = 'none';
+  fabBtn.style.display = 'none';
+  reportView.style.display = 'block';
+  reportConfigSheet.classList.remove('open');
+  reportBackdrop.classList.remove('open');
+  window.scrollTo(0,0);
+}
+
+genReportBtn.addEventListener('click', generateReport);
+backFromReport.addEventListener('click', ()=>{
+  reportView.style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.querySelector('.topbar').style.display = 'block';
+  fabBtn.style.display = 'flex';
+});
+printReportBtn.addEventListener('click', ()=> window.print());
+
+function buildReportCSV(){
+  if(!lastReportRange) return '';
+  const {start, end} = lastReportRange;
+  const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
+  const header = ['日期','飲食','飲水','血糖 (時間→mmol/L)','胰島素 (時間 劑量)','排尿','排便','嘔吐','用藥','備註'];
+  const csvEscape = s => `"${String(s).replace(/"/g,'""')}"`;
+  const rows = dates.map(d=>{
+    const day = data[d];
+    const g = (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} → ${e.value}`).join(' ');
+    const i = (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.dose}`).join(' ');
+    const v = (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
+    const s = (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
+    const u = (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
+    const w = (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.ml}ml`).join(' ');
+    const m = (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
+    const f = (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
+    return [d,f,w,g,i,u,s,v,m,day.notes||''].map(csvEscape).join(',');
+  });
+  return '\uFEFF' + header.map(csvEscape).join(',') + '\n' + rows.join('\n');
+}
+
+csvReportBtn.addEventListener('click', ()=>{
+  const csv = buildReportCSV();
+  if(!csv){ alert('請先產生報表'); return; }
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Kleo日記_${lastReportRange.start}_${lastReportRange.end}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+});
+
+// ---- Full backup (zip, includes photos) ----
+const backupBtn = document.getElementById('backupBtn');
+const restoreZipInput = document.getElementById('restoreZipInput');
+const PHOTO_CAT_LIST = ['glucose','insulin','vomit','stool','urine'];
+
+function collectPhotoEntries(){
+  const list = [];
+  Object.keys(data).sort().forEach(dateStr=>{
+    PHOTO_CAT_LIST.forEach(cat=>{
+      (data[dateStr][cat]||[]).forEach((e,idx)=>{
+        if(e.photo) list.push({dateStr, cat, idx});
+      });
+    });
+  });
+  return list;
+}
+
+async function buildFullBackup(){
+  if(typeof JSZip === 'undefined'){
+    alert('備份功能需要網路連線載入必要的元件，請確認網路後再試一次。');
+    return;
+  }
+  const zip = new JSZip();
+  const photoFolder = zip.folder('photos');
+  const exportData = JSON.parse(JSON.stringify(data));
+  const photoEntries = collectPhotoEntries();
+  let seq = 1;
+  photoEntries.forEach(pe=>{
+    const original = data[pe.dateStr][pe.cat][pe.idx];
+    const filename = String(seq).padStart(4,'0') + '.jpg';
+    const base64Payload = original.photo.split(',')[1];
+    photoFolder.file(filename, base64Payload, {base64:true});
+    exportData[pe.dateStr][pe.cat][pe.idx].photo = filename;
+    seq++;
+  });
+  zip.file('data.json', JSON.stringify(exportData, null, 2));
+  zip.file('說明.txt', `Kleo 健康記錄完整備份\n產生時間：${new Date().toLocaleString('zh-TW')}\n共 ${photoEntries.length} 張照片，依序命名為 0001.jpg ~ ${String(photoEntries.length).padStart(4,'0')}.jpg，存於 photos 資料夾。\ndata.json 為完整記錄，照片欄位以檔名對應。\n\n還原方式：打開Kleo App → 匯入 → 選擇這個.zip檔案。`);
+  const blob = await zip.generateAsync({type:'blob'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `kleo-backup-${todayStr()}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+backupBtn.addEventListener('click', buildFullBackup);
+
+async function restoreFromZipFile(file){
+  if(typeof JSZip === 'undefined'){
+    alert('還原功能需要網路連線載入必要的元件，請確認網路後再試一次。');
+    return;
+  }
+  try{
+    const zip = await JSZip.loadAsync(file);
+    const dataFile = zip.file('data.json');
+    if(!dataFile){
+      alert('這個檔案裡找不到 data.json，格式不正確，請確認選對備份檔案。');
+      return;
+    }
+    const jsonText = await dataFile.async('string');
+    const incoming = JSON.parse(jsonText);
+
+    const photoFiles = {};
+    const fileNames = Object.keys(zip.files).filter(n=>n.startsWith('photos/') && !zip.files[n].dir);
+    for(const name of fileNames){
+      const base64 = await zip.files[name].async('base64');
+      const shortName = name.split('/').pop();
+      photoFiles[shortName] = 'data:image/jpeg;base64,' + base64;
+    }
+    Object.keys(incoming).forEach(dateStr=>{
+      PHOTO_CAT_LIST.forEach(cat=>{
+        (incoming[dateStr][cat]||[]).forEach(e=>{
+          if(e.photo && photoFiles[e.photo]){
+            e.photo = photoFiles[e.photo];
+          }
+        });
+      });
+    });
+
+    const {addedDays, addedEntries} = mergeImportedData(incoming);
+    if(save()){
+      render();
+      importSheet.classList.remove('open');
+      importBackdrop.classList.remove('open');
+      alert(`已從備份還原：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄（含照片 ${fileNames.length} 張）`);
+    }
+  }catch(e){
+    alert('還原失敗：' + e.message);
+  }
+}
+
+restoreZipInput.addEventListener('change', ()=>{
+  const file = restoreZipInput.files[0];
+  if(file) restoreFromZipFile(file);
+  restoreZipInput.value = '';
+});
+
+// ---- Import ----
+const importBtn = document.getElementById('importBtn');
+const importSheet = document.getElementById('importSheet');
+const importBackdrop = document.getElementById('importBackdrop');
+const closeImportSheet = document.getElementById('closeImportSheet');
+const importText = document.getElementById('importText');
+const doImportBtn = document.getElementById('doImportBtn');
+
+importBtn.addEventListener('click', ()=>{
+  importText.value = '';
+  importSheet.classList.add('open');
+  importBackdrop.classList.add('open');
+});
+closeImportSheet.addEventListener('click', ()=>{
+  importSheet.classList.remove('open');
+  importBackdrop.classList.remove('open');
+});
+importBackdrop.addEventListener('click', ()=>{
+  importSheet.classList.remove('open');
+  importBackdrop.classList.remove('open');
+});
+
+function mergeImportedData(incoming){
+  let addedDays = 0, addedEntries = 0;
+  Object.keys(incoming).forEach(dateStr=>{
+    if(!data[dateStr]){
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],notes:''};
+      addedDays++;
+    }
+    ['glucose','insulin','vomit','stool','urine','water','med','food'].forEach(cat=>{
+      if(!data[dateStr][cat]) data[dateStr][cat] = [];
+      (incoming[dateStr][cat]||[]).forEach(entry=>{
+        data[dateStr][cat].push(entry);
+        addedEntries++;
+      });
+    });
+    if(incoming[dateStr].notes){
+      data[dateStr].notes = data[dateStr].notes
+        ? data[dateStr].notes + '\n' + incoming[dateStr].notes
+        : incoming[dateStr].notes;
+    }
+  });
+  return {addedDays, addedEntries};
+}
+
+doImportBtn.addEventListener('click', ()=>{
+  let parsed;
+  try{
+    parsed = JSON.parse(importText.value);
+  }catch(e){
+    alert('格式錯誤，無法解析JSON：' + e.message);
+    return;
+  }
+  const {addedDays, addedEntries} = mergeImportedData(parsed);
+  if(save()){
+    render();
+    importSheet.classList.remove('open');
+    importBackdrop.classList.remove('open');
+    alert(`匯入完成：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄`);
+  }
+});
+
+// ---- Google Sign-In + Drive auto-sync ----
+const GOOGLE_CLIENT_ID = '203009591227-t04ag82ei8s1t4m8nkctjt26jglrc7io.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_FILE_NAME = 'kleo-diary-data.json';
+let gAccessToken = null;
+let gTokenClient = null;
+let driveFileId = null;
+let drivePushTimer = null;
+let isSyncing = false;
+
+const googleAuthBtn = document.getElementById('googleAuthBtn');
+const statusSub = document.getElementById('statusSub');
+
+function updateAuthUI(signedIn, extra){
+  if(signedIn){
+    googleAuthBtn.textContent = '已連接 Google ✓';
+    statusSub.textContent = '糖尿病照護日誌 · 已同步到 Google Drive' + (extra ? (' · ' + extra) : '');
+  } else {
+    googleAuthBtn.textContent = '登入 Google 同步';
+    statusSub.textContent = '糖尿病照護日誌 · 本機儲存';
+  }
+}
+
+let isManualAuthAttempt = false;
+
+function initGoogleAuth(){
+  if(typeof google === 'undefined' || !google.accounts){
+    setTimeout(initGoogleAuth, 300);
+    return;
+  }
+  gTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: async (resp)=>{
+      if(resp.error){
+        if(isManualAuthAttempt){
+          alert('Google 登入失敗：' + resp.error);
+        } else {
+          console.warn('Silent Google re-auth failed, user will need to click login manually:', resp.error);
+        }
+        return;
+      }
+      gAccessToken = resp.access_token;
+      localStorage.setItem('kleo-google-authorized', '1');
+      updateAuthUI(true, '同步中…');
+      await syncFromDriveOnLogin();
+    }
+  });
+  if(localStorage.getItem('kleo-google-authorized') === '1'){
+    isManualAuthAttempt = false;
+    gTokenClient.requestAccessToken({ prompt: '' });
+  }
+}
+
+googleAuthBtn.addEventListener('click', ()=>{
+  if(!gTokenClient){ alert('Google 登入元件尚未載入完成，請稍後再試。'); return; }
+  isManualAuthAttempt = true;
+  gTokenClient.requestAccessToken({ prompt: gAccessToken ? '' : 'consent' });
+});
+
+async function driveApiFetch(url, options={}){
+  const headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + gAccessToken });
+  return fetch(url, Object.assign({}, options, { headers }));
+}
+
+async function findOrCreateDriveFile(){
+  const searchUrl = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
+    encodeURIComponent(`name='${DRIVE_FILE_NAME}'`) + '&fields=files(id,modifiedTime)';
+  const res = await driveApiFetch(searchUrl);
+  const json = await res.json();
+  if(json.files && json.files.length > 0){
+    driveFileId = json.files[0].id;
+    return;
+  }
+  const metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
+  const boundary = 'kleoboundary';
+  const initialEnvelope = { _meta: { lastModified: parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now())) }, diary: data };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(initialEnvelope)}\r\n--${boundary}--`;
+  const createRes = await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  const createJson = await createRes.json();
+  driveFileId = createJson.id;
+}
+
+async function syncFromDriveOnLogin(){
+  isSyncing = true;
+  try{
+    await findOrCreateDriveFile();
+    const res = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
+    const remoteEnvelope = await res.json().catch(()=>null);
+    const localLastModified = parseInt(localStorage.getItem('kleo-last-modified') || '0');
+
+    if(remoteEnvelope && remoteEnvelope._meta && remoteEnvelope.diary){
+      const remoteLastModified = remoteEnvelope._meta.lastModified || 0;
+      if(remoteLastModified > localLastModified){
+        // Cloud version is newer than this device's copy: replace local with cloud version
+        data = remoteEnvelope.diary;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem('kleo-last-modified', String(remoteLastModified));
+        render();
+        updateAuthUI(true, '已從雲端更新為最新版本');
+      } else {
+        // This device's copy is newer or equal: push it up so the cloud catches up
+        updateAuthUI(true, '本機已是最新');
+        isSyncing = false;
+        pushToDrive(true);
+        return;
+      }
+    } else {
+      // No usable cloud data yet (first time, or old format): push local up as the source of truth
+      updateAuthUI(true, '已連接');
+      isSyncing = false;
+      pushToDrive(true);
+      return;
+    }
+  }catch(e){
+    console.error('Drive sync error', e);
+    updateAuthUI(true, '同步時發生錯誤');
+  }
+  isSyncing = false;
+}
+
+function pushToDrive(immediate){
+  if(!gAccessToken || !driveFileId) return;
+  if(isSyncing && !immediate) return;
+  clearTimeout(drivePushTimer);
+  const doPush = async ()=>{
+    try{
+      const lastModified = parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now()));
+      const envelope = { _meta: { lastModified }, diary: data };
+      await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope)
+      });
+      updateAuthUI(true, '已同步 ' + new Date().toLocaleTimeString('zh-TW'));
+    }catch(e){
+      console.error('push to drive failed', e);
+    }
+  };
+  if(immediate){ doPush(); }
+  else { drivePushTimer = setTimeout(doPush, 800); }
+}
+
+initGoogleAuth();
+
+load();
+</script>
+</body>
+</html>
