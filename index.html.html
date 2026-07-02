@@ -9,6 +9,7 @@
 <meta name="theme-color" content="#EFF3EE">
 <title>Kleo 健康記錄</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231F3A3D'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E🐾%3C/text%3E%3C/svg%3E">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Archivo+Narrow:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
@@ -357,9 +358,10 @@ textarea{resize:vertical; min-height:64px;}
   <div class="topbar-row">
     <div>
       <h1>Kleo 健康記錄</h1>
-      <div class="sub">糖尿病照護日誌 · 本機儲存</div>
+      <div class="sub" id="statusSub">糖尿病照護日誌 · 本機儲存</div>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+      <button class="sync-btn" id="googleAuthBtn">登入 Google 同步</button>
       <button class="sync-btn" id="backupBtn">完整備份</button>
       <button class="sync-btn" id="importBtn">匯入</button>
       <button class="sync-btn" id="reportBtn">報表</button>
@@ -488,6 +490,7 @@ function load(){
 function save(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if(typeof pushToDrive === 'function') pushToDrive();
     return true;
   }catch(e){
     alert('儲存失敗：' + e.message + '（可能是照片太多佔滿本機空間，建議先同步到Drive後清除舊照片）');
@@ -1559,6 +1562,122 @@ doImportBtn.addEventListener('click', ()=>{
     alert(`匯入完成：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄`);
   }
 });
+
+// ---- Google Sign-In + Drive auto-sync ----
+const GOOGLE_CLIENT_ID = '203009591227-t04ag82ei8s1t4m8nkctjt26jglrc7io.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_FILE_NAME = 'kleo-diary-data.json';
+let gAccessToken = null;
+let gTokenClient = null;
+let driveFileId = null;
+let drivePushTimer = null;
+let isSyncing = false;
+
+const googleAuthBtn = document.getElementById('googleAuthBtn');
+const statusSub = document.getElementById('statusSub');
+
+function updateAuthUI(signedIn, extra){
+  if(signedIn){
+    googleAuthBtn.textContent = '已連接 Google ✓';
+    statusSub.textContent = '糖尿病照護日誌 · 已同步到 Google Drive' + (extra ? (' · ' + extra) : '');
+  } else {
+    googleAuthBtn.textContent = '登入 Google 同步';
+    statusSub.textContent = '糖尿病照護日誌 · 本機儲存';
+  }
+}
+
+function initGoogleAuth(){
+  if(typeof google === 'undefined' || !google.accounts){
+    setTimeout(initGoogleAuth, 300);
+    return;
+  }
+  gTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: async (resp)=>{
+      if(resp.error){
+        alert('Google 登入失敗：' + resp.error);
+        return;
+      }
+      gAccessToken = resp.access_token;
+      updateAuthUI(true, '同步中…');
+      await syncFromDriveOnLogin();
+    }
+  });
+}
+
+googleAuthBtn.addEventListener('click', ()=>{
+  if(!gTokenClient){ alert('Google 登入元件尚未載入完成，請稍後再試。'); return; }
+  gTokenClient.requestAccessToken({ prompt: gAccessToken ? '' : 'consent' });
+});
+
+async function driveApiFetch(url, options={}){
+  const headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + gAccessToken });
+  return fetch(url, Object.assign({}, options, { headers }));
+}
+
+async function findOrCreateDriveFile(){
+  const searchUrl = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
+    encodeURIComponent(`name='${DRIVE_FILE_NAME}'`) + '&fields=files(id,modifiedTime)';
+  const res = await driveApiFetch(searchUrl);
+  const json = await res.json();
+  if(json.files && json.files.length > 0){
+    driveFileId = json.files[0].id;
+    return;
+  }
+  const metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
+  const boundary = 'kleoboundary';
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(data)}\r\n--${boundary}--`;
+  const createRes = await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  const createJson = await createRes.json();
+  driveFileId = createJson.id;
+}
+
+async function syncFromDriveOnLogin(){
+  isSyncing = true;
+  try{
+    await findOrCreateDriveFile();
+    const res = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
+    const remoteData = await res.json().catch(()=>null);
+    if(remoteData && typeof remoteData === 'object'){
+      const {addedDays, addedEntries} = mergeImportedData(remoteData);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      render();
+      updateAuthUI(true, `已合併雲端 ${addedDays} 天資料`);
+    } else {
+      updateAuthUI(true, '已連接');
+    }
+  }catch(e){
+    console.error('Drive sync error', e);
+    updateAuthUI(true, '同步時發生錯誤');
+  }
+  isSyncing = false;
+}
+
+function pushToDrive(){
+  if(!gAccessToken || !driveFileId || isSyncing) return;
+  clearTimeout(drivePushTimer);
+  drivePushTimer = setTimeout(async ()=>{
+    try{
+      await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      updateAuthUI(true, '已同步 ' + new Date().toLocaleTimeString('zh-TW'));
+    }catch(e){
+      console.error('push to drive failed', e);
+    }
+  }, 800);
+}
+
+initGoogleAuth();
 
 load();
 </script>
