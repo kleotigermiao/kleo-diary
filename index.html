@@ -228,6 +228,13 @@ textarea{resize:vertical; min-height:64px;}
 
 #photoField label{margin-top:14px;}
 #fPhoto{font-size:13px; font-family:'Inter',sans-serif; color:var(--ink-soft);}
+.photo-preview-item{position:relative;width:72px;height:72px;}
+.photo-preview-item img{width:100%;height:100%;object-fit:cover;border-radius:8px;border:1px solid var(--line);}
+.photo-preview-item .remove-one{
+  position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
+  background:var(--ink);color:var(--paper-raised);border:none;font-size:12px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
 
 .lightbox{
   position:fixed; inset:0; z-index:60; background:rgba(31,58,61,0.85);
@@ -404,11 +411,11 @@ textarea{resize:vertical; min-height:64px;}
   <div id="dynamicFields"></div>
 
   <div id="photoField">
-    <label>照片（可選）</label>
-    <input type="file" accept="image/*" id="fPhoto">
+    <label>照片（可選，可多張）</label>
+    <input type="file" accept="image/*" id="fPhoto" multiple>
     <div id="photoPreviewWrap" style="display:none;margin-top:8px;">
-      <img id="photoPreview" style="max-width:100%;border-radius:8px;border:1px solid var(--line);">
-      <button type="button" id="clearPhoto" style="margin-top:6px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">移除照片</button>
+      <div id="photoPreviewGrid" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <button type="button" id="clearPhoto" style="margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清除全部照片</button>
     </div>
   </div>
 
@@ -541,9 +548,9 @@ function buildStrip(glucoseEntries){
 const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️'};
 const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食'};
 const FOOD_OPTIONS = {
-  '乾糧': ['Young Again Lid Zero Mature'],
+  '乾糧': ['YA Lid Zero'],
   '罐頭': ['Tiki Ahi Tuna'],
-  '零食': ['Young Again Lid Zero TruCarnivore Treats','Young Again Zero TruCarnivore Treats','凍乾 Pure Bites Tuna','凍乾 Ocean White Fish']
+  '零食': ['YA Lid Treats','YA Treats','凍乾 Pure Bites Tuna','凍乾 Ocean White Fish']
 };
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
@@ -551,31 +558,39 @@ const FIXED_OPTIONS = {
   urine: ['正常','量少','量多']
 };
 
-function renderRows(dateStr, cat, entries){
-  if(!entries || entries.length===0) return '';
-  const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
-  return sorted.map((e,idx)=>{
-    let valHtml = '';
-    if(cat==='glucose'){
-      valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>`;
-    } else if(cat==='insulin'){
-      valHtml = `<span class="tag normal">${e.dose}</span>`;
-    } else if(cat==='water'){
-      const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
-      valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
-    } else {
-      valHtml = e.note || '';
-    }
-    const thumbHtml = e.photo ? `<img class="thumb" src="${e.photo}" data-photo="${e.photo}">` : '';
-    return `<div class="row">
-      <span class="icon">${ICONS[cat]}</span>
-      <span class="time">${e.time}</span>
-      <span class="val">${valHtml}</span>
-      ${thumbHtml}
-      <button class="edit" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✎</button>
-      <button class="del" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✕</button>
-    </div>`;
-  }).join('');
+function renderRowHtml(dateStr, cat, e, idx){
+  let valHtml = '';
+  if(cat==='glucose'){
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>`;
+  } else if(cat==='insulin'){
+    valHtml = `<span class="tag normal">${e.dose}</span>`;
+  } else if(cat==='water'){
+    const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
+    valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
+  } else {
+    valHtml = e.note || '';
+  }
+  const thumbHtml = getEntryPhotos(e).map(p=>`<img class="thumb" src="${p}" data-photo="${p}">`).join('');
+  return `<div class="row">
+    <span class="icon">${ICONS[cat]}</span>
+    <span class="time">${e.time}</span>
+    <span class="val">${valHtml}</span>
+    ${thumbHtml}
+    <button class="edit" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✎</button>
+    <button class="del" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✕</button>
+  </div>`;
+}
+
+function renderDayRows(dateStr, day){
+  const cats = ['food','water','glucose','insulin','urine','stool','vomit','med'];
+  const all = [];
+  cats.forEach(cat=>{
+    (day[cat]||[]).forEach((e, idx)=>{
+      all.push({cat, idx, time: e.time, entry: e});
+    });
+  });
+  all.sort((a,b)=> a.time.localeCompare(b.time));
+  return all.map(item => renderRowHtml(dateStr, item.cat, item.entry, item.idx)).join('');
 }
 
 function escapeHtml(s){
@@ -593,8 +608,7 @@ function render(){
   }
   main.innerHTML = dates.map(dateStr=>{
     const day = data[dateStr];
-    const rowsHtml = ['food','water','glucose','insulin','urine','stool','vomit','med']
-      .map(cat=>renderRows(dateStr, cat, day[cat])).join('');
+    const rowsHtml = renderDayRows(dateStr, day);
     const notesHtml = `<div class="notes-row">
       <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
       <button class="note-edit-btn" data-date="${dateStr}">✎</button>
@@ -652,9 +666,37 @@ const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
 const fPhoto = document.getElementById('fPhoto');
 const photoPreviewWrap = document.getElementById('photoPreviewWrap');
-const photoPreview = document.getElementById('photoPreview');
+const photoPreviewGrid = document.getElementById('photoPreviewGrid');
 const clearPhotoBtn = document.getElementById('clearPhoto');
-let currentPhotoData = null;
+let currentPhotos = [];
+
+function getEntryPhotos(entry){
+  if(!entry) return [];
+  if(Array.isArray(entry.photos)) return entry.photos;
+  if(entry.photo) return [entry.photo];
+  return [];
+}
+
+function renderPhotoPreview(){
+  if(currentPhotos.length===0){
+    photoPreviewWrap.style.display = 'none';
+    photoPreviewGrid.innerHTML = '';
+    return;
+  }
+  photoPreviewWrap.style.display = 'block';
+  photoPreviewGrid.innerHTML = currentPhotos.map((p,i)=>`
+    <div class="photo-preview-item">
+      <img src="${p}">
+      <button type="button" class="remove-one" data-i="${i}">✕</button>
+    </div>
+  `).join('');
+  photoPreviewGrid.querySelectorAll('.remove-one').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      currentPhotos.splice(parseInt(btn.dataset.i), 1);
+      renderPhotoPreview();
+    });
+  });
+}
 let editContext = null; // {date, cat, idx} when editing, null when creating new
 const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine'];
 
@@ -662,9 +704,9 @@ function openSheet(){
   editContext = null;
   fDate.value = todayStr();
   fTime.value = nowTime();
-  currentPhotoData = null;
+  currentPhotos = [];
   fPhoto.value = '';
-  photoPreviewWrap.style.display = 'none';
+  renderPhotoPreview();
   document.querySelector('#sheet h2').textContent = '新增記錄';
   document.getElementById('saveBtn').textContent = '儲存';
   document.getElementById('catGrid').style.display = 'grid';
@@ -676,9 +718,9 @@ function openSheet(){
 function openSheetForEditNote(dateStr){
   editContext = {date: dateStr, cat: 'note', isDayNote: true};
   fDate.value = dateStr;
-  currentPhotoData = null;
+  currentPhotos = [];
   fPhoto.value = '';
-  photoPreviewWrap.style.display = 'none';
+  renderPhotoPreview();
   document.querySelector('#sheet h2').textContent = '編輯備註';
   document.getElementById('saveBtn').textContent = '儲存備註';
   document.getElementById('catGrid').style.display = 'none';
@@ -693,14 +735,9 @@ function openSheetForEdit(dateStr, cat, idx){
   const entry = data[dateStr][cat][idx];
   fDate.value = dateStr;
   fTime.value = entry.time || nowTime();
-  currentPhotoData = entry.photo || null;
+  currentPhotos = getEntryPhotos(entry).slice();
   fPhoto.value = '';
-  if(currentPhotoData){
-    photoPreview.src = currentPhotoData;
-    photoPreviewWrap.style.display = 'block';
-  } else {
-    photoPreviewWrap.style.display = 'none';
-  }
+  renderPhotoPreview();
   document.querySelector('#sheet h2').textContent = '編輯記錄';
   document.getElementById('saveBtn').textContent = '儲存修改';
   document.getElementById('catGrid').style.display = 'none'; // can't change category when editing
@@ -1007,18 +1044,21 @@ function compressImage(file, maxDim=900, quality=0.7){
 }
 
 fPhoto.addEventListener('change', async ()=>{
-  const file = fPhoto.files[0];
-  if(!file) return;
+  const files = Array.from(fPhoto.files || []);
+  if(files.length===0) return;
   try{
-    currentPhotoData = await compressImage(file);
-    photoPreview.src = currentPhotoData;
-    photoPreviewWrap.style.display = 'block';
+    for(const file of files){
+      const compressed = await compressImage(file);
+      currentPhotos.push(compressed);
+    }
+    renderPhotoPreview();
+    fPhoto.value = '';
   }catch(e){ console.error('compress error', e); }
 });
 clearPhotoBtn.addEventListener('click', ()=>{
-  currentPhotoData = null;
+  currentPhotos = [];
   fPhoto.value = '';
-  photoPreviewWrap.style.display = 'none';
+  renderPhotoPreview();
 });
 
 document.getElementById('saveBtn').addEventListener('click', ()=>{
@@ -1045,17 +1085,18 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   } else if(editContext){
     // Editing existing entry in place
     const { date: oldDate, cat, idx } = editContext;
+    const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     let updated;
     if(cat==='glucose'){
-      updated = {time, value: parseFloat(rawVal), photo: currentPhotoData || undefined};
+      updated = {time, value: parseFloat(rawVal), photos: photosToSave};
     } else if(cat==='insulin'){
-      updated = {time, dose: rawVal, photo: currentPhotoData || undefined};
+      updated = {time, dose: rawVal, photos: photosToSave};
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
       updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined};
     } else {
-      updated = {time, note: rawVal, photo: currentPhotoData || undefined};
+      updated = {time, note: rawVal, photos: photosToSave};
     }
     if(dateStr !== oldDate){
       // moved to a different day
@@ -1071,10 +1112,11 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr]) data[dateStr] = blankDay();
     if(!data[dateStr].urine) data[dateStr].urine = [];
     if(!data[dateStr].food) data[dateStr].food = [];
+    const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
-      data[dateStr].glucose.push({time, value: parseFloat(rawVal), photo: currentPhotoData || undefined});
+      data[dateStr].glucose.push({time, value: parseFloat(rawVal), photos: photosToSave});
     } else if(currentCat==='insulin'){
-      data[dateStr].insulin.push({time, dose: rawVal, photo: currentPhotoData || undefined});
+      data[dateStr].insulin.push({time, dose: rawVal, photos: photosToSave});
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -1082,13 +1124,13 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(currentCat==='note'){
       data[dateStr].notes = data[dateStr].notes ? data[dateStr].notes + '\n' + rawVal : rawVal;
     } else {
-      data[dateStr][currentCat].push({time, note: rawVal, photo: currentPhotoData || undefined});
+      data[dateStr][currentCat].push({time, note: rawVal, photos: photosToSave});
     }
   }
 
   if(save()){
     render();
-    currentPhotoData = null;
+    currentPhotos = [];
     editContext = null;
     fPhoto.value = '';
     photoPreviewWrap.style.display = 'none';
@@ -1412,7 +1454,10 @@ function collectPhotoEntries(){
   Object.keys(data).sort().forEach(dateStr=>{
     PHOTO_CAT_LIST.forEach(cat=>{
       (data[dateStr][cat]||[]).forEach((e,idx)=>{
-        if(e.photo) list.push({dateStr, cat, idx});
+        const photos = getEntryPhotos(e);
+        photos.forEach((photo, photoIdx)=>{
+          list.push({dateStr, cat, idx, photoIdx, photo});
+        });
       });
     });
   });
@@ -1429,16 +1474,26 @@ async function buildFullBackup(){
   const exportData = JSON.parse(JSON.stringify(data));
   const photoEntries = collectPhotoEntries();
   let seq = 1;
+  // Build a map of which filenames belong to each (dateStr,cat,idx) entry, in order
+  const filenamesByEntry = {};
   photoEntries.forEach(pe=>{
-    const original = data[pe.dateStr][pe.cat][pe.idx];
     const filename = String(seq).padStart(4,'0') + '.jpg';
-    const base64Payload = original.photo.split(',')[1];
+    const base64Payload = pe.photo.split(',')[1];
     photoFolder.file(filename, base64Payload, {base64:true});
-    exportData[pe.dateStr][pe.cat][pe.idx].photo = filename;
+    const key = `${pe.dateStr}|${pe.cat}|${pe.idx}`;
+    if(!filenamesByEntry[key]) filenamesByEntry[key] = [];
+    filenamesByEntry[key].push(filename);
     seq++;
   });
+  Object.keys(filenamesByEntry).forEach(key=>{
+    const [dateStr, cat, idxStr] = key.split('|');
+    const idx = parseInt(idxStr);
+    const entry = exportData[dateStr][cat][idx];
+    delete entry.photo; // clear any legacy single-photo field
+    entry.photos = filenamesByEntry[key];
+  });
   zip.file('data.json', JSON.stringify(exportData, null, 2));
-  zip.file('說明.txt', `Kleo 健康記錄完整備份\n產生時間：${new Date().toLocaleString('zh-TW')}\n共 ${photoEntries.length} 張照片，依序命名為 0001.jpg ~ ${String(photoEntries.length).padStart(4,'0')}.jpg，存於 photos 資料夾。\ndata.json 為完整記錄，照片欄位以檔名對應。\n\n還原方式：打開Kleo App → 匯入 → 選擇這個.zip檔案。`);
+  zip.file('說明.txt', `Kleo 健康記錄完整備份\n產生時間：${new Date().toLocaleString('zh-TW')}\n共 ${photoEntries.length} 張照片，依序命名為 0001.jpg ~ ${String(photoEntries.length).padStart(4,'0')}.jpg，存於 photos 資料夾。\ndata.json 為完整記錄，每筆記錄的 photos 欄位是對應的檔名陣列。\n\n還原方式：打開Kleo App → 匯入 → 選擇這個.zip檔案。`);
   const blob = await zip.generateAsync({type:'blob'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1477,7 +1532,9 @@ async function restoreFromZipFile(file){
     Object.keys(incoming).forEach(dateStr=>{
       PHOTO_CAT_LIST.forEach(cat=>{
         (incoming[dateStr][cat]||[]).forEach(e=>{
-          if(e.photo && photoFiles[e.photo]){
+          if(Array.isArray(e.photos)){
+            e.photos = e.photos.map(fn => photoFiles[fn] || fn);
+          } else if(e.photo && photoFiles[e.photo]){
             e.photo = photoFiles[e.photo];
           }
         });
@@ -1635,7 +1692,18 @@ async function findOrCreateDriveFile(){
   const res = await driveApiFetch(searchUrl);
   const json = await res.json();
   if(json.files && json.files.length > 0){
-    driveFileId = json.files[0].id;
+    if(json.files.length > 1){
+      // Duplicate files exist from a past race condition. Keep the most recently modified one,
+      // delete the rest so future syncs are unambiguous.
+      const sorted = [...json.files].sort((a,b)=> new Date(b.modifiedTime) - new Date(a.modifiedTime));
+      driveFileId = sorted[0].id;
+      for(let i=1;i<sorted.length;i++){
+        try{ await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${sorted[i].id}`, { method: 'DELETE' }); }
+        catch(e){ console.warn('failed to delete duplicate drive file', sorted[i].id, e); }
+      }
+    } else {
+      driveFileId = json.files[0].id;
+    }
     return;
   }
   const metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
@@ -1654,6 +1722,7 @@ async function findOrCreateDriveFile(){
 }
 
 async function syncFromDriveOnLogin(){
+  if(isSyncing) return; // prevent overlapping sync calls from racing each other
   isSyncing = true;
   try{
     await findOrCreateDriveFile();
