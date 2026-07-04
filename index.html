@@ -225,6 +225,18 @@ textarea{resize:vertical; min-height:64px;}
   font-family:'Inter',sans-serif;
 }
 .option-btn.active{background:var(--ink); color:var(--paper-raised); border-color:var(--ink);}
+.tag-add-btn{
+  flex-shrink:0;padding:0 16px;border:1px solid var(--ink);border-radius:8px;
+  background:none;color:var(--ink);font-weight:600;cursor:pointer;
+}
+.col-check-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px;
+}
+.col-check-item{
+  display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+}
+.col-check-item input{margin:0;}
 
 #photoField label{margin-top:14px;}
 #fPhoto{font-size:13px; font-family:'Inter',sans-serif; color:var(--ink-soft);}
@@ -395,6 +407,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn" data-cat="food"><span class="ic">🍽️</span>飲食</button>
     <button class="cat-btn" data-cat="water"><span class="ic">💧</span>飲水</button>
     <button class="cat-btn" data-cat="glucose"><span class="ic">🩸</span>血糖</button>
+    <button class="cat-btn" data-cat="weight"><span class="ic">⚖️</span>體重</button>
     <button class="cat-btn" data-cat="insulin"><span class="ic">💉</span>胰島素</button>
     <button class="cat-btn" data-cat="urine"><span class="ic">🚽</span>排尿</button>
     <button class="cat-btn" data-cat="stool"><span class="ic">💩</span>排便</button>
@@ -444,6 +457,8 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn layout-btn active" data-layout="table">表格（列印/PDF用）</button>
     <button class="cat-btn layout-btn" data-layout="card">卡片（螢幕閱讀用）</button>
   </div>
+  <label style="margin-top:18px;">顯示欄位（取消勾選可隱藏）</label>
+  <div class="col-check-grid" id="colCheckGrid"></div>
   <button class="save-btn" id="genReportBtn">產生報表</button>
 </div>
 
@@ -471,6 +486,10 @@ textarea{resize:vertical; min-height:64px;}
   <p>把你的Markdown日記給Claude，請它轉換成這個格式，貼上後按「匯入」。既有的記錄不會被覆蓋，新資料會合併進去。</p>
   <textarea id="importText" placeholder='貼上JSON格式的資料…' style="height:150px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></textarea>
   <button class="save-btn" id="doImportBtn">匯入 JSON 文字</button>
+
+  <label style="margin-top:22px;">還原</label>
+  <p>每次匯入前，App會自動存一份「匯入前」的快照。如果發現剛剛的匯入結果不對，可以整個復原回去，不用一筆筆刪。</p>
+  <button class="save-btn" id="restoreSnapshotBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">復原到匯入前</button>
 </div>
 
 <script>
@@ -545,8 +564,8 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重'};
 const FOOD_OPTIONS = {
   '乾糧': ['YA Lid Zero'],
   '罐頭': ['Tiki Ahi Tuna'],
@@ -562,8 +581,14 @@ function renderRowHtml(dateStr, cat, e, idx){
   let valHtml = '';
   if(cat==='glucose'){
     valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>`;
+  } else if(cat==='weight'){
+    valHtml = `<span class="tag normal">${e.value} kg</span>`;
   } else if(cat==='insulin'){
-    valHtml = `<span class="tag normal">${e.dose}</span>`;
+    const extra = [];
+    if(e.site) extra.push(e.site);
+    if(e.needle) extra.push(e.needle);
+    const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${extra.join(' · ')})</span>` : '';
+    valHtml = `<span class="tag normal">${e.dose}</span>${detail}`;
   } else if(cat==='water'){
     const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
     valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
@@ -582,7 +607,7 @@ function renderRowHtml(dateStr, cat, e, idx){
 }
 
 function renderDayRows(dateStr, day){
-  const cats = ['food','water','glucose','insulin','urine','stool','vomit','med'];
+  const cats = ['food','water','glucose','weight','insulin','urine','stool','vomit','med'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -757,6 +782,23 @@ function openSheetForEdit(dateStr, cat, idx){
       (entry.base!=null && entry.remaining!=null)
         ? `本次飲水量：${entry.base} - ${entry.remaining} = ${entry.ml} ml`
         : `本次飲水量：${entry.ml} ml`;
+  } else if(cat==='insulin'){
+    valEl.value = entry.dose || '';
+    document.querySelectorAll('#doseTagGrid .option-btn').forEach(b=>{
+      b.classList.toggle('active', b.dataset.val===entry.dose);
+    });
+    if(entry.site){
+      document.getElementById('fSite').value = entry.site;
+      document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.val===entry.site);
+      });
+    }
+    if(entry.needle){
+      document.getElementById('fNeedle').value = entry.needle;
+      document.querySelectorAll('#needleTagGrid .option-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.val===entry.needle);
+      });
+    }
   } else if(cat==='food'){
     const raw = entry.note || '';
     const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
@@ -802,6 +844,7 @@ function openSheetForEdit(dateStr, cat, idx){
     }
   } else if(valEl){
     if(cat==='glucose') valEl.value = entry.value;
+    else if(cat==='weight') valEl.value = entry.value;
     else if(cat==='insulin') valEl.value = entry.dose;
     else if(cat==='water') valEl.value = entry.ml;
     else valEl.value = entry.note || '';
@@ -836,6 +879,50 @@ function loadWaterBase(){
 function saveWaterBase(v){
   try{ localStorage.setItem(WATER_BASE_KEY, String(v)); }catch(e){}
 }
+
+function loadTagsGeneric(key, defaults){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaults.slice();
+  }catch(e){ return defaults.slice(); }
+}
+function saveTagsGeneric(key, tags){
+  try{ localStorage.setItem(key, JSON.stringify(tags)); }catch(e){}
+}
+function renderTagButtons(tags){
+  return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+}
+function wireTagGroup(gridId, hiddenInputId){
+  document.querySelectorAll('#'+gridId+' .option-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#'+gridId+' .option-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(hiddenInputId).value = btn.dataset.val;
+    });
+  });
+}
+function wireAddTag(inputId, btnId, gridId, tagsArr, storageKey, hiddenInputId){
+  document.getElementById(btnId).addEventListener('click', ()=>{
+    const input = document.getElementById(inputId);
+    const name = input.value.trim();
+    if(!name) return;
+    if(!tagsArr.includes(name)){
+      tagsArr.push(name);
+      saveTagsGeneric(storageKey, tagsArr);
+    }
+    document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
+    wireTagGroup(gridId, hiddenInputId);
+    document.querySelectorAll('#'+gridId+' .option-btn').forEach(b=>{
+      b.classList.toggle('active', b.dataset.val===name);
+    });
+    document.getElementById(hiddenInputId).value = name;
+    input.value = '';
+  });
+}
+
+const INSULIN_DOSE_KEY = 'kleo-insulin-dose-tags-v1';
+const INSULIN_SITE_KEY = 'kleo-insulin-site-tags-v1';
+const INSULIN_NEEDLE_KEY = 'kleo-insulin-needle-tags-v1';
 
 const MED_TAGS_KEY = 'kleo-med-tags-v1';
 function loadMedTags(){
@@ -927,8 +1014,41 @@ function setCategory(cat){
   photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
   if(cat==='glucose'){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">`;
+  } else if(cat==='weight'){
+    dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="number" step="0.01" id="fVal" placeholder="例如 4.20">`;
   } else if(cat==='insulin'){
-    dynamicFields.innerHTML = `<label>劑量</label><input type="text" id="fVal" placeholder="例如 1u">`;
+    const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
+    const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
+    const needleTags = loadTagsGeneric(INSULIN_NEEDLE_KEY, []);
+    dynamicFields.innerHTML = `
+      <label>劑量</label>
+      <div class="option-grid" id="doseTagGrid">${renderTagButtons(doseTags)}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" id="newDoseInput" placeholder="新增劑量…" style="flex:1;">
+        <button type="button" id="addDoseBtn" class="tag-add-btn">新增</button>
+      </div>
+      <label>注射位置（可選）</label>
+      <div class="option-grid" id="siteTagGrid">${renderTagButtons(siteTags)}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" id="newSiteInput" placeholder="新增位置…" style="flex:1;">
+        <button type="button" id="addSiteBtn" class="tag-add-btn">新增</button>
+      </div>
+      <label>針管型號（可選）</label>
+      <div class="option-grid" id="needleTagGrid">${renderTagButtons(needleTags)}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" id="newNeedleInput" placeholder="新增型號…" style="flex:1;">
+        <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
+      </div>
+      <input type="hidden" id="fVal">
+      <input type="hidden" id="fSite">
+      <input type="hidden" id="fNeedle">
+    `;
+    wireTagGroup('doseTagGrid','fVal');
+    wireTagGroup('siteTagGrid','fSite');
+    wireTagGroup('needleTagGrid','fNeedle');
+    wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
+    wireAddTag('newSiteInput','addSiteBtn','siteTagGrid', siteTags, INSULIN_SITE_KEY, 'fSite');
+    wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
   } else if(cat==='water'){
     const currentBase = loadWaterBase();
     if(!editContext){
@@ -1072,7 +1192,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -1089,8 +1209,12 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     let updated;
     if(cat==='glucose'){
       updated = {time, value: parseFloat(rawVal), photos: photosToSave};
+    } else if(cat==='weight'){
+      updated = {time, value: parseFloat(rawVal)};
     } else if(cat==='insulin'){
-      updated = {time, dose: rawVal, photos: photosToSave};
+      const siteEl = document.getElementById('fSite');
+      const needleEl = document.getElementById('fNeedle');
+      updated = {time, dose: rawVal, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave};
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -1112,11 +1236,16 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr]) data[dateStr] = blankDay();
     if(!data[dateStr].urine) data[dateStr].urine = [];
     if(!data[dateStr].food) data[dateStr].food = [];
+    if(!data[dateStr].weight) data[dateStr].weight = [];
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
       data[dateStr].glucose.push({time, value: parseFloat(rawVal), photos: photosToSave});
+    } else if(currentCat==='weight'){
+      data[dateStr].weight.push({time, value: parseFloat(rawVal)});
     } else if(currentCat==='insulin'){
-      data[dateStr].insulin.push({time, dose: rawVal, photos: photosToSave});
+      const siteEl = document.getElementById('fSite');
+      const needleEl = document.getElementById('fNeedle');
+      data[dateStr].insulin.push({time, dose: rawVal, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave});
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -1288,14 +1417,135 @@ function buildGlucoseChart(allEntries, allInsulin){
   return legend + svg;
 }
 
+function buildWeightChart(allEntries){
+  if(allEntries.length===0) return '<p class="no-data-msg">此區間沒有體重記錄</p>';
+
+  const toTs = e => new Date(e.date+'T'+e.time+':00').getTime();
+  const sorted = [...allEntries].sort((a,b)=>toTs(a)-toTs(b));
+  const tsMin = toTs(sorted[0]), tsMax = toTs(sorted[sorted.length-1]);
+  const tsRange = (tsMax - tsMin) || (1000*60*60*24);
+
+  const vals = sorted.map(e=>e.value);
+  const rawMin = Math.min(...vals), rawMax = Math.max(...vals);
+  const pad = Math.max((rawMax-rawMin)*0.2, 0.3);
+  const yMin = rawMin - pad, yMax = rawMax + pad;
+  const yRange = yMax - yMin || 1;
+
+  const W = 900, H = 280;
+  const padL = 70, padR = 20, padT = 20, padB = 70;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+
+  const xFor = ts => padL + ((ts - tsMin)/tsRange) * chartW;
+  const yFor = v => padT + chartH - ((v - yMin)/yRange) * chartH;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;font-family:'IBM Plex Mono',monospace;">`;
+
+  const yStep = yRange / 4;
+  for(let i=0;i<=4;i++){
+    const v = yMin + yStep*i;
+    const y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1.5" opacity="0.6"/>`;
+    svg += `<text x="${padL-10}" y="${y+7}" font-size="20" fill="#5A6E6E" text-anchor="end">${v.toFixed(2)}</text>`;
+  }
+
+  const tickCount = Math.min(5, sorted.length);
+  for(let i=0;i<=tickCount;i++){
+    const ts = tsMin + (tsRange * i/tickCount);
+    const d = new Date(ts);
+    const label1 = `${d.getMonth()+1}/${d.getDate()}`;
+    const x = padL + (chartW * i/tickCount);
+    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1.5"/>`;
+    svg += `<text x="${x}" y="${H-16}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
+  }
+
+  let path = '';
+  sorted.forEach((e,i)=>{
+    const x = xFor(toTs(e)), y = yFor(e.value);
+    path += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  });
+  svg += `<path d="${path}" fill="none" stroke="#3F7A5C" stroke-width="4"/>`;
+  sorted.forEach(e=>{
+    const x = xFor(toTs(e)), y = yFor(e.value);
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="#3F7A5C" stroke="#F8FAF7" stroke-width="2"/>`;
+  });
+
+  svg += `</svg>`;
+  return svg;
+}
+
+const REPORT_COLUMNS = [
+  {key:'food', label:'飲食', icon:'🍽️'},
+  {key:'water', label:'飲水', icon:'💧'},
+  {key:'glucose', label:'血糖', icon:'🩸'},
+  {key:'weight', label:'體重', icon:'⚖️'},
+  {key:'insulin', label:'胰島素', icon:'💉'},
+  {key:'urine', label:'排尿', icon:'🚽'},
+  {key:'stool', label:'排便', icon:'💩'},
+  {key:'vomit', label:'嘔吐', icon:'🤮'},
+  {key:'med', label:'用藥', icon:'💊'},
+  {key:'notes', label:'備註', icon:'📝'}
+];
+const REPORT_COLS_KEY = 'kleo-report-cols-v1';
+function loadReportCols(){
+  try{
+    const raw = localStorage.getItem(REPORT_COLS_KEY);
+    return raw ? JSON.parse(raw) : REPORT_COLUMNS.map(c=>c.key);
+  }catch(e){ return REPORT_COLUMNS.map(c=>c.key); }
+}
+function saveReportCols(cols){
+  try{ localStorage.setItem(REPORT_COLS_KEY, JSON.stringify(cols)); }catch(e){}
+}
+function reportCellLines(day, catKey){
+  const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
+  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}`);
+  if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
+  if(catKey==='insulin') return entries.map(e=>{
+    const extra = [];
+    if(e.site) extra.push(e.site);
+    if(e.needle) extra.push(e.needle);
+    return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
+  });
+  if(catKey==='water') return entries.map(e=>`${e.time} ${e.ml}ml`);
+  return entries.map(e=>`${e.time} ${e.note}`);
+}
+
+let reportVisibleCols = loadReportCols();
+function renderColCheckGrid(){
+  const grid = document.getElementById('colCheckGrid');
+  grid.innerHTML = REPORT_COLUMNS.map(c=>`
+    <label class="col-check-item">
+      <input type="checkbox" data-col="${c.key}" ${reportVisibleCols.includes(c.key)?'checked':''}>
+      ${c.icon} ${c.label}
+    </label>
+  `).join('');
+  grid.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const key = cb.dataset.col;
+      if(cb.checked){
+        if(!reportVisibleCols.includes(key)) reportVisibleCols.push(key);
+      } else {
+        reportVisibleCols = reportVisibleCols.filter(k=>k!==key);
+      }
+      saveReportCols(reportVisibleCols);
+    });
+  });
+}
+renderColCheckGrid();
+
 function generateReport(){
   const {start, end} = getRangeDates();
   if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
   const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
+  const visibleCols = REPORT_COLUMNS.filter(c => reportVisibleCols.includes(c.key));
+  const showCat = key => reportVisibleCols.includes(key);
 
   const allGlucose = [];
   dates.forEach(d=> (data[d].glucose||[]).forEach(e=> allGlucose.push({...e, date:d})));
   allGlucose.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
+
+  const allWeight = [];
+  dates.forEach(d=> (data[d].weight||[]).forEach(e=> allWeight.push({...e, date:d})));
+  allWeight.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
 
   const allInsulin = [];
   dates.forEach(d=> (data[d].insulin||[]).forEach(e=> allInsulin.push({...e, date:d})));
@@ -1311,83 +1561,67 @@ function generateReport(){
     daysHtml = dates.map(d=>{
       const day = data[d];
       let rows = '';
-      (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">🍽️ <b>${e.time}</b> — ${e.note}</div>`);
-      (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">💧 <b>${e.time}</b> — ${e.ml} ml</div>`);
-      (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">🩸 <b>${e.time}</b> — ${e.value} mmol/L (${e.value<6?'偏低':e.value>15?'偏高':'正常'})</div>`);
-      (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">💉 <b>${e.time}</b> — ${e.dose}</div>`);
-      (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">🚽 <b>${e.time}</b> — ${e.note}</div>`);
-      (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">💩 <b>${e.time}</b> — ${e.note}</div>`);
-      (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">🤮 <b>${e.time}</b> — ${e.note}</div>`);
-      (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(e=>
-        rows += `<div class="r-row">💊 <b>${e.time}</b> — ${e.note}</div>`);
-      const notesHtml = day.notes ? `<div class="r-notes">${escapeHtml(day.notes)}</div>` : '';
+      visibleCols.forEach(col=>{
+        if(col.key==='notes') return;
+        reportCellLines(day, col.key).forEach(line=>{
+          rows += `<div class="r-row">${col.icon} ${line}</div>`;
+        });
+      });
+      const notesHtml = (showCat('notes') && day.notes) ? `<div class="r-notes">${escapeHtml(day.notes)}</div>` : '';
       return `<div class="report-day"><h4>${formatDateLabel(d)}（${weekdayName(d)}）· ${d}</h4>${rows}${notesHtml}</div>`;
     }).join('');
   } else {
     const tableRows = dates.map(d=>{
       const day = data[d];
-      const glucoseCell = (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} → ${e.value}`).join('<br>');
-      const insulinCell = (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.dose}`).join('<br>');
-      const vomitCell = (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.note}`).join('<br>');
-      const stoolCell = (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.note}`).join('<br>');
-      const urineCell = (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.note}`).join('<br>');
-      const waterCell = (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.ml}ml`).join('<br>');
-      const medCell = (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.note}`).join('<br>');
-      const foodCell = (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time))
-        .map(e=>`${e.time} ${e.note}`).join('<br>');
-      const notesCell = day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '';
-      return `<tr>
-        <td class="rt-date">${d}<br><span class="rt-weekday">${weekdayName(d)}</span></td>
-        <td>${foodCell}</td>
-        <td>${waterCell}</td>
-        <td>${glucoseCell}</td>
-        <td>${insulinCell}</td>
-        <td>${urineCell}</td>
-        <td>${stoolCell}</td>
-        <td>${vomitCell}</td>
-        <td>${medCell}</td>
-        <td class="rt-notes">${notesCell}</td>
-      </tr>`;
+      const cells = visibleCols.map(col=>{
+        if(col.key==='notes'){
+          const notesCell = day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '';
+          return `<td class="rt-notes">${notesCell}</td>`;
+        }
+        return `<td>${reportCellLines(day, col.key).join('<br>')}</td>`;
+      }).join('');
+      return `<tr><td class="rt-date">${d}<br><span class="rt-weekday">${weekdayName(d)}</span></td>${cells}</tr>`;
+    }).join('');
+    const headerCells = visibleCols.map(col=>{
+      let sub = '';
+      if(col.key==='glucose') sub = '<br>(時間→mmol/L)';
+      else if(col.key==='insulin') sub = '<br>(時間 劑量)';
+      else if(col.key==='weight') sub = '<br>(kg)';
+      return `<th>${col.label}${sub}</th>`;
     }).join('');
     daysHtml = `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr>
-        <th>日期</th><th>飲食</th><th>飲水</th><th>血糖<br>(時間→mmol/L)</th><th>胰島素<br>(時間 劑量)</th>
-        <th>排尿</th><th>排便</th><th>嘔吐</th><th>用藥</th><th>備註</th>
-      </tr></thead>
+      <thead><tr><th>日期</th>${headerCells}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table></div>`;
   }
 
   lastReportRange = {start, end};
 
+  const glucoseStatsHtml = showCat('glucose') ? `
+    <div class="report-stats">
+      <div class="stat-box"><div class="num">${allGlucose.length}</div><div class="lbl">血糖量測次數</div></div>
+      <div class="stat-box"><div class="num">${avg}</div><div class="lbl">平均值 mmol/L</div></div>
+      <div class="stat-box ${highCount>lowCount?'high':'low'}"><div class="num">${lowCount} / ${highCount}</div><div class="lbl">偏低 / 偏高次數</div></div>
+    </div>` : '';
+  const glucoseChartHtml = showCat('glucose') ? `
+    <div class="report-chart-wrap">
+      <h3>血糖趨勢（藍虛線=6 mmol/L，橘虛線=15 mmol/L）</h3>
+      ${buildGlucoseChart(allGlucose, allInsulin)}
+    </div>` : '';
+  const weightChartHtml = showCat('weight') ? `
+    <div class="report-chart-wrap">
+      <h3>體重趨勢</h3>
+      ${buildWeightChart(allWeight)}
+    </div>` : '';
+
   reportContent.innerHTML = `
     <div class="report-header">
       <h1>Kleo 健康記錄報表</h1>
       <div class="meta">期間：${start} — ${end} ・ 產生時間：${new Date().toLocaleString('zh-TW')}</div>
     </div>
-    <div class="report-stats">
-      <div class="stat-box"><div class="num">${allGlucose.length}</div><div class="lbl">血糖量測次數</div></div>
-      <div class="stat-box"><div class="num">${avg}</div><div class="lbl">平均值 mmol/L</div></div>
-      <div class="stat-box ${highCount>lowCount?'high':'low'}"><div class="num">${lowCount} / ${highCount}</div><div class="lbl">偏低 / 偏高次數</div></div>
-    </div>
-    <div class="report-chart-wrap">
-      <h3>血糖趨勢（藍虛線=6 mmol/L，橘虛線=15 mmol/L）</h3>
-      ${buildGlucoseChart(allGlucose, allInsulin)}
-    </div>
+    ${glucoseStatsHtml}
+    ${glucoseChartHtml}
+    ${weightChartHtml}
     ${daysHtml}
   `;
 
@@ -1413,19 +1647,21 @@ function buildReportCSV(){
   if(!lastReportRange) return '';
   const {start, end} = lastReportRange;
   const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
-  const header = ['日期','飲食','飲水','血糖 (時間→mmol/L)','胰島素 (時間 劑量)','排尿','排便','嘔吐','用藥','備註'];
+  const visibleCols = REPORT_COLUMNS.filter(c => reportVisibleCols.includes(c.key));
+  const header = ['日期', ...visibleCols.map(c=>{
+    if(c.key==='glucose') return '血糖 (時間→mmol/L)';
+    if(c.key==='insulin') return '胰島素 (時間 劑量)';
+    if(c.key==='weight') return '體重 (kg)';
+    return c.label;
+  })];
   const csvEscape = s => `"${String(s).replace(/"/g,'""')}"`;
   const rows = dates.map(d=>{
     const day = data[d];
-    const g = (day.glucose||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} → ${e.value}`).join(' ');
-    const i = (day.insulin||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.dose}`).join(' ');
-    const v = (day.vomit||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
-    const s = (day.stool||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
-    const u = (day.urine||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
-    const w = (day.water||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.ml}ml`).join(' ');
-    const m = (day.med||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
-    const f = (day.food||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).map(e=>`${e.time} ${e.note}`).join(' ');
-    return [d,f,w,g,i,u,s,v,m,day.notes||''].map(csvEscape).join(',');
+    const cells = visibleCols.map(c=>{
+      if(c.key==='notes') return day.notes || '';
+      return reportCellLines(day, c.key).join(' ');
+    });
+    return [d, ...cells].map(csvEscape).join(',');
   });
   return '\uFEFF' + header.map(csvEscape).join(',') + '\n' + rows.join('\n');
 }
@@ -1541,12 +1777,13 @@ async function restoreFromZipFile(file){
       });
     });
 
+    saveSnapshot();
     const {addedDays, addedEntries} = mergeImportedData(incoming);
     if(save()){
       render();
       importSheet.classList.remove('open');
       importBackdrop.classList.remove('open');
-      alert(`已從備份還原：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄（含照片 ${fileNames.length} 張）`);
+      alert(`已從備份還原：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄（含照片 ${fileNames.length} 張）\n\n如果發現不對，可以點「匯入」面板裡的「復原到匯入前」整個復原。`);
     }
   }catch(e){
     alert('還原失敗：' + e.message);
@@ -1585,10 +1822,10 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],notes:''};
       addedDays++;
     }
-    ['glucose','insulin','vomit','stool','urine','water','med','food'].forEach(cat=>{
+    ['glucose','insulin','vomit','stool','urine','water','med','food','weight'].forEach(cat=>{
       if(!data[dateStr][cat]) data[dateStr][cat] = [];
       (incoming[dateStr][cat]||[]).forEach(entry=>{
         data[dateStr][cat].push(entry);
@@ -1604,6 +1841,30 @@ function mergeImportedData(incoming){
   return {addedDays, addedEntries};
 }
 
+const SNAPSHOT_KEY = 'kleo-pre-import-snapshot';
+function saveSnapshot(){
+  try{
+    const snapshot = {
+      savedAt: new Date().toLocaleString('zh-TW'),
+      data: JSON.parse(JSON.stringify(data))
+    };
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+  }catch(e){ console.error('snapshot save failed', e); }
+}
+function restoreSnapshot(){
+  const raw = localStorage.getItem(SNAPSHOT_KEY);
+  if(!raw){ alert('目前沒有可還原的匯入前快照。'); return; }
+  const snapshot = JSON.parse(raw);
+  if(!confirm(`確定要復原到匯入前的狀態嗎？（快照時間：${snapshot.savedAt}）\n目前的資料會被這個快照取代。`)) return;
+  data = snapshot.data;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  localStorage.setItem('kleo-last-modified', String(Date.now()));
+  render();
+  alert('已復原到匯入前的狀態。');
+}
+
+document.getElementById('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
+
 doImportBtn.addEventListener('click', ()=>{
   let parsed;
   try{
@@ -1612,12 +1873,13 @@ doImportBtn.addEventListener('click', ()=>{
     alert('格式錯誤，無法解析JSON：' + e.message);
     return;
   }
+  saveSnapshot();
   const {addedDays, addedEntries} = mergeImportedData(parsed);
   if(save()){
     render();
     importSheet.classList.remove('open');
     importBackdrop.classList.remove('open');
-    alert(`匯入完成：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄`);
+    alert(`匯入完成：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄\n\n如果發現不對，可以點「匯入」面板裡的「復原到匯入前」整個復原。`);
   }
 });
 
