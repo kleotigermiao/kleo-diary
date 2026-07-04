@@ -316,6 +316,16 @@ textarea{resize:vertical; min-height:64px;}
 .chart-legend i{
   width:8px;height:8px;border-radius:50%;display:inline-block;
 }
+.symptom-breakdown{margin-bottom:14px;}
+.symptom-breakdown:last-child{margin-bottom:0;}
+.sb-title{
+  font-family:'Archivo Narrow',sans-serif;font-size:13px;font-weight:700;margin-bottom:8px;
+}
+.sb-pills{display:flex;flex-wrap:wrap;gap:6px;}
+.breakdown-pill{
+  background:var(--paper);border:1px solid var(--line);border-radius:14px;
+  padding:4px 10px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:var(--ink);
+}
 
 .report-day{margin-bottom:18px;page-break-inside:avoid;}
 .report-day h4{
@@ -333,8 +343,14 @@ textarea{resize:vertical; min-height:64px;}
 .report-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 .report-table{
   width:100%;border-collapse:collapse;font-size:11.5px;
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'IBM Plex Mono',monospace;table-layout:fixed;
 }
+.report-table th{position:relative;}
+.col-resize-handle{
+  position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;
+  touch-action:none;
+}
+.col-resize-handle:hover, .col-resize-handle.dragging{background:rgba(255,255,255,0.25);}
 .report-table th{
   background:var(--ink);color:var(--paper-raised);
   font-family:'Inter',sans-serif;font-weight:600;font-size:11px;
@@ -465,7 +481,8 @@ textarea{resize:vertical; min-height:64px;}
 <div id="reportView" style="display:none;">
   <div class="report-toolbar">
     <button class="sync-btn" id="backFromReport">← 返回</button>
-    <div style="display:flex;gap:6px;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+      <button class="sync-btn" id="filterColsBtn">篩選欄位</button>
       <button class="sync-btn" id="csvReportBtn">下載 CSV</button>
       <button class="sync-btn" id="printReportBtn">列印 / 存成PDF</button>
     </div>
@@ -1294,6 +1311,11 @@ reportBtn.addEventListener('click', ()=>{
   reportConfigSheet.classList.add('open');
   reportBackdrop.classList.add('open');
 });
+document.getElementById('filterColsBtn').addEventListener('click', ()=>{
+  // Open the same config sheet without resetting the already-generated report's date range
+  reportConfigSheet.classList.add('open');
+  reportBackdrop.classList.add('open');
+});
 closeReportConfig.addEventListener('click', ()=>{
   reportConfigSheet.classList.remove('open');
   reportBackdrop.classList.remove('open');
@@ -1587,15 +1609,50 @@ function generateReport(){
       if(col.key==='glucose') sub = '<br>(時間→mmol/L)';
       else if(col.key==='insulin') sub = '<br>(時間 劑量)';
       else if(col.key==='weight') sub = '<br>(kg)';
-      return `<th>${col.label}${sub}</th>`;
+      return `<th data-colkey="${col.key}">${col.label}${sub}<span class="col-resize-handle" data-colkey="${col.key}"></span></th>`;
     }).join('');
-    daysHtml = `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>日期</th>${headerCells}</tr></thead>
+    daysHtml = `<div class="report-table-wrap"><table class="report-table" id="reportTable">
+      <colgroup>${['date', ...visibleCols.map(c=>c.key)].map(k=>`<col data-colkey="${k}">`).join('')}</colgroup>
+      <thead><tr><th data-colkey="date">日期</th>${headerCells}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table></div>`;
   }
 
   lastReportRange = {start, end};
+
+  function countByOption(entries, options){
+    const counts = {};
+    options.forEach(o=> counts[o]=0);
+    let other = 0;
+    entries.forEach(e=>{
+      const note = e.note || '';
+      const matched = options.find(o=> note.startsWith(o));
+      if(matched) counts[matched]++; else other++;
+    });
+    return {counts, other};
+  }
+  const allVomit = [];
+  dates.forEach(d=> (data[d].vomit||[]).forEach(e=> allVomit.push(e)));
+  const allStool = [];
+  dates.forEach(d=> (data[d].stool||[]).forEach(e=> allStool.push(e)));
+  const vomitBreakdown = countByOption(allVomit, FIXED_OPTIONS.vomit);
+  const stoolBreakdown = countByOption(allStool, FIXED_OPTIONS.stool);
+
+  function breakdownHtml(icon, title, breakdown, total){
+    const pills = Object.entries(breakdown.counts)
+      .filter(([,c])=>c>0)
+      .map(([label,c])=>`<span class="breakdown-pill">${label} ×${c}</span>`).join('');
+    const otherPill = breakdown.other>0 ? `<span class="breakdown-pill">其他 ×${breakdown.other}</span>` : '';
+    return `<div class="symptom-breakdown">
+      <div class="sb-title">${icon} ${title}（共 ${total} 次）</div>
+      <div class="sb-pills">${pills}${otherPill || ''}</div>
+    </div>`;
+  }
+  const symptomStatsHtml = (showCat('vomit') || showCat('stool')) ? `
+    <div class="report-chart-wrap">
+      ${showCat('vomit') ? breakdownHtml('🤮','嘔吐', vomitBreakdown, allVomit.length) : ''}
+      ${showCat('stool') ? breakdownHtml('💩','排便', stoolBreakdown, allStool.length) : ''}
+    </div>` : '';
 
   const glucoseStatsHtml = showCat('glucose') ? `
     <div class="report-stats">
@@ -1620,6 +1677,7 @@ function generateReport(){
       <div class="meta">期間：${start} — ${end} ・ 產生時間：${new Date().toLocaleString('zh-TW')}</div>
     </div>
     ${glucoseStatsHtml}
+    ${symptomStatsHtml}
     ${glucoseChartHtml}
     ${weightChartHtml}
     ${daysHtml}
@@ -1632,6 +1690,60 @@ function generateReport(){
   reportConfigSheet.classList.remove('open');
   reportBackdrop.classList.remove('open');
   window.scrollTo(0,0);
+  wireColumnResize();
+}
+
+const COL_WIDTHS_KEY = 'kleo-report-col-widths-v1';
+function loadColWidths(){
+  try{
+    const raw = localStorage.getItem(COL_WIDTHS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function saveColWidths(widths){
+  try{ localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(widths)); }catch(e){}
+}
+function wireColumnResize(){
+  const table = document.getElementById('reportTable');
+  if(!table) return;
+  const widths = loadColWidths();
+  const cols = table.querySelectorAll('colgroup col');
+  cols.forEach(col=>{
+    const key = col.dataset.colkey;
+    if(widths[key]) col.style.width = widths[key] + 'px';
+  });
+
+  table.querySelectorAll('.col-resize-handle').forEach(handle=>{
+    let startX = 0, startWidth = 0, col = null;
+    const key = handle.dataset.colkey;
+    col = table.querySelector(`colgroup col[data-colkey="${key}"]`);
+
+    function onMove(clientX){
+      const delta = clientX - startX;
+      const newWidth = Math.max(40, startWidth + delta);
+      col.style.width = newWidth + 'px';
+    }
+    function onUp(){
+      handle.classList.remove('dragging');
+      const w = parseInt(col.style.width);
+      const widths2 = loadColWidths();
+      widths2[key] = w;
+      saveColWidths(widths2);
+      document.removeEventListener('pointermove', pointerMoveHandler);
+      document.removeEventListener('pointerup', onUp);
+    }
+    function pointerMoveHandler(e){ onMove(e.clientX); }
+
+    handle.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      handle.classList.add('dragging');
+      startX = e.clientX;
+      const th = handle.closest('th');
+      startWidth = th.offsetWidth;
+      document.addEventListener('pointermove', pointerMoveHandler);
+      document.addEventListener('pointerup', onUp);
+    });
+  });
 }
 
 genReportBtn.addEventListener('click', generateReport);
