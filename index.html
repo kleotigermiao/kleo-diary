@@ -114,7 +114,13 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 }
 .status-item{
   background:#00000005;border-radius:8px;padding:8px 10px;
-  display:flex;flex-direction:column;gap:2px;
+  display:flex;flex-direction:column;gap:2px;position:relative;
+}
+.status-item.quick-add{cursor:pointer;transition:background .12s;}
+.status-item.quick-add:hover, .status-item.quick-add:active{background:#00000010;}
+.reminder-dot{
+  position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;
+  background:var(--high);
 }
 .si-label{
   font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);
@@ -137,6 +143,29 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .mood-btn.active .mood-label{color:var(--paper-raised);}
 .mood-emoji{font-size:26px;}
 .mood-label{font-size:11px;color:var(--ink-soft);}
+
+.cat-score-widget{
+  margin:10px 16px 4px;padding:12px 14px;border-radius:10px;
+  background:linear-gradient(135deg,#00000006,#00000002);border:1px solid var(--line);
+}
+.cs-head{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);
+  text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;
+}
+.cs-main{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+.cs-emoji{font-size:38px;line-height:1;}
+.cs-text{display:flex;flex-direction:column;}
+.cs-text b{font-size:16px;font-family:'Archivo Narrow',sans-serif;}
+.cs-score{font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
+.cs-prev{font-size:12px;color:var(--ink-soft);margin-bottom:8px;}
+.cs-scale{display:flex;justify-content:space-between;gap:4px;margin-top:6px;}
+.cs-scale-item{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  font-size:18px;opacity:0.35;padding:4px 2px;border-radius:8px;
+}
+.cs-scale-item.active{opacity:1;background:#00000008;}
+.cs-scale-label{font-size:9px;color:var(--ink-soft);}
+.cs-note{font-size:10.5px;color:var(--ink-soft);margin:8px 0 0;line-height:1.5;}
 
 .section{padding:4px 16px 12px;}
 .row{
@@ -723,19 +752,116 @@ function buildStatusSummary(dateStr, day, dates, idx){
   }
 
   return `<div class="status-summary">
-    <div class="status-item"><span class="si-label">${ICONS.mood} 精神</span><span class="si-val">${moodLevel ? `${moodLevel.emoji} ${moodLevel.label}` : '<span class="si-empty">未記錄</span>'}</span></div>
-    <div class="status-item"><span class="si-label">${ICONS.appetite} 食慾</span><span class="si-val">${appetiteLevel ? `${appetiteLevel.emoji} ${appetiteLevel.label}` : '<span class="si-empty">未記錄</span>'}</span></div>
-    <div class="status-item"><span class="si-label">${ICONS.weight} 體重</span><span class="si-val">${weightValHtml}</span></div>
-    <div class="status-item"><span class="si-label">${ICONS.water} 飲水</span><span class="si-val">${waterValHtml}</span></div>
-    <div class="status-item"><span class="si-label">${ICONS.urine} 排尿</span><span class="si-val">${urineValHtml}</span></div>
+    <div class="status-item quick-add" data-date="${dateStr}" data-cat="mood">${!moodLevel?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.mood} 精神</span><span class="si-val">${moodLevel ? `${moodLevel.emoji} ${moodLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add" data-date="${dateStr}" data-cat="appetite">${!appetiteLevel?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.appetite} 食慾</span><span class="si-val">${appetiteLevel ? `${appetiteLevel.emoji} ${appetiteLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add" data-date="${dateStr}" data-cat="weight">${!weightLatest?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.weight} 體重</span><span class="si-val">${weightLatest ? weightValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add" data-date="${dateStr}" data-cat="water">${waterEntries.length===0?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.water} 飲水</span><span class="si-val">${waterEntries.length>0 ? waterValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add" data-date="${dateStr}" data-cat="urine">${urineEntries.length===0?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.urine} 排尿</span><span class="si-val">${urineEntries.length>0 ? urineValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
   </div>`;
 }
+
+function scoreTier(score){
+  if(score>=80) return MOOD_LEVELS[0]; // 很棒
+  if(score>=60) return MOOD_LEVELS[1]; // 良好
+  if(score>=40) return MOOD_LEVELS[2]; // 普通
+  if(score>=20) return MOOD_LEVELS[3]; // 不佳
+  return MOOD_LEVELS[4]; // 很差
+}
+function computeCatScore(dateStr, day, dates, idx){
+  const parts = [];
+
+  const moodLatest = latestEntry(day.mood);
+  if(moodLatest) parts.push(moodLatest.value/5*100);
+
+  const appetiteLatest = latestEntry(day.appetite);
+  if(appetiteLatest) parts.push(appetiteLatest.value/5*100);
+
+  const weightLatest = latestEntry(day.weight);
+  if(weightLatest){
+    const prev = findPrevDayAggregate(dates, idx, 'weight', es=>latestEntry(es).value);
+    if(prev && prev.value>0){
+      const pct = (weightLatest.value - prev.value)/prev.value*100;
+      let s;
+      if(Math.abs(pct)<=2) s = 90;
+      else if(pct<0) s = Math.max(0, 90 - Math.abs(pct)*15);
+      else if(pct<=5) s = 75;
+      else s = 60;
+      parts.push(s);
+    } else parts.push(70);
+  }
+
+  const waterEntries2 = day.water || [];
+  if(waterEntries2.length>0){
+    const todayTotal = waterEntries2.reduce((s,e)=>s+(e.ml||0),0);
+    const prev = findPrevDayAggregate(dates, idx, 'water', es=>es.reduce((s,e)=>s+(e.ml||0),0));
+    if(prev && prev.value>0){
+      const pct = (todayTotal - prev.value)/prev.value*100;
+      let s;
+      if(Math.abs(pct)<=20) s = 90;
+      else if(pct>0) s = Math.max(0, 90 - (pct-20)*1.2);
+      else s = Math.max(0, 90 - (Math.abs(pct)-20)*1.0);
+      parts.push(s);
+    } else parts.push(70);
+  }
+
+  const urineEntries2 = day.urine || [];
+  if(urineEntries2.length>0){
+    const todayCount = urineEntries2.length;
+    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>es.length);
+    if(prev){
+      const diff = todayCount - prev.value;
+      let s;
+      if(diff===0) s = 90;
+      else if(diff>0) s = Math.max(0, 90 - diff*15);
+      else s = Math.max(0, 90 - Math.abs(diff)*10);
+      parts.push(s);
+    } else parts.push(70);
+  }
+
+  if(parts.length===0) return null;
+  return Math.round(parts.reduce((a,b)=>a+b,0)/parts.length);
+}
+function buildCatScoreWidget(dateStr, day, dates, idx){
+  const score = computeCatScore(dateStr, day, dates, idx);
+  const scale = MOOD_LEVELS.map(l=>{
+    const active = score!=null && scoreTier(score).v===l.v;
+    return `<span class="cs-scale-item${active?' active':''}">${l.emoji}<span class="cs-scale-label">${l.label}</span></span>`;
+  }).join('');
+  if(score==null){
+    return `<div class="cat-score-widget">
+      <div class="cs-head">今日貓貓狀態</div>
+      <p class="si-empty" style="margin:4px 0 8px;font-size:12.5px;">今天還沒有精神/食慾/體重/飲水/排尿的記錄，先記錄幾項才能算出狀態分數喔。</p>
+      <div class="cs-scale">${scale}</div>
+    </div>`;
+  }
+  const tier = scoreTier(score);
+  const prevIdx = idx+1;
+  let prevHtml = '';
+  if(prevIdx < dates.length){
+    const prevDateStr = dates[prevIdx];
+    const prevScore = computeCatScore(prevDateStr, data[prevDateStr], dates, prevIdx);
+    if(prevScore!=null){
+      const prevTier = scoreTier(prevScore);
+      const diff = score - prevScore;
+      const trend = diff>0 ? `<span class="delta up">▲ 進步${diff}分</span>` : diff<0 ? `<span class="delta down">▼ 下降${Math.abs(diff)}分</span>` : `<span class="delta flat">與昨日持平</span>`;
+      prevHtml = `<div class="cs-prev">昨日：${prevTier.emoji} ${prevTier.label}（${prevScore}分） ${trend}</div>`;
+    }
+  }
+  return `<div class="cat-score-widget">
+    <div class="cs-head">今日貓貓狀態</div>
+    <div class="cs-main"><span class="cs-emoji">${tier.emoji}</span><span class="cs-text"><b>${tier.label}</b><span class="cs-score">${score} 分</span></span></div>
+    ${prevHtml}
+    <div class="cs-scale">${scale}</div>
+    <p class="cs-note">＊依「精神／食慾／體重／飲水／排尿」與前一次紀錄比較，用規則計算出的參考分數（非即時AI診斷），僅供輔助觀察趨勢用。</p>
+  </div>`;
+}
+
 const MOOD_LEVELS = [
-  {v:1, emoji:'😿', label:'很差'},
-  {v:2, emoji:'🙁', label:'不佳'},
-  {v:3, emoji:'😐', label:'普通'},
-  {v:4, emoji:'🙂', label:'良好'},
-  {v:5, emoji:'😻', label:'很棒'}
+  {v:5, emoji:'😻', label:'很棒'},
+  {v:4, emoji:'😸', label:'良好'},
+  {v:3, emoji:'😺', label:'普通'},
+  {v:2, emoji:'😾', label:'不佳'},
+  {v:1, emoji:'😿', label:'很差'}
 ];
 const FOOD_OPTIONS = {
   '乾糧': ['YA Lid Zero'],
@@ -819,6 +945,7 @@ function render(){
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
       </div>
       ${buildStatusSummary(dateStr, day, dates, idx)}
+      ${buildCatScoreWidget(dateStr, day, dates, idx)}
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
   }).join('');
@@ -846,6 +973,11 @@ function render(){
   main.querySelectorAll('.note-edit-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       openSheetForEditNote(btn.dataset.date);
+    });
+  });
+  main.querySelectorAll('.quick-add').forEach(item=>{
+    item.addEventListener('click', ()=>{
+      openQuickAdd(item.dataset.date, item.dataset.cat);
     });
   });
 }
@@ -930,6 +1062,20 @@ function openSheet(){
   backdrop.classList.add('open');
 }
 
+function openQuickAdd(dateStr, cat){
+  editContext = null;
+  fDate.value = dateStr;
+  fTime.value = nowTime();
+  currentPhotos = [];
+  fPhoto.value = '';
+  renderPhotoPreview();
+  document.querySelector('#sheet h2').textContent = '新增記錄';
+  document.getElementById('saveBtn').textContent = '儲存';
+  document.getElementById('catGrid').style.display = 'none';
+  setCategory(cat);
+  sheet.classList.add('open');
+  backdrop.classList.add('open');
+}
 function openSheetForEditNote(dateStr){
   editContext = {date: dateStr, cat: 'note', isDayNote: true};
   fDate.value = dateStr;
