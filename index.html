@@ -230,13 +230,16 @@ textarea{resize:vertical; min-height:64px;}
   background:none;color:var(--ink);font-weight:600;cursor:pointer;
 }
 .col-check-grid{
-  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:4px;
 }
 .col-check-item{
-  display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);
+  display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);
   background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+  cursor:grab;
 }
-.col-check-item input{margin:0;}
+.col-check-item.dragging{opacity:0.4;}
+.col-check-item input{margin:0;width:auto;flex:0 0 auto;}
+.col-drag-handle{color:var(--ink-soft);font-size:14px;cursor:grab;user-select:none;}
 
 #photoField label{margin-top:14px;}
 #fPhoto{font-size:13px; font-family:'Inter',sans-serif; color:var(--ink-soft);}
@@ -277,9 +280,23 @@ textarea{resize:vertical; min-height:64px;}
   padding:calc(14px + var(--safe-top)) 16px 12px;
   display:flex;justify-content:space-between;gap:10px;
 }
+.gallery-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:6px;
+  padding:0 16px 60px;max-width:900px;margin:0 auto;
+}
+@media (min-width:640px){ .gallery-grid{grid-template-columns:repeat(5,1fr);} }
+.gallery-item{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--paper-raised);}
+.gallery-item img{width:100%;height:100%;object-fit:cover;display:block;}
+.gallery-item .gi-tag{
+  position:absolute;left:4px;bottom:4px;font-size:10px;background:rgba(0,0,0,0.55);
+  color:#fff;padding:1px 5px;border-radius:4px;font-family:'IBM Plex Mono',monospace;
+}
 #reportContent{
   max-width:680px;margin:0 auto;padding:24px 20px 60px;
   font-family:'Inter',sans-serif;color:var(--ink);
+}
+@media (min-width:900px){
+  #reportContent{max-width:96vw;padding:24px 32px 60px;}
 }
 .report-header{margin-bottom:22px;border-bottom:2px solid var(--ink);padding-bottom:14px;}
 .report-header h1{
@@ -306,6 +323,12 @@ textarea{resize:vertical; min-height:64px;}
 .report-chart-wrap h3{
   font-family:'Archivo Narrow',sans-serif;font-size:14px;margin:0 0 12px;
 }
+.collapsible-h3{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;}
+.collapse-arrow{display:inline-block;transition:transform .15s;font-size:11px;}
+.collapsible-h3.collapsed .collapse-arrow{transform:rotate(-90deg);}
+.collapsible-h3.collapsed{margin-bottom:0;}
+.collapsible-body{overflow:hidden;}
+.collapsible-body.collapsed{display:none;}
 .chart-legend{
   display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px;
 }
@@ -340,7 +363,7 @@ textarea{resize:vertical; min-height:64px;}
 }
 .no-data-msg{text-align:center;color:var(--ink-soft);padding:40px 20px;font-size:13px;}
 
-.report-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.report-table-wrap{-webkit-overflow-scrolling:touch;}
 .report-table{
   width:100%;border-collapse:collapse;font-size:11.5px;
   font-family:'IBM Plex Mono',monospace;table-layout:fixed;
@@ -354,11 +377,14 @@ textarea{resize:vertical; min-height:64px;}
 .report-table th{
   background:var(--ink);color:var(--paper-raised);
   font-family:'Inter',sans-serif;font-weight:600;font-size:11px;
-  padding:8px 7px;text-align:left;white-space:nowrap;position:sticky;top:0;
+  padding:8px 7px;text-align:left;white-space:nowrap;position:sticky;
+  top:var(--toolbar-h,56px);z-index:5;cursor:grab;
 }
+.report-table th.th-dragging{opacity:0.4;}
+.report-table th[data-colkey="date"]{cursor:default;}
 .report-table td{
   border:1px solid var(--line);padding:7px;vertical-align:top;
-  line-height:1.6;white-space:nowrap;
+  line-height:1.6;white-space:normal;word-break:break-word;
 }
 .report-table td.rt-date{
   font-family:'Archivo Narrow',sans-serif;font-weight:700;font-size:13px;
@@ -380,6 +406,10 @@ textarea{resize:vertical; min-height:64px;}
   .report-table{font-size:9.5px;}
   .report-table th{position:static;}
   .report-table-wrap{overflow-x:visible;}
+  .sheet, .sheet-backdrop, .sync-sheet, .fab, .lightbox,
+  .topbar, #main, #galleryView{display:none !important;}
+  .collapsible-body.collapsed{display:block !important;}
+  .collapse-arrow{display:none;}
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -399,6 +429,7 @@ textarea{resize:vertical; min-height:64px;}
       <button class="sync-btn" id="googleAuthBtn">登入 Google 同步</button>
       <button class="sync-btn" id="backupBtn">完整備份</button>
       <button class="sync-btn" id="importBtn">匯入</button>
+      <button class="sync-btn" id="galleryBtn">圖庫</button>
       <button class="sync-btn" id="reportBtn">報表</button>
     </div>
   </div>
@@ -434,7 +465,13 @@ textarea{resize:vertical; min-height:64px;}
 
   <div class="row2">
     <div><label>日期</label><input type="date" id="fDate"></div>
-    <div id="timeWrap"><label>時間</label><input type="time" id="fTime"></div>
+    <div id="timeWrap"><label>時間</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="fTime" inputmode="numeric" placeholder="HH:MM" autocomplete="off" style="flex:1;">
+        <button type="button" id="fTimeNowBtn" class="tag-add-btn" style="white-space:nowrap;">現在</button>
+      </div>
+      <p style="margin:4px 0 0;font-size:11px;color:var(--ink-soft);">直接打數字會自動變成 HH:MM；如果原始記錄時間不確定（例如「?」），也可以保留文字不動。</p>
+    </div>
   </div>
 
   <div id="dynamicFields"></div>
@@ -462,6 +499,9 @@ textarea{resize:vertical; min-height:64px;}
   <div class="cat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">
     <button class="cat-btn range-btn active" data-range="week">最近一週</button>
     <button class="cat-btn range-btn" data-range="month">最近一個月</button>
+    <button class="cat-btn range-btn" data-range="3months">最近三個月</button>
+    <button class="cat-btn range-btn" data-range="6months">最近半年</button>
+    <button class="cat-btn range-btn" data-range="year">最近一年</button>
     <button class="cat-btn range-btn" data-range="custom">自訂</button>
   </div>
   <div class="row2" id="customRangeRow" style="display:none;">
@@ -473,7 +513,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn layout-btn active" data-layout="table">表格（列印/PDF用）</button>
     <button class="cat-btn layout-btn" data-layout="card">卡片（螢幕閱讀用）</button>
   </div>
-  <label style="margin-top:18px;">顯示欄位（取消勾選可隱藏）</label>
+  <label style="margin-top:18px;">顯示欄位（取消勾選可隱藏，拖曳 ⠿ 可調整順序）</label>
   <div class="col-check-grid" id="colCheckGrid"></div>
   <button class="save-btn" id="genReportBtn">產生報表</button>
 </div>
@@ -490,6 +530,15 @@ textarea{resize:vertical; min-height:64px;}
   <div id="reportContent"></div>
 </div>
 
+<div id="galleryView" style="display:none;">
+  <div class="report-toolbar">
+    <button class="sync-btn" id="backFromGallery">← 返回</button>
+  </div>
+  <div class="cat-grid" id="galleryFilterGrid" style="grid-template-columns:repeat(3,1fr);margin:0 16px 14px;"></div>
+  <div id="galleryGrid" class="gallery-grid"></div>
+  <p id="galleryEmpty" style="text-align:center;color:var(--ink-soft);display:none;">這個分類目前還沒有照片</p>
+</div>
+
 <div class="sheet-backdrop" id="importBackdrop"></div>
 <div class="sync-sheet" id="importSheet">
   <button class="close-x" id="closeImportSheet" aria-label="關閉">✕</button>
@@ -499,8 +548,12 @@ textarea{resize:vertical; min-height:64px;}
   <label>方式一：從完整備份(.zip)還原（含照片）</label>
   <input type="file" accept=".zip" id="restoreZipInput">
 
-  <label style="margin-top:22px;">方式二：貼上Claude整理好的JSON文字（不含照片）</label>
-  <p>把你的Markdown日記給Claude，請它轉換成這個格式，貼上後按「匯入」。既有的記錄不會被覆蓋，新資料會合併進去。</p>
+  <label style="margin-top:22px;">方式二：選擇Claude整理好的 .json 檔案（不含照片）</label>
+  <p>把你的Markdown日記給Claude，請它轉換成這個格式並輸出成.json檔案，直接選檔匯入，避免複製貼上時內容被截斷或破壞。既有的記錄不會被覆蓋，新資料會合併進去。</p>
+  <input type="file" accept=".json,application/json" id="importJsonFileInput">
+
+  <label style="margin-top:22px;">方式三：貼上Claude整理好的JSON文字（不含照片）</label>
+  <p>如果不方便用檔案，也可以把JSON文字直接貼在這裡再按「匯入」。</p>
   <textarea id="importText" placeholder='貼上JSON格式的資料…' style="height:150px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></textarea>
   <button class="save-btn" id="doImportBtn">匯入 JSON 文字</button>
 
@@ -597,7 +650,8 @@ const FIXED_OPTIONS = {
 function renderRowHtml(dateStr, cat, e, idx){
   let valHtml = '';
   if(cat==='glucose'){
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>`;
+    const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>${detail}`;
   } else if(cat==='weight'){
     valHtml = `<span class="tag normal">${e.value} kg</span>`;
   } else if(cat==='insulin'){
@@ -706,6 +760,21 @@ const fTime = document.getElementById('fTime');
 const dynamicFields = document.getElementById('dynamicFields');
 const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
+const fTimeNowBtn = document.getElementById('fTimeNowBtn');
+fTimeNowBtn.addEventListener('click', ()=>{ fTime.value = nowTime(); });
+fTime.addEventListener('input', ()=>{
+  // Only auto-format when the user is actively typing plain digits (e.g. "0840" -> "08:40").
+  // Anything containing non-digit characters (like "?", "約上午", "左耳2:05") is left untouched
+  // so odd/unsure original time text can still be preserved and edited freely.
+  const raw = fTime.value;
+  const digitsOnly = raw.replace(/[^0-9]/g,'');
+  if(digitsOnly.length===0 || digitsOnly.length !== raw.length){ return; }
+  let formatted = digitsOnly;
+  if(digitsOnly.length>=3){
+    formatted = digitsOnly.slice(0,2) + ':' + digitsOnly.slice(2,4);
+  }
+  fTime.value = formatted;
+});
 const fPhoto = document.getElementById('fPhoto');
 const photoPreviewWrap = document.getElementById('photoPreviewWrap');
 const photoPreviewGrid = document.getElementById('photoPreviewGrid');
@@ -860,7 +929,11 @@ function openSheetForEdit(dateStr, cat, idx){
       if(detailEl) detailEl.value = raw;
     }
   } else if(valEl){
-    if(cat==='glucose') valEl.value = entry.value;
+    if(cat==='glucose'){
+      valEl.value = entry.value;
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = entry.note || '';
+    }
     else if(cat==='weight') valEl.value = entry.value;
     else if(cat==='insulin') valEl.value = entry.dose;
     else if(cat==='water') valEl.value = entry.ml;
@@ -1030,7 +1103,9 @@ function setCategory(cat){
   timeWrap.style.display = 'block';
   photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
   if(cat==='glucose'){
-    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">`;
+    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">
+      <label>補充說明（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如左耳、同滴血、餐前…">`;
   } else if(cat==='weight'){
     dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="number" step="0.01" id="fVal" placeholder="例如 4.20">`;
   } else if(cat==='insulin'){
@@ -1044,6 +1119,8 @@ function setCategory(cat){
         <input type="text" id="newDoseInput" placeholder="新增劑量…" style="flex:1;">
         <button type="button" id="addDoseBtn" class="tag-add-btn">新增</button>
       </div>
+      <label style="margin-top:8px;">目前劑量內容（可直接編輯文字）</label>
+      <input type="text" id="fVal" placeholder="例如 1u、1u(新開封胰島素)…">
       <label>注射位置（可選）</label>
       <div class="option-grid" id="siteTagGrid">${renderTagButtons(siteTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -1056,7 +1133,6 @@ function setCategory(cat){
         <input type="text" id="newNeedleInput" placeholder="新增型號…" style="flex:1;">
         <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
       </div>
-      <input type="hidden" id="fVal">
       <input type="hidden" id="fSite">
       <input type="hidden" id="fNeedle">
     `;
@@ -1156,6 +1232,84 @@ function setCategory(cat){
   }
 }
 
+function readAsciiString(view, offset, len){
+  let str = '';
+  for(let i=0;i<len;i++){
+    const c = view.getUint8(offset+i);
+    if(c===0) break;
+    str += String.fromCharCode(c);
+  }
+  return str;
+}
+function parseExifDateString(str){
+  const m = str.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` };
+}
+function parseExifBlock(view, start){
+  if(view.getUint32(start,false) !== 0x45786966) return null; // 'Exif'
+  const tiffOffset = start + 6;
+  const little = view.getUint16(tiffOffset, false) === 0x4949;
+  const get16 = o=> view.getUint16(o, little);
+  const get32 = o=> view.getUint32(o, little);
+  const firstIFDOffset = get32(tiffOffset+4);
+  const dirOffset = tiffOffset + firstIFDOffset;
+  const entries = get16(dirOffset);
+  let exifSubIFDOffset = null, fallbackDateTime = null;
+  for(let i=0;i<entries;i++){
+    const entryOffset = dirOffset + 2 + i*12;
+    const tag = get16(entryOffset);
+    if(tag === 0x8769){ exifSubIFDOffset = tiffOffset + get32(entryOffset+8); }
+    if(tag === 0x0132){
+      const valOffset = tiffOffset + get32(entryOffset+8);
+      fallbackDateTime = readAsciiString(view, valOffset, 19);
+    }
+  }
+  if(exifSubIFDOffset){
+    const subEntries = get16(exifSubIFDOffset);
+    for(let i=0;i<subEntries;i++){
+      const entryOffset = exifSubIFDOffset + 2 + i*12;
+      const tag = get16(entryOffset);
+      if(tag === 0x9003 || tag === 0x9004){
+        const valOffset = tiffOffset + get32(entryOffset+8);
+        const str = readAsciiString(view, valOffset, 19);
+        const parsed = parseExifDateString(str);
+        if(parsed) return parsed;
+      }
+    }
+  }
+  return fallbackDateTime ? parseExifDateString(fallbackDateTime) : null;
+}
+function readExifDateTime(file){
+  return new Promise((resolve)=>{
+    if(!file.type || !file.type.includes('jpeg')){ resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const view = new DataView(e.target.result);
+        if(view.getUint16(0,false) !== 0xFFD8){ resolve(null); return; }
+        let offset = 2;
+        const length = view.byteLength;
+        while(offset + 4 <= length){
+          const marker = view.getUint16(offset, false);
+          offset += 2;
+          if(marker === 0xFFE1){
+            resolve(parseExifBlock(view, offset+2));
+            return;
+          } else if((marker & 0xFF00) !== 0xFF00){
+            break;
+          } else {
+            offset += view.getUint16(offset, false);
+          }
+        }
+        resolve(null);
+      }catch(err){ resolve(null); }
+    };
+    reader.onerror = ()=> resolve(null);
+    reader.readAsArrayBuffer(file.slice(0, 128*1024));
+  });
+}
+
 function compressImage(file, maxDim=900, quality=0.7){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -1184,12 +1338,26 @@ fPhoto.addEventListener('change', async ()=>{
   const files = Array.from(fPhoto.files || []);
   if(files.length===0) return;
   try{
+    let exifResult = null;
     for(const file of files){
+      if(!exifResult){
+        exifResult = await readExifDateTime(file).catch(()=>null);
+      }
       const compressed = await compressImage(file);
       currentPhotos.push(compressed);
     }
     renderPhotoPreview();
     fPhoto.value = '';
+    if(exifResult){
+      const differs = fDate.value !== exifResult.date || fTime.value !== exifResult.time;
+      if(differs){
+        const useIt = confirm(`偵測到照片拍攝時間為 ${exifResult.date} ${exifResult.time}，要套用到這筆記錄的日期／時間嗎？`);
+        if(useIt){
+          fDate.value = exifResult.date;
+          fTime.value = exifResult.time;
+        }
+      }
+    }
   }catch(e){ console.error('compress error', e); }
 });
 clearPhotoBtn.addEventListener('click', ()=>{
@@ -1202,10 +1370,12 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const dateStr = fDate.value || todayStr();
   const time = fTime.value || nowTime();
   const valEl = document.getElementById('fVal');
-  let rawVal = valEl ? valEl.value.trim() : '';
+  const numRaw = valEl ? valEl.value.trim() : '';
   const detailEl = document.getElementById('fDetail');
-  if(detailEl && detailEl.value.trim()){
-    rawVal = rawVal ? `${rawVal}（${detailEl.value.trim()}）` : detailEl.value.trim();
+  const detailRaw = detailEl ? detailEl.value.trim() : '';
+  let rawVal = numRaw;
+  if(detailRaw){
+    rawVal = rawVal ? `${rawVal}（${detailRaw}）` : detailRaw;
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
@@ -1225,7 +1395,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     let updated;
     if(cat==='glucose'){
-      updated = {time, value: parseFloat(rawVal), photos: photosToSave};
+      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='weight'){
       updated = {time, value: parseFloat(rawVal)};
     } else if(cat==='insulin'){
@@ -1256,7 +1426,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr].weight) data[dateStr].weight = [];
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
-      data[dateStr].glucose.push({time, value: parseFloat(rawVal), photos: photosToSave});
+      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='weight'){
       data[dateStr].weight.push({time, value: parseFloat(rawVal)});
     } else if(currentCat==='insulin'){
@@ -1352,6 +1522,18 @@ function getRangeDates(){
     end = todayStr();
     const d = new Date(); d.setDate(d.getDate()-29);
     start = d.toISOString().slice(0,10);
+  } else if(selectedRange==='3months'){
+    end = todayStr();
+    const d = new Date(); d.setMonth(d.getMonth()-3);
+    start = d.toISOString().slice(0,10);
+  } else if(selectedRange==='6months'){
+    end = todayStr();
+    const d = new Date(); d.setMonth(d.getMonth()-6);
+    start = d.toISOString().slice(0,10);
+  } else if(selectedRange==='year'){
+    end = todayStr();
+    const d = new Date(); d.setFullYear(d.getFullYear()-1);
+    start = d.toISOString().slice(0,10);
   } else {
     start = rangeStart.value;
     end = rangeEnd.value;
@@ -1363,7 +1545,19 @@ function buildGlucoseChart(allEntries, allInsulin){
   if(allEntries.length===0) return '<p class="no-data-msg">此區間沒有血糖記錄</p>';
 
   const toTs = e => new Date(e.date+'T'+e.time+':00').getTime();
-  const sorted = [...allEntries].sort((a,b)=>toTs(a)-toTs(b));
+  const isValidTs = ts => !isNaN(ts);
+  const validEntries = allEntries.filter(e=>isValidTs(toTs(e)));
+  if(validEntries.length===0){
+    return `<p class="no-data-msg">這 ${allEntries.length} 筆血糖記錄的時間格式無法辨識（例如標記為「?」或非HH:mm格式），暫時無法畫成趨勢圖。可以到記錄裡把時間補上完整的HH:mm再看看。</p>`;
+  }
+  const sorted = [...validEntries].sort((a,b)=>toTs(a)-toTs(b));
+  const skippedEntries = allEntries.filter(e=>!isValidTs(toTs(e)));
+  const skippedNote = skippedEntries.length>0 ? `<div class="no-data-msg">
+      <p>另有 ${skippedEntries.length} 筆記錄因時間格式無法辨識，未顯示在圖表中，但仍計入上方統計數字：</p>
+      <ul style="margin:4px 0 0 18px;padding:0;">
+        ${skippedEntries.map(e=>`<li>${e.date} 「${e.time}」 → ${e.value} mmol/L</li>`).join('')}
+      </ul>
+    </div>` : '';
   const tsMin = toTs(sorted[0]), tsMax = toTs(sorted[sorted.length-1]);
   const tsRange = (tsMax - tsMin) || (1000*60*60*24);
 
@@ -1390,14 +1584,15 @@ function buildGlucoseChart(allEntries, allInsulin){
     svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1.5" opacity="0.6"/>`;
     svg += `<text x="${padL-10}" y="${y+7}" font-size="20" fill="#5A6E6E" text-anchor="end">${v}</text>`;
   }
-  // reference thresholds (low<6, high>15)
-  svg += `<line x1="${padL}" y1="${yFor(6)}" x2="${W-padR}" y2="${yFor(6)}" stroke="#3B6E8F" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
-  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#D6622C" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+  // reference thresholds
+  svg += `<line x1="${padL}" y1="${yFor(4)}" x2="${W-padR}" y2="${yFor(4)}" stroke="#3B6E8F" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D6622C" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#C0392B" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
 
   // insulin vertical markers
   (allInsulin||[]).forEach(e=>{
     const ts = toTs(e);
-    if(ts < tsMin || ts > tsMax) return;
+    if(!isValidTs(ts) || ts < tsMin || ts > tsMax) return;
     const x = xFor(ts);
     svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#B23A48" stroke-width="2" stroke-dasharray="3,5" opacity="0.6"/>`;
   });
@@ -1424,7 +1619,9 @@ function buildGlucoseChart(allEntries, allInsulin){
   svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="4"/>`;
   sorted.forEach(e=>{
     const x = xFor(toTs(e)), y = yFor(e.value);
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="2"/>`;
+    const d = new Date(toTs(e));
+    const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="2"><title>${dateLabel} → ${e.value} mmol/L</title></circle>`;
   });
 
   svg += `</svg>`;
@@ -1436,7 +1633,7 @@ function buildGlucoseChart(allEntries, allInsulin){
     <span><i style="background:#3F7A5C"></i>正常</span>
     <span><i style="background:#D6622C"></i>偏高</span>
   </div>`;
-  return legend + svg;
+  return legend + svg + skippedNote;
 }
 
 function buildWeightChart(allEntries){
@@ -1517,9 +1714,25 @@ function loadReportCols(){
 function saveReportCols(cols){
   try{ localStorage.setItem(REPORT_COLS_KEY, JSON.stringify(cols)); }catch(e){}
 }
+const REPORT_COL_ORDER_KEY = 'kleo-report-col-order-v1';
+function loadColOrder(){
+  const allKeys = REPORT_COLUMNS.map(c=>c.key);
+  try{
+    const raw = localStorage.getItem(REPORT_COL_ORDER_KEY);
+    const saved = raw ? JSON.parse(raw) : allKeys;
+    // include any new columns that weren't in a previously saved order, drop any that no longer exist
+    const merged = saved.filter(k=>allKeys.includes(k));
+    allKeys.forEach(k=>{ if(!merged.includes(k)) merged.push(k); });
+    return merged;
+  }catch(e){ return allKeys; }
+}
+function saveColOrder(order){
+  try{ localStorage.setItem(REPORT_COL_ORDER_KEY, JSON.stringify(order)); }catch(e){}
+}
+let reportColOrder = loadColOrder();
 function reportCellLines(day, catKey){
   const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
-  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}`);
+  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}` + (e.note ? ` (${e.note})` : ''));
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='insulin') return entries.map(e=>{
     const extra = [];
@@ -1534,12 +1747,16 @@ function reportCellLines(day, catKey){
 let reportVisibleCols = loadReportCols();
 function renderColCheckGrid(){
   const grid = document.getElementById('colCheckGrid');
-  grid.innerHTML = REPORT_COLUMNS.map(c=>`
-    <label class="col-check-item">
+  grid.innerHTML = reportColOrder.map(key=>{
+    const c = REPORT_COLUMNS.find(x=>x.key===key);
+    if(!c) return '';
+    return `
+    <label class="col-check-item" draggable="true" data-key="${c.key}">
+      <span class="col-drag-handle" aria-hidden="true">⠿</span>
       <input type="checkbox" data-col="${c.key}" ${reportVisibleCols.includes(c.key)?'checked':''}>
       ${c.icon} ${c.label}
-    </label>
-  `).join('');
+    </label>`;
+  }).join('');
   grid.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
     cb.addEventListener('change', ()=>{
       const key = cb.dataset.col;
@@ -1551,6 +1768,36 @@ function renderColCheckGrid(){
       saveReportCols(reportVisibleCols);
     });
   });
+  wireColCheckDrag(grid);
+}
+function wireColCheckDrag(grid){
+  let dragKey = null;
+  grid.querySelectorAll('.col-check-item').forEach(item=>{
+    item.addEventListener('dragstart', (e)=>{
+      dragKey = item.dataset.key;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', ()=>{
+      item.classList.remove('dragging');
+    });
+    item.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      const target = item;
+      if(target.dataset.key===dragKey) return;
+      const rect = target.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height/2;
+      target.parentNode.insertBefore(
+        grid.querySelector(`[data-key="${dragKey}"]`),
+        before ? target : target.nextSibling
+      );
+    });
+    item.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      reportColOrder = Array.from(grid.querySelectorAll('.col-check-item')).map(el=>el.dataset.key);
+      saveColOrder(reportColOrder);
+    });
+  });
 }
 renderColCheckGrid();
 
@@ -1558,7 +1805,7 @@ function generateReport(){
   const {start, end} = getRangeDates();
   if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
   const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
-  const visibleCols = REPORT_COLUMNS.filter(c => reportVisibleCols.includes(c.key));
+  const visibleCols = reportColOrder.map(k => REPORT_COLUMNS.find(c=>c.key===k)).filter(c => c && reportVisibleCols.includes(c.key));
   const showCat = key => reportVisibleCols.includes(key);
 
   const allGlucose = [];
@@ -1609,11 +1856,11 @@ function generateReport(){
       if(col.key==='glucose') sub = '<br>(時間→mmol/L)';
       else if(col.key==='insulin') sub = '<br>(時間 劑量)';
       else if(col.key==='weight') sub = '<br>(kg)';
-      return `<th data-colkey="${col.key}">${col.label}${sub}<span class="col-resize-handle" data-colkey="${col.key}"></span></th>`;
+      return `<th data-colkey="${col.key}" draggable="true">${col.label}${sub}<span class="col-resize-handle" data-colkey="${col.key}" draggable="false"></span></th>`;
     }).join('');
     daysHtml = `<div class="report-table-wrap"><table class="report-table" id="reportTable">
       <colgroup>${['date', ...visibleCols.map(c=>c.key)].map(k=>`<col data-colkey="${k}">`).join('')}</colgroup>
-      <thead><tr><th data-colkey="date">日期</th>${headerCells}</tr></thead>
+      <thead><tr><th data-colkey="date">日期<span class="col-resize-handle" data-colkey="date"></span></th>${headerCells}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table></div>`;
   }
@@ -1638,20 +1885,25 @@ function generateReport(){
   const vomitBreakdown = countByOption(allVomit, FIXED_OPTIONS.vomit);
   const stoolBreakdown = countByOption(allStool, FIXED_OPTIONS.stool);
 
-  function breakdownHtml(icon, title, breakdown, total){
+  function freqLabel(count, dayCount){
+    if(dayCount<=0) return '';
+    return count>0 ? ` · 每${(dayCount/count).toFixed(1)}天1次` : '';
+  }
+  function breakdownHtml(icon, title, breakdown, total, dayCount){
     const pills = Object.entries(breakdown.counts)
       .filter(([,c])=>c>0)
-      .map(([label,c])=>`<span class="breakdown-pill">${label} ×${c}</span>`).join('');
-    const otherPill = breakdown.other>0 ? `<span class="breakdown-pill">其他 ×${breakdown.other}</span>` : '';
+      .map(([label,c])=>`<span class="breakdown-pill">${label} ×${c}${freqLabel(c,dayCount)}</span>`).join('');
+    const otherPill = breakdown.other>0 ? `<span class="breakdown-pill">其他 ×${breakdown.other}${freqLabel(breakdown.other,dayCount)}</span>` : '';
+    const freqText = (dayCount>0 && total>0) ? `平均每 ${(dayCount/total).toFixed(1)} 天 1次` : (total===0 ? '期間內無記錄' : '—');
     return `<div class="symptom-breakdown">
-      <div class="sb-title">${icon} ${title}（共 ${total} 次）</div>
+      <div class="sb-title">${icon} ${title}（共 ${total} 次 · ${freqText}）</div>
       <div class="sb-pills">${pills}${otherPill || ''}</div>
     </div>`;
   }
   const symptomStatsHtml = (showCat('vomit') || showCat('stool')) ? `
     <div class="report-chart-wrap">
-      ${showCat('vomit') ? breakdownHtml('🤮','嘔吐', vomitBreakdown, allVomit.length) : ''}
-      ${showCat('stool') ? breakdownHtml('💩','排便', stoolBreakdown, allStool.length) : ''}
+      ${showCat('vomit') ? breakdownHtml('🤮','嘔吐', vomitBreakdown, allVomit.length, dates.length) : ''}
+      ${showCat('stool') ? breakdownHtml('💩','排便', stoolBreakdown, allStool.length, dates.length) : ''}
     </div>` : '';
 
   const glucoseStatsHtml = showCat('glucose') ? `
@@ -1660,16 +1912,22 @@ function generateReport(){
       <div class="stat-box"><div class="num">${avg}</div><div class="lbl">平均值 mmol/L</div></div>
       <div class="stat-box ${highCount>lowCount?'high':'low'}"><div class="num">${lowCount} / ${highCount}</div><div class="lbl">偏低 / 偏高次數</div></div>
     </div>` : '';
-  const glucoseChartHtml = showCat('glucose') ? `
-    <div class="report-chart-wrap">
-      <h3>血糖趨勢（藍虛線=6 mmol/L，橘虛線=15 mmol/L）</h3>
-      ${buildGlucoseChart(allGlucose, allInsulin)}
-    </div>` : '';
-  const weightChartHtml = showCat('weight') ? `
-    <div class="report-chart-wrap">
-      <h3>體重趨勢</h3>
-      ${buildWeightChart(allWeight)}
-    </div>` : '';
+  function collapsibleChart(title, bodyHtml, sectionId){
+    return `<div class="report-chart-wrap">
+      <h3 class="collapsible-h3" data-target="${sectionId}"><span class="collapse-arrow">▾</span> ${title}</h3>
+      <div class="collapsible-body" id="${sectionId}">${bodyHtml}</div>
+    </div>`;
+  }
+  const glucoseChartHtml = showCat('glucose') ? collapsibleChart(
+    '血糖趨勢（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎虛線=胰島素施打時間）',
+    buildGlucoseChart(allGlucose, allInsulin),
+    'glucoseChartBody'
+  ) : '';
+  const weightChartHtml = showCat('weight') ? collapsibleChart(
+    '體重趨勢',
+    buildWeightChart(allWeight),
+    'weightChartBody'
+  ) : '';
 
   reportContent.innerHTML = `
     <div class="report-header">
@@ -1691,6 +1949,19 @@ function generateReport(){
   reportBackdrop.classList.remove('open');
   window.scrollTo(0,0);
   wireColumnResize();
+  wireColumnDragReorder();
+  document.querySelectorAll('.collapsible-h3').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      const body = document.getElementById(h.dataset.target);
+      if(!body) return;
+      body.classList.toggle('collapsed');
+      h.classList.toggle('collapsed');
+    });
+  });
+  requestAnimationFrame(()=>{
+    const toolbarEl = document.querySelector('#reportView .report-toolbar');
+    if(toolbarEl) document.documentElement.style.setProperty('--toolbar-h', toolbarEl.offsetHeight + 'px');
+  });
 }
 
 const COL_WIDTHS_KEY = 'kleo-report-col-widths-v1';
@@ -1736,12 +2007,52 @@ function wireColumnResize(){
 
     handle.addEventListener('pointerdown', (e)=>{
       e.preventDefault();
+      e.stopPropagation();
       handle.classList.add('dragging');
       startX = e.clientX;
       const th = handle.closest('th');
       startWidth = th.offsetWidth;
       document.addEventListener('pointermove', pointerMoveHandler);
       document.addEventListener('pointerup', onUp);
+    });
+  });
+}
+
+function wireColumnDragReorder(){
+  const table = document.getElementById('reportTable');
+  if(!table) return;
+  const headerRow = table.querySelector('thead tr');
+  if(!headerRow) return;
+  let dragKey = null;
+  headerRow.querySelectorAll('th[draggable="true"]').forEach(th=>{
+    th.addEventListener('dragstart', (e)=>{
+      dragKey = th.dataset.colkey;
+      th.classList.add('th-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    th.addEventListener('dragend', ()=>{
+      th.classList.remove('th-dragging');
+    });
+    th.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      if(!dragKey || th.dataset.colkey===dragKey || th.dataset.colkey==='date') return;
+      const rect = th.getBoundingClientRect();
+      const before = (e.clientX - rect.left) < rect.width/2;
+      const draggedTh = headerRow.querySelector(`th[data-colkey="${dragKey}"]`);
+      if(draggedTh) headerRow.insertBefore(draggedTh, before ? th : th.nextSibling);
+    });
+    th.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      if(!dragKey) return;
+      const newVisibleOrder = Array.from(headerRow.querySelectorAll('th[data-colkey]'))
+        .map(el=>el.dataset.colkey)
+        .filter(k=>k!=='date');
+      const hiddenCols = reportColOrder.filter(k=>!newVisibleOrder.includes(k));
+      reportColOrder = [...newVisibleOrder, ...hiddenCols];
+      saveColOrder(reportColOrder);
+      dragKey = null;
+      generateReport();
+      renderColCheckGrid();
     });
   });
 }
@@ -1753,13 +2064,94 @@ backFromReport.addEventListener('click', ()=>{
   document.querySelector('.topbar').style.display = 'block';
   fabBtn.style.display = 'flex';
 });
+
+// ---- Gallery ----
+const galleryBtn = document.getElementById('galleryBtn');
+const galleryView = document.getElementById('galleryView');
+const galleryGrid = document.getElementById('galleryGrid');
+const galleryEmpty = document.getElementById('galleryEmpty');
+const galleryFilterGrid = document.getElementById('galleryFilterGrid');
+const backFromGallery = document.getElementById('backFromGallery');
+let galleryFilter = 'all';
+const GALLERY_CATS = ['glucose','insulin','vomit','stool','urine'];
+
+function collectAllPhotos(){
+  const items = [];
+  Object.keys(data).sort().reverse().forEach(dateStr=>{
+    const day = data[dateStr];
+    GALLERY_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{
+        getEntryPhotos(e).forEach(photo=>{
+          items.push({photo, date: dateStr, time: e.time||'', cat});
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function renderGalleryFilters(){
+  const all = collectAllPhotos();
+  const catsWithPhotos = GALLERY_CATS.filter(c=> all.some(it=>it.cat===c));
+  const opts = [['all','全部圖片'], ...catsWithPhotos.map(c=>[c, CAT_LABELS[c]])];
+  galleryFilterGrid.innerHTML = opts.map(([key,label])=>
+    `<button type="button" class="cat-btn gallery-filter-btn ${key===galleryFilter?'active':''}" data-filter="${key}">${label}</button>`
+  ).join('');
+  galleryFilterGrid.querySelectorAll('.gallery-filter-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      galleryFilter = btn.dataset.filter;
+      renderGalleryFilters();
+      renderGalleryGrid();
+    });
+  });
+}
+
+function renderGalleryGrid(){
+  const all = collectAllPhotos();
+  const filtered = galleryFilter==='all' ? all : all.filter(it=>it.cat===galleryFilter);
+  if(filtered.length===0){
+    galleryGrid.innerHTML = '';
+    galleryEmpty.style.display = 'block';
+    return;
+  }
+  galleryEmpty.style.display = 'none';
+  galleryGrid.innerHTML = filtered.map(it=>`
+    <div class="gallery-item" data-photo="${it.photo}">
+      <img src="${it.photo}" loading="lazy">
+      <span class="gi-tag">${ICONS[it.cat]} ${it.date.slice(5)}</span>
+    </div>
+  `).join('');
+  galleryGrid.querySelectorAll('.gallery-item').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      document.getElementById('lightboxImg').src = el.dataset.photo;
+      document.getElementById('lightbox').classList.add('open');
+    });
+  });
+}
+
+galleryBtn.addEventListener('click', ()=>{
+  document.getElementById('main').style.display = 'none';
+  document.querySelector('.topbar').style.display = 'none';
+  fabBtn.style.display = 'none';
+  galleryView.style.display = 'block';
+  renderGalleryFilters();
+  renderGalleryGrid();
+  window.scrollTo(0,0);
+});
+
+backFromGallery.addEventListener('click', ()=>{
+  galleryView.style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.querySelector('.topbar').style.display = 'block';
+  fabBtn.style.display = 'flex';
+});
 printReportBtn.addEventListener('click', ()=> window.print());
 
 function buildReportCSV(){
   if(!lastReportRange) return '';
   const {start, end} = lastReportRange;
   const dates = Object.keys(data).filter(d=> d>=start && d<=end).sort();
-  const visibleCols = REPORT_COLUMNS.filter(c => reportVisibleCols.includes(c.key));
+  const visibleCols = reportColOrder.map(k => REPORT_COLUMNS.find(c=>c.key===k)).filter(c => c && reportVisibleCols.includes(c.key));
   const header = ['日期', ...visibleCols.map(c=>{
     if(c.key==='glucose') return '血糖 (時間→mmol/L)';
     if(c.key==='insulin') return '胰島素 (時間 劑量)';
@@ -1908,6 +2300,41 @@ restoreZipInput.addEventListener('change', ()=>{
   restoreZipInput.value = '';
 });
 
+// ---- Direct JSON file import (avoids copy/paste corruption) ----
+const importJsonFileInput = document.getElementById('importJsonFileInput');
+function applyImportedJson(parsed, sourceLabel){
+  saveSnapshot();
+  const {addedDays, addedEntries} = mergeImportedData(parsed);
+  if(save()){
+    render();
+    importSheet.classList.remove('open');
+    importBackdrop.classList.remove('open');
+    alert(`匯入完成${sourceLabel}：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄\n\n如果發現不對，可以點「匯入」面板裡的「復原到匯入前」整個復原。`);
+  }
+}
+importJsonFileInput.addEventListener('change', ()=>{
+  const file = importJsonFileInput.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    let parsed;
+    try{
+      parsed = JSON.parse(reader.result);
+    }catch(e){
+      alert('格式錯誤，無法解析JSON檔案：' + e.message);
+      importJsonFileInput.value = '';
+      return;
+    }
+    applyImportedJson(parsed, '（來自檔案 ' + file.name + '）');
+    importJsonFileInput.value = '';
+  };
+  reader.onerror = ()=>{
+    alert('讀取檔案失敗，請再試一次。');
+    importJsonFileInput.value = '';
+  };
+  reader.readAsText(file, 'utf-8');
+});
+
 // ---- Import ----
 const importBtn = document.getElementById('importBtn');
 const importSheet = document.getElementById('importSheet');
@@ -1985,14 +2412,7 @@ doImportBtn.addEventListener('click', ()=>{
     alert('格式錯誤，無法解析JSON：' + e.message);
     return;
   }
-  saveSnapshot();
-  const {addedDays, addedEntries} = mergeImportedData(parsed);
-  if(save()){
-    render();
-    importSheet.classList.remove('open');
-    importBackdrop.classList.remove('open');
-    alert(`匯入完成：新增 ${addedDays} 天、共 ${addedEntries} 筆記錄\n\n如果發現不對，可以點「匯入」面板裡的「復原到匯入前」整個復原。`);
-  }
+  applyImportedJson(parsed, '');
 });
 
 // ---- Google Sign-In + Drive auto-sync ----
