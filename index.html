@@ -108,6 +108,36 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   padding:0 16px 10px; text-align:right;
 }
 
+.status-summary{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;
+  padding:12px 16px 6px;
+}
+.status-item{
+  background:#00000005;border-radius:8px;padding:8px 10px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.si-label{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);
+  text-transform:uppercase;letter-spacing:0.03em;
+}
+.si-val{font-size:13px;font-weight:600;color:var(--ink);}
+.si-empty{font-weight:400;color:var(--ink-soft);}
+.delta{font-size:10.5px;font-weight:500;margin-left:2px;}
+.delta.up{color:var(--high);}
+.delta.down{color:var(--low);}
+.delta.flat{color:var(--ink-soft);}
+
+.mood-picker{display:flex;gap:6px;flex-wrap:wrap;}
+.mood-btn{
+  flex:1;min-width:56px;display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:10px 6px;border:1px solid var(--line);border-radius:10px;background:var(--paper);
+  cursor:pointer;
+}
+.mood-btn.active{background:var(--ink);border-color:var(--ink);}
+.mood-btn.active .mood-label{color:var(--paper-raised);}
+.mood-emoji{font-size:26px;}
+.mood-label{font-size:11px;color:var(--ink-soft);}
+
 .section{padding:4px 16px 12px;}
 .row{
   display:flex; gap:10px; padding:6px 0; font-size:13px; line-height:1.5;
@@ -451,6 +481,8 @@ textarea{resize:vertical; min-height:64px;}
   <h2>新增記錄</h2>
 
   <div class="cat-grid" id="catGrid">
+    <button class="cat-btn" data-cat="mood"><span class="ic">😺</span>精神</button>
+    <button class="cat-btn" data-cat="appetite"><span class="ic">🍖</span>食慾</button>
     <button class="cat-btn" data-cat="food"><span class="ic">🍽️</span>飲食</button>
     <button class="cat-btn" data-cat="water"><span class="ic">💧</span>飲水</button>
     <button class="cat-btn" data-cat="glucose"><span class="ic">🩸</span>血糖</button>
@@ -634,8 +666,77 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',mood:'😺',appetite:'🍖'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',mood:'精神',appetite:'食慾'};
+
+function latestEntry(entries){
+  if(!entries || entries.length===0) return null;
+  return [...entries].sort((a,b)=>a.time.localeCompare(b.time))[entries.length-1];
+}
+function findPrevDayAggregate(dates, idx, cat, aggregator){
+  for(let i=idx+1;i<dates.length;i++){
+    const d = dates[i];
+    const day = data[d];
+    const entries = (day && day[cat]) || [];
+    if(entries.length>0){
+      return {date: d, value: aggregator(entries)};
+    }
+  }
+  return null;
+}
+function deltaSpan(diff, formatFn){
+  if(diff===0) return `<span class="delta flat">持平</span>`;
+  const cls = diff>0 ? 'up' : 'down';
+  const arrow = diff>0 ? '▲' : '▼';
+  return `<span class="delta ${cls}">${arrow} ${formatFn(Math.abs(diff))}</span>`;
+}
+function buildStatusSummary(dateStr, day, dates, idx){
+  const moodLatest = latestEntry(day.mood);
+  const appetiteLatest = latestEntry(day.appetite);
+  const moodLevel = moodLatest ? MOOD_LEVELS.find(l=>l.v===moodLatest.value) : null;
+  const appetiteLevel = appetiteLatest ? MOOD_LEVELS.find(l=>l.v===appetiteLatest.value) : null;
+
+  const weightLatest = latestEntry(day.weight);
+  let weightValHtml = '<span class="si-empty">未記錄</span>';
+  if(weightLatest){
+    const prev = findPrevDayAggregate(dates, idx, 'weight', es=>latestEntry(es).value);
+    const diff = prev ? +(weightLatest.value - prev.value).toFixed(2) : null;
+    weightValHtml = `${weightLatest.value} kg` + (diff!=null ? ' ' + deltaSpan(diff, v=>v.toFixed(2)+'kg') : '');
+  }
+
+  const waterEntries = day.water || [];
+  let waterValHtml = '<span class="si-empty">未記錄</span>';
+  if(waterEntries.length>0){
+    const todayTotal = waterEntries.reduce((s,e)=>s+(e.ml||0),0);
+    const prev = findPrevDayAggregate(dates, idx, 'water', es=>es.reduce((s,e)=>s+(e.ml||0),0));
+    const diff = prev ? Math.round(todayTotal - prev.value) : null;
+    waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '');
+  }
+
+  const urineEntries = day.urine || [];
+  let urineValHtml = '<span class="si-empty">未記錄</span>';
+  if(urineEntries.length>0){
+    const todayCount = urineEntries.length;
+    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>es.length);
+    const diff = prev ? (todayCount - prev.value) : null;
+    urineValHtml = `${todayCount} 次` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'次') : '');
+  }
+
+  return `<div class="status-summary">
+    <div class="status-item"><span class="si-label">${ICONS.mood} 精神</span><span class="si-val">${moodLevel ? `${moodLevel.emoji} ${moodLevel.label}` : '<span class="si-empty">未記錄</span>'}</span></div>
+    <div class="status-item"><span class="si-label">${ICONS.appetite} 食慾</span><span class="si-val">${appetiteLevel ? `${appetiteLevel.emoji} ${appetiteLevel.label}` : '<span class="si-empty">未記錄</span>'}</span></div>
+    <div class="status-item"><span class="si-label">${ICONS.weight} 體重</span><span class="si-val">${weightValHtml}</span></div>
+    <div class="status-item"><span class="si-label">${ICONS.water} 飲水</span><span class="si-val">${waterValHtml}</span></div>
+    <div class="status-item"><span class="si-label">${ICONS.urine} 排尿</span><span class="si-val">${urineValHtml}</span></div>
+  </div>`;
+}
+const MOOD_LEVELS = [
+  {v:1, emoji:'😿', label:'很差'},
+  {v:2, emoji:'🙁', label:'不佳'},
+  {v:3, emoji:'😐', label:'普通'},
+  {v:4, emoji:'🙂', label:'良好'},
+  {v:5, emoji:'😻', label:'很棒'}
+];
 const FOOD_OPTIONS = {
   '乾糧': ['YA Lid Zero'],
   '罐頭': ['Tiki Ahi Tuna'],
@@ -652,6 +753,9 @@ function renderRowHtml(dateStr, cat, e, idx){
   if(cat==='glucose'){
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>${detail}`;
+  } else if(cat==='mood' || cat==='appetite'){
+    const level = MOOD_LEVELS.find(l=>l.v===e.value);
+    valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
   } else if(cat==='weight'){
     valHtml = `<span class="tag normal">${e.value} kg</span>`;
   } else if(cat==='insulin'){
@@ -678,7 +782,7 @@ function renderRowHtml(dateStr, cat, e, idx){
 }
 
 function renderDayRows(dateStr, day){
-  const cats = ['food','water','glucose','weight','insulin','urine','stool','vomit','med'];
+  const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -702,7 +806,7 @@ function render(){
     main.innerHTML = `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
     return;
   }
-  main.innerHTML = dates.map(dateStr=>{
+  main.innerHTML = dates.map((dateStr, idx)=>{
     const day = data[dateStr];
     const rowsHtml = renderDayRows(dateStr, day);
     const notesHtml = `<div class="notes-row">
@@ -714,7 +818,7 @@ function render(){
         <span class="date">${formatDateLabel(dateStr)}</span>
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
       </div>
-      ${buildStrip(day.glucose)}
+      ${buildStatusSummary(dateStr, day, dates, idx)}
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
   }).join('');
@@ -934,6 +1038,12 @@ function openSheetForEdit(dateStr, cat, idx){
       const detailEl = document.getElementById('fDetail');
       if(detailEl) detailEl.value = entry.note || '';
     }
+    else if(cat==='mood' || cat==='appetite'){
+      valEl.value = entry.value;
+      document.querySelectorAll('#moodPicker .mood-btn').forEach(b=>{
+        b.classList.toggle('active', parseInt(b.dataset.val)===entry.value);
+      });
+    }
     else if(cat==='weight') valEl.value = entry.value;
     else if(cat==='insulin') valEl.value = entry.dose;
     else if(cat==='water') valEl.value = entry.ml;
@@ -1102,7 +1212,22 @@ function setCategory(cat){
   });
   timeWrap.style.display = 'block';
   photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
-  if(cat==='glucose'){
+  if(cat==='mood' || cat==='appetite'){
+    dynamicFields.innerHTML = `
+      <label>${cat==='mood' ? '精神狀態' : '食慾狀態'}</label>
+      <div class="mood-picker" id="moodPicker">
+        ${MOOD_LEVELS.map(l=>`<button type="button" class="mood-btn" data-val="${l.v}"><span class="mood-emoji">${l.emoji}</span><span class="mood-label">${l.label}</span></button>`).join('')}
+      </div>
+      <input type="hidden" id="fVal">
+    `;
+    document.querySelectorAll('#moodPicker .mood-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('#moodPicker .mood-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('fVal').value = btn.dataset.val;
+      });
+    });
+  } else if(cat==='glucose'){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">
       <label>補充說明（可選）</label>
       <input type="text" id="fDetail" placeholder="例如左耳、同滴血、餐前…">`;
@@ -1161,8 +1286,22 @@ function setCategory(cat){
     `;
     wireWaterInputs();
   } else if(cat==='note'){
-    timeWrap.style.display = 'none';
-    dynamicFields.innerHTML = `<label>當日備註</label><textarea id="fVal" placeholder="自由記錄今天的觀察…"></textarea>`;
+    const isWholeBlockEdit = editContext && editContext.isDayNote;
+    if(isWholeBlockEdit){
+      timeWrap.style.display = 'none';
+      dynamicFields.innerHTML = `<label>當日備註（整段編輯，可自由排版多行）</label><textarea id="fVal" placeholder="自由記錄今天的觀察…" style="height:180px;"></textarea>`;
+    } else {
+      timeWrap.style.display = 'block';
+      dynamicFields.innerHTML = `
+        <label>新增一則備註</label>
+        <textarea id="fVal" placeholder="自由記錄今天的觀察…"></textarea>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-family:'Inter',sans-serif;text-transform:none;font-size:13px;color:var(--ink);">
+          <input type="checkbox" id="fNoteTimestamp" checked style="width:auto;flex:0 0 auto;">
+          加上時間戳記（不勾選則存成純文字，不綁時間）
+        </label>
+        <p style="margin:6px 0 0;font-size:11px;color:var(--ink-soft);">這則會加到當天備註的最後一行；一天可以新增多次，各自分行顯示。</p>
+      `;
+    }
   } else if(cat==='med'){
     dynamicFields.innerHTML = `
       <label>藥物</label>
@@ -1379,7 +1518,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -1396,6 +1535,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     let updated;
     if(cat==='glucose'){
       updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
+    } else if(cat==='mood' || cat==='appetite'){
+      updated = {time, value: parseInt(rawVal)};
     } else if(cat==='weight'){
       updated = {time, value: parseFloat(rawVal)};
     } else if(cat==='insulin'){
@@ -1424,9 +1565,13 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr].urine) data[dateStr].urine = [];
     if(!data[dateStr].food) data[dateStr].food = [];
     if(!data[dateStr].weight) data[dateStr].weight = [];
+    if(!data[dateStr].mood) data[dateStr].mood = [];
+    if(!data[dateStr].appetite) data[dateStr].appetite = [];
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
       data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
+    } else if(currentCat==='mood' || currentCat==='appetite'){
+      data[dateStr][currentCat].push({time, value: parseInt(rawVal)});
     } else if(currentCat==='weight'){
       data[dateStr].weight.push({time, value: parseFloat(rawVal)});
     } else if(currentCat==='insulin'){
@@ -1438,7 +1583,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const remEl = document.getElementById('fRemaining');
       data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined});
     } else if(currentCat==='note'){
-      data[dateStr].notes = data[dateStr].notes ? data[dateStr].notes + '\n' + rawVal : rawVal;
+      const wantTimestamp = document.getElementById('fNoteTimestamp') ? document.getElementById('fNoteTimestamp').checked : false;
+      const entryText = wantTimestamp ? `${time} ${rawVal}` : rawVal;
+      data[dateStr].notes = data[dateStr].notes ? data[dateStr].notes + '\n' + entryText : entryText;
     } else {
       data[dateStr][currentCat].push({time, note: rawVal, photos: photosToSave});
     }
@@ -1693,6 +1840,8 @@ function buildWeightChart(allEntries){
 }
 
 const REPORT_COLUMNS = [
+  {key:'mood', label:'精神', icon:'😺'},
+  {key:'appetite', label:'食慾', icon:'🍖'},
   {key:'food', label:'飲食', icon:'🍽️'},
   {key:'water', label:'飲水', icon:'💧'},
   {key:'glucose', label:'血糖', icon:'🩸'},
@@ -1741,6 +1890,10 @@ function reportCellLines(day, catKey){
     return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
   });
   if(catKey==='water') return entries.map(e=>`${e.time} ${e.ml}ml`);
+  if(catKey==='mood' || catKey==='appetite') return entries.map(e=>{
+    const level = MOOD_LEVELS.find(l=>l.v===e.value);
+    return `${e.time} ${level ? level.emoji+level.label : e.value}`;
+  });
   return entries.map(e=>`${e.time} ${e.note}`);
 }
 
@@ -2361,10 +2514,10 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
       addedDays++;
     }
-    ['glucose','insulin','vomit','stool','urine','water','med','food','weight'].forEach(cat=>{
+    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite'].forEach(cat=>{
       if(!data[dateStr][cat]) data[dateStr][cat] = [];
       (incoming[dateStr][cat]||[]).forEach(entry=>{
         data[dateStr][cat].push(entry);
