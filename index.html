@@ -152,20 +152,13 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);
   text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;
 }
-.cs-main{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
-.cs-emoji{font-size:38px;line-height:1;}
-.cs-text{display:flex;flex-direction:column;}
+.cs-main{display:flex;align-items:flex-start;gap:12px;}
+.cs-emoji{font-size:40px;line-height:1.1;flex:0 0 auto;}
+.cs-text{display:flex;flex-direction:column;flex:1;min-width:0;}
 .cs-text b{font-size:16px;font-family:'Archivo Narrow',sans-serif;}
-.cs-score{font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
-.cs-prev{font-size:12px;color:var(--ink-soft);margin-bottom:8px;}
-.cs-scale{display:flex;justify-content:space-between;gap:4px;margin-top:6px;}
-.cs-scale-item{
-  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
-  font-size:18px;opacity:0.35;padding:4px 2px;border-radius:8px;
-}
-.cs-scale-item.active{opacity:1;background:#00000008;}
-.cs-scale-label{font-size:9px;color:var(--ink-soft);}
-.cs-note{font-size:10.5px;color:var(--ink-soft);margin:8px 0 0;line-height:1.5;}
+.cs-score{font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;margin-left:6px;}
+.cs-prev{font-size:12px;color:var(--ink-soft);margin-top:3px;}
+.cs-note{font-size:10.5px;color:var(--ink-soft);margin:5px 0 0;line-height:1.45;}
 
 .section{padding:4px 16px 12px;}
 .row{
@@ -258,7 +251,7 @@ label{
 }
 input, textarea{
   width:100%; border:1px solid var(--line); border-radius:8px;
-  padding:10px 12px; font-size:15px; font-family:inherit; background:var(--paper);
+  padding:10px 12px; font-size:16px; font-family:inherit; background:var(--paper);
   color:var(--ink);
 }
 input:focus, textarea:focus{outline:2px solid var(--ink); outline-offset:1px;}
@@ -743,12 +736,18 @@ function buildStatusSummary(dateStr, day, dates, idx){
   }
 
   const urineEntries = day.urine || [];
+  const urineWithMl = urineEntries.filter(e=>e.ml!=null);
   let urineValHtml = '<span class="si-empty">未記錄</span>';
-  if(urineEntries.length>0){
-    const todayCount = urineEntries.length;
-    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>es.length);
-    const diff = prev ? (todayCount - prev.value) : null;
-    urineValHtml = `${todayCount} 次` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'次') : '');
+  if(urineWithMl.length>0){
+    const todayTotal = urineWithMl.reduce((s,e)=>s+(e.ml||0),0);
+    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>{
+      const withMl = es.filter(e=>e.ml!=null);
+      return withMl.reduce((s,e)=>s+(e.ml||0),0);
+    });
+    const diff = (prev && prev.value>0) ? Math.round(todayTotal - prev.value) : null;
+    urineValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '');
+  } else if(urineEntries.length>0){
+    urineValHtml = `${urineEntries.length} 次（未標示ml）`;
   }
 
   return `<div class="status-summary">
@@ -804,16 +803,19 @@ function computeCatScore(dateStr, day, dates, idx){
     } else parts.push(70);
   }
 
-  const urineEntries2 = day.urine || [];
-  if(urineEntries2.length>0){
-    const todayCount = urineEntries2.length;
-    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>es.length);
-    if(prev){
-      const diff = todayCount - prev.value;
+  const urineWithMl2 = (day.urine || []).filter(e=>e.ml!=null);
+  if(urineWithMl2.length>0){
+    const todayTotal = urineWithMl2.reduce((s,e)=>s+(e.ml||0),0);
+    const prev = findPrevDayAggregate(dates, idx, 'urine', es=>{
+      const withMl = es.filter(e=>e.ml!=null);
+      return withMl.reduce((s,e)=>s+(e.ml||0),0);
+    });
+    if(prev && prev.value>0){
+      const pct = (todayTotal - prev.value)/prev.value*100;
       let s;
-      if(diff===0) s = 90;
-      else if(diff>0) s = Math.max(0, 90 - diff*15);
-      else s = Math.max(0, 90 - Math.abs(diff)*10);
+      if(Math.abs(pct)<=20) s = 90;
+      else if(pct>0) s = Math.max(0, 90 - (pct-20)*1.2);
+      else s = Math.max(0, 90 - (Math.abs(pct)-20)*1.0);
       parts.push(s);
     } else parts.push(70);
   }
@@ -823,15 +825,11 @@ function computeCatScore(dateStr, day, dates, idx){
 }
 function buildCatScoreWidget(dateStr, day, dates, idx){
   const score = computeCatScore(dateStr, day, dates, idx);
-  const scale = MOOD_LEVELS.map(l=>{
-    const active = score!=null && scoreTier(score).v===l.v;
-    return `<span class="cs-scale-item${active?' active':''}">${l.emoji}<span class="cs-scale-label">${l.label}</span></span>`;
-  }).join('');
+  const noteText = '依「精神／食慾／體重／飲水／排尿」與前一次紀錄比較，用規則計算出的參考分數（非即時AI診斷），僅供輔助觀察趨勢用。';
   if(score==null){
     return `<div class="cat-score-widget">
       <div class="cs-head">今日貓貓狀態</div>
-      <p class="si-empty" style="margin:4px 0 8px;font-size:12.5px;">今天還沒有精神/食慾/體重/飲水/排尿的記錄，先記錄幾項才能算出狀態分數喔。</p>
-      <div class="cs-scale">${scale}</div>
+      <p class="si-empty" style="margin:4px 0 0;font-size:12.5px;">今天還沒有精神/食慾/體重/飲水/排尿的記錄，先記錄幾項才能算出狀態分數喔。</p>
     </div>`;
   }
   const tier = scoreTier(score);
@@ -849,10 +847,14 @@ function buildCatScoreWidget(dateStr, day, dates, idx){
   }
   return `<div class="cat-score-widget">
     <div class="cs-head">今日貓貓狀態</div>
-    <div class="cs-main"><span class="cs-emoji">${tier.emoji}</span><span class="cs-text"><b>${tier.label}</b><span class="cs-score">${score} 分</span></span></div>
-    ${prevHtml}
-    <div class="cs-scale">${scale}</div>
-    <p class="cs-note">＊依「精神／食慾／體重／飲水／排尿」與前一次紀錄比較，用規則計算出的參考分數（非即時AI診斷），僅供輔助觀察趨勢用。</p>
+    <div class="cs-main">
+      <span class="cs-emoji">${tier.emoji}</span>
+      <span class="cs-text">
+        <b>${tier.label}</b><span class="cs-score">${score} 分</span>
+        ${prevHtml}
+        <p class="cs-note">＊${noteText}</p>
+      </span>
+    </div>
   </div>`;
 }
 
@@ -870,8 +872,7 @@ const FOOD_OPTIONS = {
 };
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
-  stool: ['正常','軟便','拉稀'],
-  urine: ['正常','量少','量多']
+  stool: ['正常','軟便','拉稀']
 };
 
 function renderRowHtml(dateStr, cat, e, idx){
@@ -893,6 +894,13 @@ function renderRowHtml(dateStr, cat, e, idx){
   } else if(cat==='water'){
     const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
     valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
+  } else if(cat==='urine'){
+    if(e.ml!=null){
+      const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
+      valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
+    } else {
+      valHtml = `<span class="tag normal">${escapeHtml(e.note || '')}</span>`;
+    }
   } else {
     valHtml = e.note || '';
   }
@@ -953,6 +961,7 @@ function render(){
   main.querySelectorAll('.del').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const {date, cat, idx} = btn.dataset;
+      if(!confirm('確定要刪除這筆記錄嗎？刪除後無法復原。')) return;
       data[date][cat].splice(parseInt(idx),1);
       save();
       render();
@@ -993,11 +1002,13 @@ const fabBtn = document.getElementById('fabBtn');
 const closeSheetBtn = document.getElementById('closeSheet');
 const fDate = document.getElementById('fDate');
 const fTime = document.getElementById('fTime');
+let waterTimeListener = null;
 const dynamicFields = document.getElementById('dynamicFields');
 const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
 const fTimeNowBtn = document.getElementById('fTimeNowBtn');
 fTimeNowBtn.addEventListener('click', ()=>{ fTime.value = nowTime(); });
+fTime.addEventListener('focus', ()=>{ fTime.select(); });
 fTime.addEventListener('input', ()=>{
   // Only auto-format when the user is actively typing plain digits (e.g. "0840" -> "08:40").
   // Anything containing non-digit characters (like "?", "約上午", "左耳2:05") is left untouched
@@ -1184,6 +1195,17 @@ function openSheetForEdit(dateStr, cat, idx){
       const detailEl = document.getElementById('fDetail');
       if(detailEl) detailEl.value = entry.note || '';
     }
+    else if(cat==='urine'){
+      const detailEl = document.getElementById('fDetail');
+      if(entry.ml!=null){
+        valEl.value = entry.ml;
+        if(detailEl) detailEl.value = entry.note || '';
+      } else {
+        // legacy entry recorded before the switch to ml (e.g. "正常"/"量少"/"量多")
+        valEl.value = '';
+        if(detailEl) detailEl.value = entry.note || '';
+      }
+    }
     else if(cat==='mood' || cat==='appetite'){
       valEl.value = entry.value;
       document.querySelectorAll('#moodPicker .mood-btn').forEach(b=>{
@@ -1358,6 +1380,10 @@ function setCategory(cat){
   });
   timeWrap.style.display = 'block';
   photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
+  if(waterTimeListener){
+    fTime.removeEventListener('input', waterTimeListener);
+    waterTimeListener = null;
+  }
   if(cat==='mood' || cat==='appetite'){
     dynamicFields.innerHTML = `
       <label>${cat==='mood' ? '精神狀態' : '食慾狀態'}</label>
@@ -1377,6 +1403,10 @@ function setCategory(cat){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">
       <label>補充說明（可選）</label>
       <input type="text" id="fDetail" placeholder="例如左耳、同滴血、餐前…">`;
+  } else if(cat==='urine'){
+    dynamicFields.innerHTML = `<label>尿量估計 (ml)</label><input type="number" step="1" id="fVal" placeholder="例如 150">
+      <label>補充說明（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如尿團偏小、顏色偏深…">`;
   } else if(cat==='weight'){
     dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="number" step="0.01" id="fVal" placeholder="例如 4.20">`;
   } else if(cat==='insulin'){
@@ -1415,22 +1445,37 @@ function setCategory(cat){
     wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
   } else if(cat==='water'){
     const currentBase = loadWaterBase();
-    if(!editContext){
-      const d = new Date();
-      d.setDate(d.getDate()-1);
-      fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      fTime.value = '08:00';
-    }
+    const isNewEntry = !editContext;
     dynamicFields.innerHTML = `
-      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">💡 已自動將上方日期設為前一天，因為早上量的剩餘水量代表的是前一晚的飲水量。</p>
       <label>固定水量 (ml)</label>
       <input type="number" id="fWaterBase" value="${currentBase}">
       <label>剩餘水量 (ml)</label>
       <input type="number" id="fRemaining" placeholder="例如 50">
       <input type="hidden" id="fVal">
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
+      ${isNewEntry ? `<p id="waterPeriodHint" style="margin-top:8px;font-size:11.5px;color:var(--ink-soft);"></p>` : ''}
     `;
     wireWaterInputs();
+    if(isNewEntry){
+      const applyWaterPeriodDate = ()=>{
+        const m = (fTime.value||'').match(/^(\d{1,2}):(\d{2})/);
+        const hour = m ? parseInt(m[1]) : new Date().getHours();
+        const hint = document.getElementById('waterPeriodHint');
+        if(hour < 12){
+          const d = new Date();
+          d.setDate(d.getDate()-1);
+          fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+          if(hint) hint.textContent = '偵測到時間是上午，判斷為「隔夜水量」，日期已自動設為前一天。';
+        } else {
+          fDate.value = todayStr();
+          if(hint) hint.textContent = '偵測到時間是下午/晚上，判斷為「白天水量」，日期維持今天。';
+        }
+      };
+      applyWaterPeriodDate();
+      if(waterTimeListener) fTime.removeEventListener('input', waterTimeListener);
+      waterTimeListener = applyWaterPeriodDate;
+      fTime.addEventListener('input', waterTimeListener);
+    }
   } else if(cat==='note'){
     const isWholeBlockEdit = editContext && editContext.isDayNote;
     if(isWholeBlockEdit){
@@ -1681,6 +1726,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     let updated;
     if(cat==='glucose'){
       updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
+    } else if(cat==='urine'){
+      updated = {time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='mood' || cat==='appetite'){
       updated = {time, value: parseInt(rawVal)};
     } else if(cat==='weight'){
@@ -1716,6 +1763,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
       data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
+    } else if(currentCat==='urine'){
+      data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='mood' || currentCat==='appetite'){
       data[dateStr][currentCat].push({time, value: parseInt(rawVal)});
     } else if(currentCat==='weight'){
@@ -1762,7 +1811,8 @@ const backFromReport = document.getElementById('backFromReport');
 const printReportBtn = document.getElementById('printReportBtn');
 const csvReportBtn = document.getElementById('csvReportBtn');
 let selectedRange = 'week';
-let selectedLayout = 'table';
+let selectedLayout = window.innerWidth < 700 ? 'card' : 'table';
+let userPickedLayout = false;
 let lastReportRange = null;
 
 reportBtn.addEventListener('click', ()=>{
@@ -1771,6 +1821,12 @@ reportBtn.addEventListener('click', ()=>{
   const d = new Date();
   d.setDate(d.getDate()-7);
   rangeStart.value = d.toISOString().slice(0,10);
+  if(!userPickedLayout){
+    selectedLayout = window.innerWidth < 700 ? 'card' : 'table';
+    document.querySelectorAll('.layout-btn').forEach(b=>{
+      b.classList.toggle('active', b.dataset.layout===selectedLayout);
+    });
+  }
   reportConfigSheet.classList.add('open');
   reportBackdrop.classList.add('open');
 });
@@ -1801,6 +1857,7 @@ document.querySelectorAll('.layout-btn').forEach(btn=>{
     document.querySelectorAll('.layout-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     selectedLayout = btn.dataset.layout;
+    userPickedLayout = true;
   });
 });
 
@@ -2036,6 +2093,10 @@ function reportCellLines(day, catKey){
     return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
   });
   if(catKey==='water') return entries.map(e=>`${e.time} ${e.ml}ml`);
+  if(catKey==='urine') return entries.map(e=>{
+    if(e.ml!=null) return `${e.time} ${e.ml}ml` + (e.note ? ` (${e.note})` : '');
+    return `${e.time} ${e.note || ''}`;
+  });
   if(catKey==='mood' || catKey==='appetite') return entries.map(e=>{
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     return `${e.time} ${level ? level.emoji+level.label : e.value}`;
