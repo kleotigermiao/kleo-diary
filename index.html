@@ -905,9 +905,10 @@ function renderRowHtml(dateStr, cat, e, idx){
     valHtml = e.note || '';
   }
   const thumbHtml = getEntryPhotos(e).map(p=>`<img class="thumb" src="${p}" data-photo="${p}">`).join('');
+  const timeHtml = (cat==='mood' || cat==='appetite') ? '' : `<span class="time">${e.time}</span>`;
   return `<div class="row">
     <span class="icon">${ICONS[cat]}</span>
-    <span class="time">${e.time}</span>
+    ${timeHtml}
     <span class="val">${valHtml}</span>
     ${thumbHtml}
     <button class="edit" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✎</button>
@@ -1385,6 +1386,8 @@ function setCategory(cat){
     waterTimeListener = null;
   }
   if(cat==='mood' || cat==='appetite'){
+    timeWrap.style.display = 'none';
+    if(!editContext) fTime.value = nowTime();
     dynamicFields.innerHTML = `
       <label>${cat==='mood' ? '精神狀態' : '食慾狀態'}</label>
       <div class="mood-picker" id="moodPicker">
@@ -1931,20 +1934,23 @@ function buildGlucoseChart(allEntries, allInsulin){
   const yStep = yRange > 20 ? 5 : 2;
   for(let v=yMin; v<=yMax; v+=yStep){
     const y = yFor(v);
-    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1.5" opacity="0.6"/>`;
-    svg += `<text x="${padL-10}" y="${y+7}" font-size="20" fill="#5A6E6E" text-anchor="end">${v}</text>`;
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1" opacity="0.6"/>`;
+    svg += `<text x="${padL-10}" y="${y+4}" font-size="11.5" fill="#5A6E6E" text-anchor="end">${v}</text>`;
   }
   // reference thresholds
-  svg += `<line x1="${padL}" y1="${yFor(4)}" x2="${W-padR}" y2="${yFor(4)}" stroke="#3B6E8F" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
-  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D6622C" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
-  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#C0392B" stroke-width="2" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(4)}" x2="${W-padR}" y2="${yFor(4)}" stroke="#3B6E8F" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D6622C" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#C0392B" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.6"/>`;
 
   // insulin vertical markers
   (allInsulin||[]).forEach(e=>{
     const ts = toTs(e);
     if(!isValidTs(ts) || ts < tsMin || ts > tsMax) return;
     const x = xFor(ts);
-    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#B23A48" stroke-width="2" stroke-dasharray="3,5" opacity="0.6"/>`;
+    const d = new Date(ts);
+    const insulinLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 施打胰島素${e.dose ? '（'+e.dose+'）' : ''}`;
+    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#C0392B" stroke-width="10" opacity="0"><title>${insulinLabel}</title></line>`;
+    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#C0392B" stroke-width="1.5" opacity="0.7"><title>${insulinLabel}</title></line>`;
   });
 
   // x-axis time labels: pick up to 5 evenly spaced ticks across the domain (fewer to avoid crowding at larger font size)
@@ -1955,9 +1961,9 @@ function buildGlucoseChart(allEntries, allInsulin){
     const label1 = `${d.getMonth()+1}/${d.getDate()}`;
     const label2 = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     const x = padL + (chartW * i/tickCount);
-    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1.5"/>`;
-    svg += `<text x="${x}" y="${H-38}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
-    svg += `<text x="${x}" y="${H-16}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label2}</text>`;
+    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1"/>`;
+    svg += `<text x="${x}" y="${H-38}" font-size="11.5" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
+    svg += `<text x="${x}" y="${H-16}" font-size="11.5" fill="#5A6E6E" text-anchor="middle">${label2}</text>`;
   }
 
   // glucose line
@@ -1966,19 +1972,19 @@ function buildGlucoseChart(allEntries, allInsulin){
     const x = xFor(toTs(e)), y = yFor(e.value);
     path += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
   });
-  svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="4"/>`;
+  svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="2.5"/>`;
   sorted.forEach(e=>{
     const x = xFor(toTs(e)), y = yFor(e.value);
     const d = new Date(toTs(e));
     const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="2"><title>${dateLabel} → ${e.value} mmol/L</title></circle>`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} → ${e.value} mmol/L</title></circle>`;
   });
 
   svg += `</svg>`;
 
   const legend = `<div class="chart-legend">
     <span><i style="background:#6B4FA0"></i>血糖</span>
-    <span><i style="background:#B23A48;border-radius:0;width:2px;height:10px;"></i>胰島素時間</span>
+    <span><i style="background:#C0392B;border-radius:0;width:2px;height:10px;"></i>胰島素時間</span>
     <span><i style="background:#3B6E8F"></i>偏低</span>
     <span><i style="background:#3F7A5C"></i>正常</span>
     <span><i style="background:#D6622C"></i>偏高</span>
@@ -2013,8 +2019,8 @@ function buildWeightChart(allEntries){
   for(let i=0;i<=4;i++){
     const v = yMin + yStep*i;
     const y = yFor(v);
-    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1.5" opacity="0.6"/>`;
-    svg += `<text x="${padL-10}" y="${y+7}" font-size="20" fill="#5A6E6E" text-anchor="end">${v.toFixed(2)}</text>`;
+    svg += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#C8D3C9" stroke-width="1" opacity="0.6"/>`;
+    svg += `<text x="${padL-10}" y="${y+4}" font-size="11.5" fill="#5A6E6E" text-anchor="end">${v.toFixed(2)}</text>`;
   }
 
   const tickCount = Math.min(5, sorted.length);
@@ -2023,8 +2029,8 @@ function buildWeightChart(allEntries){
     const d = new Date(ts);
     const label1 = `${d.getMonth()+1}/${d.getDate()}`;
     const x = padL + (chartW * i/tickCount);
-    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1.5"/>`;
-    svg += `<text x="${x}" y="${H-16}" font-size="19" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
+    svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1"/>`;
+    svg += `<text x="${x}" y="${H-16}" font-size="11.5" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
   }
 
   let path = '';
@@ -2032,10 +2038,10 @@ function buildWeightChart(allEntries){
     const x = xFor(toTs(e)), y = yFor(e.value);
     path += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
   });
-  svg += `<path d="${path}" fill="none" stroke="#3F7A5C" stroke-width="4"/>`;
+  svg += `<path d="${path}" fill="none" stroke="#3F7A5C" stroke-width="2.5"/>`;
   sorted.forEach(e=>{
     const x = xFor(toTs(e)), y = yFor(e.value);
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7" fill="#3F7A5C" stroke="#F8FAF7" stroke-width="2"/>`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#3F7A5C" stroke="#F8FAF7" stroke-width="1.2"/>`;
   });
 
   svg += `</svg>`;
@@ -2099,7 +2105,7 @@ function reportCellLines(day, catKey){
   });
   if(catKey==='mood' || catKey==='appetite') return entries.map(e=>{
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
-    return `${e.time} ${level ? level.emoji+level.label : e.value}`;
+    return level ? level.emoji+level.label : String(e.value);
   });
   return entries.map(e=>`${e.time} ${e.note}`);
 }
@@ -2279,7 +2285,7 @@ function generateReport(){
     </div>`;
   }
   const glucoseChartHtml = showCat('glucose') ? collapsibleChart(
-    '血糖趨勢（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎虛線=胰島素施打時間）',
+    '血糖趨勢（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎實線=胰島素施打時間，滑鼠移上去可看時間）',
     buildGlucoseChart(allGlucose, allInsulin),
     'glucoseChartBody'
   ) : '';
