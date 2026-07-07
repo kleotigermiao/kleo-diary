@@ -599,7 +599,19 @@ textarea{resize:vertical; min-height:64px;}
   <div class="sheet-handle"></div>
   <h2>匯入資料</h2>
 
-  <label>方式一：從完整備份(.zip)還原（含照片）</label>
+  <label>本機儲存空間</label>
+  <p>這個App的資料（含照片）存在瀏覽器的本機儲存空間，跟手機本身還有多少空間是兩回事——瀏覽器通常只給每個網站幾MB到十幾MB左右，跟手機容量無關。如果常常「儲存失敗」，可以先檢查目前用了多少。</p>
+  <button class="save-btn" id="checkStorageBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">檢查目前用量</button>
+  <p id="storageUsageResult" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+
+  <label style="margin-top:18px;">清除舊照片釋放空間</label>
+  <p>只會刪除「照片」，血糖/胰島素/文字紀錄等資料完全不受影響。<b>建議先用上面「登入Google」同步過一次，確認照片已經備份到Drive，再清除本機的，比較保險。</b></p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="save-btn" id="clearOldPhotosBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);flex:1;">清除90天前的照片</button>
+    <button class="save-btn" id="clearAllPhotosBtn" style="background:none;border:1px solid #B23A48;color:#B23A48;flex:1;">清除全部照片</button>
+  </div>
+
+  <label style="margin-top:22px;">方式一：從完整備份(.zip)還原（含照片）</label>
   <input type="file" accept=".zip" id="restoreZipInput">
 
   <label style="margin-top:22px;">方式二：選擇Claude整理好的 .json 檔案（不含照片）</label>
@@ -2769,6 +2781,77 @@ function restoreSnapshot(){
 }
 
 document.getElementById('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
+
+// ---- Storage usage & photo cleanup ----
+document.getElementById('checkStorageBtn').addEventListener('click', async ()=>{
+  const resultEl = document.getElementById('storageUsageResult');
+  resultEl.textContent = '檢查中…';
+  try{
+    if(navigator.storage && navigator.storage.estimate){
+      const est = await navigator.storage.estimate();
+      const usedMB = (est.usage/1024/1024).toFixed(1);
+      const quotaMB = (est.quota/1024/1024).toFixed(0);
+      const pct = est.quota>0 ? Math.round(est.usage/est.quota*100) : 0;
+      resultEl.textContent = `已用約 ${usedMB} MB／瀏覽器配額約 ${quotaMB} MB（約${pct}%）。這是「這個網站」在瀏覽器裡能用的空間，跟手機本身還有多少容量是兩回事。`;
+    } else {
+      const raw = localStorage.getItem(STORAGE_KEY) || '';
+      const sizeMB = (new Blob([raw]).size/1024/1024).toFixed(1);
+      resultEl.textContent = `這個瀏覽器不支援精確查詢，但目前App資料本身約 ${sizeMB} MB（不含瀏覽器保留的額外空間）。`;
+    }
+  }catch(e){
+    resultEl.textContent = '查詢失敗：' + e.message;
+  }
+});
+
+function countAllPhotos(){
+  let count = 0;
+  Object.values(data).forEach(day=>{
+    PHOTO_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{ count += getEntryPhotos(e).length; });
+    });
+  });
+  return count;
+}
+function clearPhotosOlderThan(days){
+  const cutoff = days==null ? null : (Date.now() - days*24*60*60*1000);
+  let removed = 0;
+  Object.keys(data).forEach(dateStr=>{
+    const day = data[dateStr];
+    const dayTs = new Date(dateStr+'T00:00:00').getTime();
+    if(cutoff!=null && dayTs >= cutoff) return; // keep recent days untouched
+    PHOTO_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{
+        const photos = getEntryPhotos(e);
+        if(photos.length>0){
+          removed += photos.length;
+          e.photos = [];
+        }
+      });
+    });
+  });
+  return removed;
+}
+document.getElementById('clearOldPhotosBtn').addEventListener('click', ()=>{
+  const total = countAllPhotos();
+  if(total===0){ alert('目前沒有照片可以清除。'); return; }
+  if(!confirm(`目前共有約 ${total} 張照片。確定要清除「90天前」的所有照片嗎？（只刪照片，文字/數值紀錄不受影響）建議先確認已經同步過Google Drive。`)) return;
+  const removed = clearPhotosOlderThan(90);
+  if(save()){
+    render();
+    alert(`已清除 ${removed} 張90天前的照片。`);
+  }
+});
+document.getElementById('clearAllPhotosBtn').addEventListener('click', ()=>{
+  const total = countAllPhotos();
+  if(total===0){ alert('目前沒有照片可以清除。'); return; }
+  if(!confirm(`目前共有約 ${total} 張照片。確定要清除「全部」照片嗎？（只刪照片，文字/數值紀錄不受影響，此動作無法復原）建議先確認已經同步過Google Drive。`)) return;
+  const removed = clearPhotosOlderThan(null);
+  if(save()){
+    render();
+    alert(`已清除全部 ${removed} 張照片。`);
+  }
+});
+
 
 doImportBtn.addEventListener('click', ()=>{
   let parsed;
