@@ -642,11 +642,126 @@ function nowTime(){
   return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 
-function load(){
+// ---- Photo storage (IndexedDB) ----
+// Photos used to be embedded as raw base64 strings directly inside the main
+// localStorage-backed `data` object. localStorage has a hard, small per-site
+// ceiling (a handful of MB) regardless of how much free space the device has.
+// IndexedDB's quota instead scales with actual device free space (often
+// hundreds of MB to several GB), so photos now live there instead. Each
+// entry's `photos` array just holds a short reference id (e.g. "idb:172...")
+// pointing into IndexedDB; `photoCache` mirrors the whole IndexedDB photo
+// store in memory (populated once at startup) so the rest of the app can
+// keep resolving photos synchronously via getEntryPhotos() exactly as before.
+const PHOTO_DB_NAME = 'kleo-photos-db';
+const PHOTO_STORE = 'photos';
+let photoDbInstance = null;
+let photoCache = new Map();
+
+function openPhotoDB(){
+  return new Promise((resolve, reject)=>{
+    if(photoDbInstance){ resolve(photoDbInstance); return; }
+    if(!window.indexedDB){ reject(new Error('此瀏覽器不支援 IndexedDB')); return; }
+    const req = indexedDB.open(PHOTO_DB_NAME, 1);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(PHOTO_STORE)){
+        db.createObjectStore(PHOTO_STORE);
+      }
+    };
+    req.onsuccess = (e)=>{ photoDbInstance = e.target.result; resolve(photoDbInstance); };
+    req.onerror = (e)=> reject(e.target.error);
+  });
+}
+async function idbPutPhoto(id, base64){
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(PHOTO_STORE, 'readwrite');
+    tx.objectStore(PHOTO_STORE).put(base64, id);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = (e)=>reject(e.target.error);
+  });
+}
+async function idbDeletePhoto(id){
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(PHOTO_STORE, 'readwrite');
+    tx.objectStore(PHOTO_STORE).delete(id);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = (e)=>reject(e.target.error);
+  });
+}
+async function idbGetAllPhotos(){
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(PHOTO_STORE, 'readonly');
+    const store = tx.objectStore(PHOTO_STORE);
+    let keys = [], vals = [];
+    store.getAllKeys().onsuccess = (e)=>{ keys = e.target.result; };
+    store.getAll().onsuccess = (e)=>{ vals = e.target.result; };
+    tx.oncomplete = ()=>{
+      const map = new Map();
+      keys.forEach((k,i)=>map.set(k, vals[i]));
+      resolve(map);
+    };
+    tx.onerror = (e)=>reject(e.target.error);
+  });
+}
+function isPhotoRef(p){ return typeof p === 'string' && p.indexOf('idb:')===0; }
+function makePhotoId(){ return 'idb:' + Date.now() + '-' + Math.random().toString(36).slice(2,9); }
+async function initPhotoCache(){
+  try{ photoCache = await idbGetAllPhotos(); }
+  catch(e){ console.error('photo cache load failed', e); photoCache = new Map(); }
+}
+// One-time (and safe-to-repeat) migration: move any raw base64 photos still
+// embedded directly in `data` (old format, or freshly imported/restored data)
+// into IndexedDB, replacing them with lightweight reference ids.
+async function migrateEmbeddedPhotos(){
+  let migrated = 0;
+  const puts = [];
+  Object.values(data).forEach(day=>{
+    PHOTO_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{
+        if(Array.isArray(e.photos)){
+          e.photos = e.photos.map(p=>{
+            if(typeof p==='string' && p.indexOf('data:image')===0){
+              const id = makePhotoId();
+              puts.push(idbPutPhoto(id, p));
+              photoCache.set(id, p);
+              migrated++;
+              return id;
+            }
+            return p;
+          });
+        } else if(e.photo && typeof e.photo==='string' && e.photo.indexOf('data:image')===0){
+          const id = makePhotoId();
+          puts.push(idbPutPhoto(id, e.photo));
+          photoCache.set(id, e.photo);
+          e.photos = [id];
+          delete e.photo;
+          migrated++;
+        }
+      });
+    });
+  });
+  if(migrated>0){
+    await Promise.all(puts);
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){ console.error('post-migration save failed', e); }
+  }
+  return migrated;
+}
+
+async function load(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     data = raw ? JSON.parse(raw) : {};
   }catch(e){ data = {}; }
+  try{
+    await initPhotoCache();
+    const migratedCount = await migrateEmbeddedPhotos();
+    if(migratedCount>0) console.log(`已將 ${migratedCount} 張照片搬到 IndexedDB，釋放本機儲存空間`);
+  }catch(e){
+    console.error('IndexedDB photo storage unavailable, falling back to embedded photos:', e);
+  }
   render();
 }
 function save(){
@@ -976,10 +1091,14 @@ function render(){
       const {date, cat, idx} = btn.dataset;
       if(!confirm('確定要刪除這筆記錄嗎？刪除後無法復原。')) return;
       const dataBackupBeforeDelete = JSON.parse(JSON.stringify(data));
+      const removedEntry = data[date][cat][parseInt(idx)];
+      const photoRefsToClean = Array.isArray(removedEntry && removedEntry.photos) ? removedEntry.photos.filter(isPhotoRef) : [];
       data[date][cat].splice(parseInt(idx),1);
       if(!save()){
         data = dataBackupBeforeDelete;
         alert('刪除失敗，已還原成刪除前的狀態，請稍後再試一次。');
+      } else {
+        photoRefsToClean.forEach(id=>{ idbDeletePhoto(id).catch(()=>{}); photoCache.delete(id); });
       }
       render();
     });
@@ -1047,9 +1166,10 @@ let currentPhotos = [];
 
 function getEntryPhotos(entry){
   if(!entry) return [];
-  if(Array.isArray(entry.photos)) return entry.photos;
-  if(entry.photo) return [entry.photo];
-  return [];
+  let arr = [];
+  if(Array.isArray(entry.photos)) arr = entry.photos;
+  else if(entry.photo) arr = [entry.photo];
+  return arr.map(p => isPhotoRef(p) ? photoCache.get(p) : p).filter(Boolean);
 }
 
 function renderPhotoPreview(){
@@ -1061,14 +1181,23 @@ function renderPhotoPreview(){
   photoPreviewWrap.style.display = 'block';
   photoPreviewGrid.innerHTML = currentPhotos.map((p,i)=>`
     <div class="photo-preview-item">
-      <img src="${p}">
+      <img src="${isPhotoRef(p) ? (photoCache.get(p)||'') : p}">
       <button type="button" class="remove-one" data-i="${i}">✕</button>
     </div>
   `).join('');
   photoPreviewGrid.querySelectorAll('.remove-one').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      currentPhotos.splice(parseInt(btn.dataset.i), 1);
+      const idx = parseInt(btn.dataset.i);
+      const removed = currentPhotos[idx];
+      currentPhotos.splice(idx, 1);
       renderPhotoPreview();
+      // Only delete from IndexedDB if no saved entry still references this id
+      // (relevant when editing an existing entry: the photo may already be
+      // committed to a saved record elsewhere until Save is actually pressed).
+      if(isPhotoRef(removed) && !editContext){
+        idbDeletePhoto(removed).catch(()=>{});
+        photoCache.delete(removed);
+      }
     });
   });
 }
@@ -1124,7 +1253,7 @@ function openSheetForEdit(dateStr, cat, idx){
   const entry = data[dateStr][cat][idx];
   fDate.value = dateStr;
   fTime.value = entry.time || nowTime();
-  currentPhotos = getEntryPhotos(entry).slice();
+  currentPhotos = (Array.isArray(entry.photos) ? entry.photos.slice() : (entry.photo ? [entry.photo] : []));
   fPhoto.value = '';
   renderPhotoPreview();
   document.querySelector('#sheet h2').textContent = '編輯記錄';
@@ -1659,7 +1788,7 @@ function readExifDateTime(file){
   });
 }
 
-function compressImage(file, maxDim=900, quality=0.7){
+function compressImage(file, maxDim=300, quality=0.75){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
     reader.onload = ()=>{
@@ -1693,7 +1822,10 @@ fPhoto.addEventListener('change', async ()=>{
         exifResult = await readExifDateTime(file).catch(()=>null);
       }
       const compressed = await compressImage(file);
-      currentPhotos.push(compressed);
+      const id = makePhotoId();
+      await idbPutPhoto(id, compressed);
+      photoCache.set(id, compressed);
+      currentPhotos.push(id);
     }
     renderPhotoPreview();
     fPhoto.value = '';
@@ -1707,9 +1839,14 @@ fPhoto.addEventListener('change', async ()=>{
         }
       }
     }
-  }catch(e){ console.error('compress error', e); }
+  }catch(e){ console.error('compress error', e); alert('照片處理失敗：' + e.message); }
 });
 clearPhotoBtn.addEventListener('click', ()=>{
+  if(!editContext){
+    currentPhotos.forEach(p=>{
+      if(isPhotoRef(p)){ idbDeletePhoto(p).catch(()=>{}); photoCache.delete(p); }
+    });
+  }
   currentPhotos = [];
   fPhoto.value = '';
   renderPhotoPreview();
@@ -2670,6 +2807,7 @@ async function restoreFromZipFile(file){
 
     saveSnapshot();
     const {addedDays, addedEntries} = mergeImportedData(incoming);
+    await migrateEmbeddedPhotos();
     if(save()){
       render();
       importSheet.classList.remove('open');
@@ -2689,9 +2827,10 @@ restoreZipInput.addEventListener('change', ()=>{
 
 // ---- Direct JSON file import (avoids copy/paste corruption) ----
 const importJsonFileInput = document.getElementById('importJsonFileInput');
-function applyImportedJson(parsed, sourceLabel){
+async function applyImportedJson(parsed, sourceLabel){
   saveSnapshot();
   const {addedDays, addedEntries} = mergeImportedData(parsed);
+  await migrateEmbeddedPhotos();
   if(save()){
     render();
     importSheet.classList.remove('open');
@@ -2830,10 +2969,13 @@ function clearPhotosOlderThan(days){
     if(cutoff!=null && dayTs >= cutoff) return; // keep recent days untouched
     PHOTO_CATS.forEach(cat=>{
       (day[cat]||[]).forEach(e=>{
-        const photos = getEntryPhotos(e);
-        if(photos.length>0){
-          removed += photos.length;
+        const refs = Array.isArray(e.photos) ? e.photos.filter(isPhotoRef) : [];
+        const photoCount = getEntryPhotos(e).length;
+        if(photoCount>0){
+          removed += photoCount;
+          refs.forEach(id=>{ idbDeletePhoto(id).catch(()=>{}); photoCache.delete(id); });
           e.photos = [];
+          if(e.photo) delete e.photo;
         }
       });
     });
@@ -2977,6 +3119,7 @@ async function syncFromDriveOnLogin(){
   if(isSyncing) return; // prevent overlapping sync calls from racing each other
   isSyncing = true;
   try{
+    if(loadPromise) await loadPromise; // make sure local data + photo cache finished initializing first
     await findOrCreateDriveFile();
     const res = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
     const remoteEnvelope = await res.json().catch(()=>null);
@@ -2987,6 +3130,7 @@ async function syncFromDriveOnLogin(){
       if(remoteLastModified > localLastModified){
         // Cloud version is newer than this device's copy: replace local with cloud version
         data = remoteEnvelope.diary;
+        await migrateEmbeddedPhotos(); // move any embedded base64 photos from the cloud copy into IndexedDB
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         localStorage.setItem('kleo-last-modified', String(remoteLastModified));
         render();
@@ -3019,7 +3163,17 @@ function pushToDrive(immediate){
   const doPush = async ()=>{
     try{
       const lastModified = parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now()));
-      const envelope = { _meta: { lastModified }, diary: data };
+      const hydratedDiary = JSON.parse(JSON.stringify(data));
+      Object.values(hydratedDiary).forEach(day=>{
+        PHOTO_CATS.forEach(cat=>{
+          (day[cat]||[]).forEach(e=>{
+            if(Array.isArray(e.photos)){
+              e.photos = e.photos.map(p => isPhotoRef(p) ? (photoCache.get(p) || null) : p).filter(Boolean);
+            }
+          });
+        });
+      });
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary };
       await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -3036,7 +3190,7 @@ function pushToDrive(immediate){
 
 initGoogleAuth();
 
-load();
+let loadPromise = load();
 </script>
 </body>
 </html>
