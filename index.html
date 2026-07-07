@@ -975,8 +975,12 @@ function render(){
     btn.addEventListener('click', ()=>{
       const {date, cat, idx} = btn.dataset;
       if(!confirm('確定要刪除這筆記錄嗎？刪除後無法復原。')) return;
+      const dataBackupBeforeDelete = JSON.parse(JSON.stringify(data));
       data[date][cat].splice(parseInt(idx),1);
-      save();
+      if(!save()){
+        data = dataBackupBeforeDelete;
+        alert('刪除失敗，已還原成刪除前的狀態，請稍後再試一次。');
+      }
       render();
     });
   });
@@ -1712,6 +1716,7 @@ clearPhotoBtn.addEventListener('click', ()=>{
 });
 
 document.getElementById('saveBtn').addEventListener('click', ()=>{
+  const dataBackupBeforeSave = JSON.parse(JSON.stringify(data));
   const dateStr = fDate.value || todayStr();
   const time = fTime.value || nowTime();
   const valEl = document.getElementById('fVal');
@@ -1808,6 +1813,10 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     fPhoto.value = '';
     photoPreviewWrap.style.display = 'none';
     closeSheetFn();
+  } else {
+    data = dataBackupBeforeSave;
+    render();
+    alert('這筆記錄沒有真的存進去，已經還原成儲存前的狀態，請確認儲存空間後再試一次（可以到「匯入資料」面板檢查用量或清除舊照片）。');
   }
 });
 
