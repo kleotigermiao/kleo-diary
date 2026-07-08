@@ -1340,7 +1340,9 @@ function renderPhotoPreview(){
 let editContext = null; // {date, cat, idx} when editing, null when creating new
 const PHOTO_CATS = ['insulin','vomit','stool','urine'];
 
+let savedScrollY = 0;
 function openSheet(){
+  savedScrollY = window.scrollY;
   editContext = null;
   fDate.value = todayStr();
   fTime.value = nowTime();
@@ -1356,6 +1358,7 @@ function openSheet(){
 }
 
 function openQuickAdd(dateStr, cat){
+  savedScrollY = window.scrollY;
   editContext = null;
   fDate.value = dateStr;
   fTime.value = nowTime();
@@ -1370,6 +1373,7 @@ function openQuickAdd(dateStr, cat){
   backdrop.classList.add('open');
 }
 function openSheetForEditNote(dateStr){
+  savedScrollY = window.scrollY;
   editContext = {date: dateStr, cat: 'note', isDayNote: true};
   fDate.value = dateStr;
   currentPhotos = [];
@@ -1385,6 +1389,7 @@ function openSheetForEditNote(dateStr){
 }
 
 function openSheetForEdit(dateStr, cat, idx){
+  savedScrollY = window.scrollY;
   editContext = {date: dateStr, cat, idx};
   const entry = data[dateStr][cat][idx];
   fDate.value = dateStr;
@@ -1506,10 +1511,12 @@ function openSheetForEdit(dateStr, cat, idx){
   backdrop.classList.add('open');
 }
 function closeSheetFn(){
+  if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
   sheet.classList.remove('open');
   backdrop.classList.remove('open');
   editContext = null;
   document.getElementById('catGrid').style.display = 'grid';
+  setTimeout(()=>{ window.scrollTo(0, savedScrollY); }, 50);
 }
 fabBtn.addEventListener('click', openSheet);
 closeSheetBtn.addEventListener('click', closeSheetFn);
