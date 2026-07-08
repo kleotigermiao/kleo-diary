@@ -144,8 +144,12 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .mood-emoji{font-size:26px;}
 .mood-label{font-size:11px;color:var(--ink-soft);}
 
+.second-row-wrap{
+  display:flex;gap:10px;margin:10px 16px 4px;align-items:stretch;flex-wrap:wrap;
+}
+.second-row-wrap .cat-score-widget{flex:1 1 240px;margin:0;}
 .cat-score-widget{
-  margin:10px 16px 4px;padding:12px 14px;border-radius:10px;
+  padding:12px 14px;border-radius:10px;
   background:linear-gradient(135deg,#00000006,#00000002);border:1px solid var(--line);
 }
 .cs-head{
@@ -159,6 +163,17 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .cs-score{font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;margin-left:6px;}
 .cs-prev{font-size:12px;color:var(--ink-soft);margin-top:3px;}
 .cs-note{font-size:10.5px;color:var(--ink-soft);margin:5px 0 0;line-height:1.45;}
+
+.custom-status-grid{
+  flex:1 1 200px;padding:0;margin:0;
+  display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-content:start;
+}
+.custom-slot-empty{
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  cursor:pointer;border:1px dashed var(--line);background:transparent;min-height:56px;
+}
+.custom-slot-empty:hover, .custom-slot-empty:active{background:#00000006;}
+.custom-slot{position:relative;}
 
 .section{padding:4px 16px 12px;}
 .row{
@@ -503,14 +518,9 @@ textarea{resize:vertical; min-height:64px;}
   <h2>新增記錄</h2>
 
   <div class="cat-grid" id="catGrid">
-    <button class="cat-btn" data-cat="mood"><span class="ic">😺</span>精神</button>
-    <button class="cat-btn" data-cat="appetite"><span class="ic">🍖</span>食慾</button>
     <button class="cat-btn" data-cat="food"><span class="ic">🍽️</span>飲食</button>
-    <button class="cat-btn" data-cat="water"><span class="ic">💧</span>飲水</button>
     <button class="cat-btn" data-cat="glucose"><span class="ic">🩸</span>血糖</button>
-    <button class="cat-btn" data-cat="weight"><span class="ic">⚖️</span>體重</button>
     <button class="cat-btn" data-cat="insulin"><span class="ic">💉</span>胰島素</button>
-    <button class="cat-btn" data-cat="urine"><span class="ic">🚽</span>排尿</button>
     <button class="cat-btn" data-cat="stool"><span class="ic">💩</span>排便</button>
     <button class="cat-btn" data-cat="vomit"><span class="ic">🤮</span>嘔吐</button>
     <button class="cat-btn" data-cat="med"><span class="ic">💊</span>用藥</button>
@@ -618,10 +628,9 @@ textarea{resize:vertical; min-height:64px;}
   <p>把你的Markdown日記給Claude，請它轉換成這個格式並輸出成.json檔案，直接選檔匯入，避免複製貼上時內容被截斷或破壞。既有的記錄不會被覆蓋，新資料會合併進去。</p>
   <input type="file" accept=".json,application/json" id="importJsonFileInput">
 
-  <label style="margin-top:22px;">方式三：貼上Claude整理好的JSON文字（不含照片）</label>
-  <p>如果不方便用檔案，也可以把JSON文字直接貼在這裡再按「匯入」。</p>
-  <textarea id="importText" placeholder='貼上JSON格式的資料…' style="height:150px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></textarea>
-  <button class="save-btn" id="doImportBtn">匯入 JSON 文字</button>
+  <label style="margin-top:22px;">方式三：選擇 .csv 檔案（不含照片）</label>
+  <p>欄位格式要跟「下載CSV」匯出的格式一樣（日期、血糖、胰島素、飲水等欄位），可以先下載一份參考格式，或直接把整理好的CSV拿來匯入。</p>
+  <input type="file" accept=".csv,text/csv" id="importCsvFileInput">
 
   <label style="margin-top:22px;">還原</label>
   <p>每次匯入前，App會自動存一份「匯入前」的快照。如果發現剛剛的匯入結果不對，可以整個復原回去，不用一筆筆刪。</p>
@@ -839,6 +848,66 @@ function deltaSpan(diff, formatFn){
   const arrow = diff>0 ? '▲' : '▼';
   return `<span class="delta ${cls}">${arrow} ${formatFn(Math.abs(diff))}</span>`;
 }
+const CUSTOM_SLOTS_KEY = 'kleo-custom-status-slots-v1';
+const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med'];
+const CUSTOM_SLOT_COUNT = 4;
+function loadCustomSlots(){
+  try{
+    const raw = localStorage.getItem(CUSTOM_SLOTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : ['glucose','insulin',null,null];
+    while(parsed.length < CUSTOM_SLOT_COUNT) parsed.push(null);
+    return parsed.slice(0, CUSTOM_SLOT_COUNT);
+  }catch(e){ return ['glucose','insulin',null,null]; }
+}
+function saveCustomSlots(slots){
+  try{ localStorage.setItem(CUSTOM_SLOTS_KEY, JSON.stringify(slots)); }catch(e){}
+}
+let customStatusSlots = loadCustomSlots();
+
+function renderGenericStatusValue(cat, day){
+  if(cat==='glucose'){
+    const entries = day.glucose || [];
+    const latest = latestEntry(entries);
+    if(!latest) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
+    const lvl = glucoseLevel(latest.value);
+    const suffix = entries.length>1 ? `（共${entries.length}筆）` : '';
+    return {hasData:true, html:`<span class="tag ${lvl}">${latest.value} mmol/L</span>${suffix}`};
+  }
+  if(cat==='insulin'){
+    const entries = day.insulin || [];
+    const latest = latestEntry(entries);
+    if(!latest) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
+    const suffix = entries.length>1 ? `（共${entries.length}筆）` : '';
+    return {hasData:true, html:`<span class="tag normal">${latest.dose}</span>${suffix}`};
+  }
+  const entries = day[cat] || [];
+  if(entries.length===0) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
+  return {hasData:true, html:`共 ${entries.length} 次`};
+}
+function buildCustomStatusPanel(dateStr, day){
+  const items = customStatusSlots.map((cat, slotIdx)=>{
+    if(!cat){
+      return `<div class="status-item custom-slot-empty" data-slot="${slotIdx}" data-date="${dateStr}">
+        <span class="si-empty">點此設定關注項目</span>
+      </div>`;
+    }
+    const {hasData, html} = renderGenericStatusValue(cat, day);
+    return `<div class="status-item quick-add custom-slot" data-date="${dateStr}" data-cat="${cat}" data-slot="${slotIdx}">
+      ${!hasData?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS[cat]} ${CAT_LABELS[cat]}</span><span class="si-val">${html}</span>
+    </div>`;
+  }).join('');
+  return `<div class="status-summary custom-status-grid">${items}</div>`;
+}
+function refreshAddMenuVisibility(){
+  const assigned = new Set(customStatusSlots.filter(Boolean));
+  document.querySelectorAll('#catGrid .cat-btn').forEach(btn=>{
+    const cat = btn.dataset.cat;
+    if(CUSTOM_SLOT_ASSIGNABLE.includes(cat)){
+      btn.style.display = assigned.has(cat) ? 'none' : '';
+    }
+  });
+}
+
 function buildStatusSummary(dateStr, day, dates, idx){
   const moodLatest = latestEntry(day.mood);
   const appetiteLatest = latestEntry(day.appetite);
@@ -1016,7 +1085,8 @@ function renderRowHtml(dateStr, cat, e, idx){
     const extra = [];
     if(e.site) extra.push(e.site);
     if(e.needle) extra.push(e.needle);
-    const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${extra.join(' · ')})</span>` : '';
+    if(e.note) extra.push(e.note);
+    const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(extra.join(' · '))})</span>` : '';
     valHtml = `<span class="tag normal">${e.dose}</span>${detail}`;
   } else if(cat==='water'){
     const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
@@ -1081,7 +1151,10 @@ function render(){
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
       </div>
       ${buildStatusSummary(dateStr, day, dates, idx)}
-      ${buildCatScoreWidget(dateStr, day, dates, idx)}
+      <div class="second-row-wrap">
+        ${buildCatScoreWidget(dateStr, day, dates, idx)}
+        ${buildCustomStatusPanel(dateStr, day)}
+      </div>
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
   }).join('');
@@ -1122,10 +1195,73 @@ function render(){
   });
   main.querySelectorAll('.quick-add').forEach(item=>{
     item.addEventListener('click', ()=>{
+      if(item.dataset.longPressed==='1'){ item.dataset.longPressed=''; return; }
       openQuickAdd(item.dataset.date, item.dataset.cat);
     });
   });
+  main.querySelectorAll('.custom-slot').forEach(item=>{
+    let pressTimer = null;
+    const startPress = ()=>{
+      item.dataset.longPressed = '';
+      pressTimer = setTimeout(()=>{
+        item.dataset.longPressed = '1';
+        openSlotPicker(item.dataset.date, parseInt(item.dataset.slot,10));
+      }, 550);
+    };
+    const cancelPress = ()=> clearTimeout(pressTimer);
+    item.addEventListener('pointerdown', startPress);
+    item.addEventListener('pointerup', cancelPress);
+    item.addEventListener('pointerleave', cancelPress);
+    item.addEventListener('pointercancel', cancelPress);
+    item.addEventListener('contextmenu', (e)=>{
+      e.preventDefault();
+      openSlotPicker(item.dataset.date, parseInt(item.dataset.slot,10));
+    });
+  });
+  main.querySelectorAll('.custom-slot-empty').forEach(item=>{
+    item.addEventListener('click', ()=>{
+      openSlotPicker(item.dataset.date, parseInt(item.dataset.slot,10));
+    });
+  });
+  refreshAddMenuVisibility();
 }
+
+function openSlotPicker(dateStr, slotIdx){
+  const assignedElsewhere = customStatusSlots.filter((c,i)=>i!==slotIdx && c);
+  const available = CUSTOM_SLOT_ASSIGNABLE.filter(c=>!assignedElsewhere.includes(c));
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:320px;width:100%;max-height:80vh;overflow-y:auto;';
+  const optionsHtml = available.length>0
+    ? available.map(c=>`<button type="button" class="slot-pick-btn" data-cat="${c}" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);cursor:pointer;font-size:14px;">${ICONS[c]} ${CAT_LABELS[c]}</button>`).join('')
+    : `<p style="font-size:13px;color:var(--ink-soft);">目前可選的項目都已經被指派到別格了，先去別格清空或換一個才能挑這裡。</p>`;
+  box.innerHTML = `<h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">選擇這一格要關注的項目</h3>
+    ${optionsHtml}
+    ${customStatusSlots[slotIdx] ? `<button type="button" id="slotClearBtn" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-top:6px;border:1px solid #B23A48;border-radius:8px;background:none;color:#B23A48;cursor:pointer;font-size:14px;">清空這一格</button>` : ''}
+    <button type="button" id="slotCancelBtn" style="display:block;width:100%;text-align:center;padding:10px 12px;margin-top:10px;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;">取消</button>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelectorAll('.slot-pick-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      customStatusSlots[slotIdx] = btn.dataset.cat;
+      saveCustomSlots(customStatusSlots);
+      close();
+      render();
+    });
+  });
+  const clearBtn = document.getElementById('slotClearBtn');
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{
+    customStatusSlots[slotIdx] = null;
+    saveCustomSlots(customStatusSlots);
+    close();
+    render();
+  });
+  document.getElementById('slotCancelBtn').addEventListener('click', close);
+}
+
 
 document.getElementById('lightbox').addEventListener('click', ()=>{
   document.getElementById('lightbox').classList.remove('open');
@@ -1202,7 +1338,7 @@ function renderPhotoPreview(){
   });
 }
 let editContext = null; // {date, cat, idx} when editing, null when creating new
-const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine'];
+const PHOTO_CATS = ['insulin','vomit','stool','urine'];
 
 function openSheet(){
   editContext = null;
@@ -1280,6 +1416,8 @@ function openSheetForEdit(dateStr, cat, idx){
     document.querySelectorAll('#doseTagGrid .option-btn').forEach(b=>{
       b.classList.toggle('active', b.dataset.val===entry.dose);
     });
+    const insulinDetailEl = document.getElementById('fDetail');
+    if(insulinDetailEl) insulinDetailEl.value = entry.note || '';
     if(entry.site){
       document.getElementById('fSite').value = entry.site;
       document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>{
@@ -1548,15 +1686,15 @@ function setCategory(cat){
       });
     });
   } else if(cat==='glucose'){
-    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="number" step="0.1" id="fVal" placeholder="例如 15.2">
+    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
       <label>補充說明（可選）</label>
       <input type="text" id="fDetail" placeholder="例如左耳、同滴血、餐前…">`;
   } else if(cat==='urine'){
-    dynamicFields.innerHTML = `<label>尿量估計 (ml)</label><input type="number" step="1" id="fVal" placeholder="例如 150">
+    dynamicFields.innerHTML = `<label>尿量估計 (ml)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 150">
       <label>補充說明（可選）</label>
       <input type="text" id="fDetail" placeholder="例如尿團偏小、顏色偏深…">`;
   } else if(cat==='weight'){
-    dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="number" step="0.01" id="fVal" placeholder="例如 4.20">`;
+    dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 4.20">`;
   } else if(cat==='insulin'){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
     const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
@@ -1582,6 +1720,8 @@ function setCategory(cat){
         <input type="text" id="newNeedleInput" placeholder="新增型號…" style="flex:1;">
         <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
       </div>
+      <label>備註（可選）</label>
+      <input type="text" id="fDetail" placeholder="例如新開封胰島素、換位置…">
       <input type="hidden" id="fSite">
       <input type="hidden" id="fNeedle">
     `;
@@ -1594,35 +1734,42 @@ function setCategory(cat){
   } else if(cat==='water'){
     const currentBase = loadWaterBase();
     const isNewEntry = !editContext;
+    const currentHour = new Date().getHours();
+    const defaultPeriod = currentHour < 12 ? 'morning' : 'evening';
     dynamicFields.innerHTML = `
+      ${isNewEntry ? `
+      <label>這是早上還是晚上量的水？</label>
+      <div class="option-grid" id="waterPeriodGrid">
+        <button type="button" class="option-btn water-period-btn${defaultPeriod==='morning'?' active':''}" data-period="morning">早（隔夜水量，記到前一天）</button>
+        <button type="button" class="option-btn water-period-btn${defaultPeriod==='evening'?' active':''}" data-period="evening">晚（白天水量，記到今天）</button>
+      </div>
+      ` : ''}
       <label>固定水量 (ml)</label>
-      <input type="number" id="fWaterBase" value="${currentBase}">
+      <input type="text" inputmode="numeric" id="fWaterBase" value="${currentBase}">
       <label>剩餘水量 (ml)</label>
-      <input type="number" id="fRemaining" placeholder="例如 50">
+      <input type="text" inputmode="numeric" id="fRemaining" placeholder="例如 50">
       <input type="hidden" id="fVal">
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
-      ${isNewEntry ? `<p id="waterPeriodHint" style="margin-top:8px;font-size:11.5px;color:var(--ink-soft);"></p>` : ''}
     `;
     wireWaterInputs();
     if(isNewEntry){
-      const applyWaterPeriodDate = ()=>{
-        const m = (fTime.value||'').match(/^(\d{1,2}):(\d{2})/);
-        const hour = m ? parseInt(m[1]) : new Date().getHours();
-        const hint = document.getElementById('waterPeriodHint');
-        if(hour < 12){
+      const applyWaterPeriodDate = (period)=>{
+        if(period==='morning'){
           const d = new Date();
           d.setDate(d.getDate()-1);
           fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-          if(hint) hint.textContent = '偵測到時間是上午，判斷為「隔夜水量」，日期已自動設為前一天。';
         } else {
           fDate.value = todayStr();
-          if(hint) hint.textContent = '偵測到時間是下午/晚上，判斷為「白天水量」，日期維持今天。';
         }
       };
-      applyWaterPeriodDate();
-      if(waterTimeListener) fTime.removeEventListener('input', waterTimeListener);
-      waterTimeListener = applyWaterPeriodDate;
-      fTime.addEventListener('input', waterTimeListener);
+      applyWaterPeriodDate(defaultPeriod);
+      document.querySelectorAll('.water-period-btn').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          document.querySelectorAll('.water-period-btn').forEach(b=>b.classList.remove('active'));
+          btn.classList.add('active');
+          applyWaterPeriodDate(btn.dataset.period);
+        });
+      });
     }
   } else if(cat==='note'){
     const isWholeBlockEdit = editContext && editContext.isDayNote;
@@ -1892,7 +2039,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(cat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
-      updated = {time, dose: rawVal, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave};
+      updated = {time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave};
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -1929,7 +2076,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(currentCat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
-      data[dateStr].insulin.push({time, dose: rawVal, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave});
+      data[dateStr].insulin.push({time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave});
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -2254,6 +2401,7 @@ function reportCellLines(day, catKey){
     const extra = [];
     if(e.site) extra.push(e.site);
     if(e.needle) extra.push(e.needle);
+    if(e.note) extra.push(e.note);
     return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
   });
   if(catKey==='water') return entries.map(e=>`${e.time} ${e.ml}ml`);
@@ -2597,7 +2745,7 @@ const galleryEmpty = document.getElementById('galleryEmpty');
 const galleryFilterGrid = document.getElementById('galleryFilterGrid');
 const backFromGallery = document.getElementById('backFromGallery');
 let galleryFilter = 'all';
-const GALLERY_CATS = ['glucose','insulin','vomit','stool','urine'];
+const GALLERY_CATS = ['insulin','vomit','stool','urine'];
 
 function collectAllPhotos(){
   const items = [];
@@ -2711,7 +2859,7 @@ csvReportBtn.addEventListener('click', ()=>{
 // ---- Full backup (zip, includes photos) ----
 const backupBtn = document.getElementById('backupBtn');
 const restoreZipInput = document.getElementById('restoreZipInput');
-const PHOTO_CAT_LIST = ['glucose','insulin','vomit','stool','urine'];
+const PHOTO_CAT_LIST = ['insulin','vomit','stool','urine'];
 
 function collectPhotoEntries(){
   const list = [];
@@ -2861,16 +3009,161 @@ importJsonFileInput.addEventListener('change', ()=>{
   reader.readAsText(file, 'utf-8');
 });
 
+// ---- CSV import ----
+function parseCSVText(text){
+  if(text.charCodeAt(0)===0xFEFF) text = text.slice(1);
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(c === '\r'){ /* skip, \n handles the line break */ }
+      else field += c;
+    }
+  }
+  if(field.length>0 || row.length>0){ row.push(field); rows.push(row); }
+  return rows.filter(r => !(r.length===1 && r[0]===''));
+}
+function csvHeaderToKey(header){
+  const h = (header||'').trim();
+  if(h==='日期') return 'date';
+  if(h.indexOf('血糖')===0) return 'glucose';
+  if(h.indexOf('胰島素')===0) return 'insulin';
+  if(h.indexOf('體重')===0) return 'weight';
+  if(h==='精神') return 'mood';
+  if(h==='食慾') return 'appetite';
+  if(h==='飲食') return 'food';
+  if(h==='飲水') return 'water';
+  if(h==='排尿') return 'urine';
+  if(h==='排便') return 'stool';
+  if(h==='嘔吐') return 'vomit';
+  if(h==='用藥') return 'med';
+  if(h==='備註') return 'notes';
+  return null;
+}
+function csvParseGlucoseCell(s){
+  const entries = [];
+  const re = /([^\s]+?)\s*→\s*([\d.]+)(?:（([^）]*)）)?/g;
+  let m;
+  while((m = re.exec(s))) entries.push({time: m[1], value: parseFloat(m[2]), note: m[3] || undefined});
+  return entries;
+}
+function csvParseWeightCell(s){
+  const entries = [];
+  const re = /(\S+?)\s*→\s*([\d.]+)/g;
+  let m;
+  while((m = re.exec(s))) entries.push({time: m[1], value: parseFloat(m[2])});
+  return entries;
+}
+function csvParseInsulinCell(s){
+  const entries = [];
+  const tokens = s.split(/\s+/).filter(Boolean);
+  let i=0;
+  while(i<tokens.length){
+    entries.push({time: tokens[i], dose: tokens[i+1]||''});
+    i+=2;
+  }
+  return entries;
+}
+function csvParseWaterCell(s){
+  const entries = [];
+  const re = /(\d{1,2}:\d{2})\s*([\d.]+)\s*ml/g;
+  let m;
+  while((m=re.exec(s))) entries.push({time:m[1], ml:parseFloat(m[2])});
+  return entries;
+}
+function csvParseTimeNoteCell(s){
+  const entries = [];
+  const chunks = s.trim().split(/(?=(?<!\d)(?:\d{1,2}:\d{2}|\?)(?:\s|$))/);
+  chunks.filter(Boolean).forEach(c=>{
+    const m = c.match(/^(\d{1,2}:\d{2}|\?)\s*(.*)$/);
+    if(m){ entries.push({time:m[1], note:m[2].trim()}); }
+    else if(entries.length){ entries[entries.length-1].note = (entries[entries.length-1].note+' '+c.trim()).trim(); }
+    else entries.push({time:'', note:c.trim()});
+  });
+  return entries;
+}
+function csvParseUrineCell(s){
+  const entries = [];
+  const re = /(\d{1,2}:\d{2}|\?)\s*([\d.]+)ml(?:\s*\(([^)]*)\))?/g;
+  let m, matched=false;
+  while((m=re.exec(s))){ entries.push({time:m[1], ml:parseFloat(m[2]), note:m[3]||undefined}); matched=true; }
+  return matched ? entries : csvParseTimeNoteCell(s);
+}
+function csvParseMoodCell(s){
+  const found = MOOD_LEVELS.find(l => s.indexOf(l.label)!==-1);
+  return found ? [{time: nowTime(), value: found.v}] : [];
+}
+function parseCsvToImportData(csvText){
+  const rows = parseCSVText(csvText);
+  if(rows.length<2) throw new Error('CSV內容不足，至少要有標題列跟一列資料');
+  const headerKeys = rows[0].map(csvHeaderToKey);
+  const dateIdx = headerKeys.indexOf('date');
+  if(dateIdx===-1) throw new Error('找不到「日期」欄位，請確認CSV格式跟「下載CSV」匯出的一樣');
+  const result = {};
+  for(let r=1;r<rows.length;r++){
+    const row = rows[r];
+    if(row.every(c=>(c||'').trim()==='')) continue;
+    const dateStr = (row[dateIdx]||'').trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
+    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+    headerKeys.forEach((key, i)=>{
+      if(key==null || key==='date') return;
+      const cell = (row[i]||'').trim();
+      if(!cell) return;
+      if(key==='notes'){ day.notes = cell; return; }
+      if(key==='glucose'){ day.glucose = csvParseGlucoseCell(cell); return; }
+      if(key==='weight'){ day.weight = csvParseWeightCell(cell); return; }
+      if(key==='insulin'){ day.insulin = csvParseInsulinCell(cell); return; }
+      if(key==='water'){ day.water = csvParseWaterCell(cell); return; }
+      if(key==='urine'){ day.urine = csvParseUrineCell(cell); return; }
+      if(key==='mood' || key==='appetite'){ day[key] = csvParseMoodCell(cell); return; }
+      day[key] = csvParseTimeNoteCell(cell);
+    });
+    result[dateStr] = day;
+  }
+  if(Object.keys(result).length===0) throw new Error('沒有解析出任何有效日期的資料列');
+  return result;
+}
+const importCsvFileInput = document.getElementById('importCsvFileInput');
+importCsvFileInput.addEventListener('change', ()=>{
+  const file = importCsvFileInput.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async ()=>{
+    let parsed;
+    try{
+      parsed = parseCsvToImportData(reader.result);
+    }catch(e){
+      alert('CSV格式錯誤：' + e.message);
+      importCsvFileInput.value = '';
+      return;
+    }
+    await applyImportedJson(parsed, '（來自CSV檔案 ' + file.name + '）');
+    importCsvFileInput.value = '';
+  };
+  reader.onerror = ()=>{
+    alert('讀取檔案失敗，請再試一次。');
+    importCsvFileInput.value = '';
+  };
+  reader.readAsText(file, 'utf-8');
+});
+
 // ---- Import ----
 const importBtn = document.getElementById('importBtn');
 const importSheet = document.getElementById('importSheet');
 const importBackdrop = document.getElementById('importBackdrop');
 const closeImportSheet = document.getElementById('closeImportSheet');
-const importText = document.getElementById('importText');
-const doImportBtn = document.getElementById('doImportBtn');
 
 importBtn.addEventListener('click', ()=>{
-  importText.value = '';
   importSheet.classList.add('open');
   importBackdrop.classList.add('open');
 });
@@ -3003,17 +3296,6 @@ document.getElementById('clearAllPhotosBtn').addEventListener('click', ()=>{
   }
 });
 
-
-doImportBtn.addEventListener('click', ()=>{
-  let parsed;
-  try{
-    parsed = JSON.parse(importText.value);
-  }catch(e){
-    alert('格式錯誤，無法解析JSON：' + e.message);
-    return;
-  }
-  applyImportedJson(parsed, '');
-});
 
 // ---- Google Sign-In + Drive auto-sync ----
 const GOOGLE_CLIENT_ID = '203009591227-t04ag82ei8s1t4m8nkctjt26jglrc7io.apps.googleusercontent.com';
