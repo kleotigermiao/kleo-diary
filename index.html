@@ -191,6 +191,10 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .row .val .tag.high{color:var(--high);}
 .row .val .tag.low{color:var(--low);}
 .row .val .tag.normal{color:var(--normal);}
+.tag.insulin-dose{
+  font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12.5px;
+  color:var(--ink); background:#00000008; padding:1px 6px; border-radius:5px;
+}
 .row .del{
   flex-shrink:0; background:none; border:none; color:var(--ink-soft);
   font-size:15px; cursor:pointer; padding:0 4px; opacity:0.4;
@@ -495,6 +499,8 @@ textarea{resize:vertical; min-height:64px;}
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
       <button class="sync-btn" id="googleAuthBtn">登入 Google 同步</button>
       <button class="sync-btn" id="backupBtn">完整備份</button>
+      <button class="sync-btn" id="refreshBtn">重新整理</button>
+      <button class="sync-btn" id="jumpDateBtn">跳轉日期</button>
       <button class="sync-btn" id="importBtn">匯入</button>
       <button class="sync-btn" id="galleryBtn">圖庫</button>
       <button class="sync-btn" id="reportBtn">報表</button>
@@ -878,7 +884,7 @@ function renderGenericStatusValue(cat, day){
     const latest = latestEntry(entries);
     if(!latest) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
     const suffix = entries.length>1 ? `（共${entries.length}筆）` : '';
-    return {hasData:true, html:`<span class="tag normal">${latest.dose}</span>${suffix}`};
+    return {hasData:true, html:`<span class="tag insulin-dose">${latest.dose}</span>${suffix}`};
   }
   const entries = day[cat] || [];
   if(entries.length===0) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
@@ -1087,7 +1093,7 @@ function renderRowHtml(dateStr, cat, e, idx){
     if(e.needle) extra.push(e.needle);
     if(e.note) extra.push(e.note);
     const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(extra.join(' · '))})</span>` : '';
-    valHtml = `<span class="tag normal">${e.dose}</span>${detail}`;
+    valHtml = `<span class="tag insulin-dose">${e.dose}</span>${detail}`;
   } else if(cat==='water'){
     const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
     valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
@@ -1133,6 +1139,9 @@ function escapeHtml(s){
 
 function render(){
   const main = document.getElementById('main');
+  if(!data[todayStr()]){
+    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+  }
   const dates = Object.keys(data).sort().reverse();
   if(dates.length===0){
     main.innerHTML = `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
@@ -1145,7 +1154,7 @@ function render(){
       <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
       <button class="note-edit-btn" data-date="${dateStr}">✎</button>
     </div>`;
-    return `<div class="day-card">
+    return `<div class="day-card" data-date="${dateStr}">
       <div class="day-head">
         <span class="date">${formatDateLabel(dateStr)}</span>
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
@@ -1225,6 +1234,39 @@ function render(){
   });
   refreshAddMenuVisibility();
 }
+
+document.getElementById('refreshBtn').addEventListener('click', ()=>{
+  window.location.reload();
+});
+
+document.getElementById('jumpDateBtn').addEventListener('click', ()=>{
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:320px;width:100%;';
+  box.innerHTML = `<h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">跳轉到指定日期</h3>
+    <input type="date" id="jumpDateInput" value="${todayStr()}" style="margin-bottom:12px;">
+    <button type="button" id="jumpDateGoBtn" class="save-btn" style="margin-bottom:8px;">跳轉</button>
+    <button type="button" id="jumpDateCancelBtn" style="display:block;width:100%;text-align:center;padding:8px 12px;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;">取消</button>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  document.getElementById('jumpDateCancelBtn').addEventListener('click', close);
+  document.getElementById('jumpDateGoBtn').addEventListener('click', ()=>{
+    const target = document.getElementById('jumpDateInput').value;
+    if(!target){ return; }
+    if(!data[target]){
+      data[target] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+    }
+    render();
+    close();
+    setTimeout(()=>{
+      const card = document.querySelector(`.day-card[data-date="${target}"]`);
+      if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
+    }, 50);
+  });
+});
 
 function openSlotPicker(dateStr, slotIdx){
   const assignedElsewhere = customStatusSlots.filter((c,i)=>i!==slotIdx && c);
@@ -2265,13 +2307,14 @@ function buildGlucoseChart(allEntries, allInsulin){
     svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#C0392B" stroke-width="1.5" opacity="0.7"><title>${insulinLabel}</title></line>`;
   });
 
-  // x-axis time labels: pick up to 5 evenly spaced ticks across the domain (fewer to avoid crowding at larger font size)
+  // x-axis labels: date + weekday, no time (multiple glucose readings per day made per-tick times noisy)
+  const WEEKDAY_NAMES = ['週日','週一','週二','週三','週四','週五','週六'];
   const tickCount = Math.min(5, sorted.length);
   for(let i=0;i<=tickCount;i++){
     const ts = tsMin + (tsRange * i/tickCount);
     const d = new Date(ts);
     const label1 = `${d.getMonth()+1}/${d.getDate()}`;
-    const label2 = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const label2 = WEEKDAY_NAMES[d.getDay()];
     const x = padL + (chartW * i/tickCount);
     svg += `<line x1="${x}" y1="${padT+chartH}" x2="${x}" y2="${padT+chartH+6}" stroke="#5A6E6E" stroke-width="1"/>`;
     svg += `<text x="${x}" y="${H-38}" font-size="11.5" fill="#5A6E6E" text-anchor="middle">${label1}</text>`;
@@ -2366,8 +2409,10 @@ const REPORT_COLUMNS = [
   {key:'food', label:'飲食', icon:'🍽️'},
   {key:'water', label:'飲水', icon:'💧'},
   {key:'glucose', label:'血糖', icon:'🩸'},
+  {key:'glucoseNote', label:'血糖備註', icon:'📝'},
   {key:'weight', label:'體重', icon:'⚖️'},
   {key:'insulin', label:'胰島素', icon:'💉'},
+  {key:'insulinNote', label:'胰島素備註', icon:'📝'},
   {key:'urine', label:'排尿', icon:'🚽'},
   {key:'stool', label:'排便', icon:'💩'},
   {key:'vomit', label:'嘔吐', icon:'🤮'},
@@ -2401,17 +2446,28 @@ function saveColOrder(order){
 }
 let reportColOrder = loadColOrder();
 function reportCellLines(day, catKey){
+  if(catKey==='glucoseNote'){
+    const entries = (day.glucose||[]).filter(e=>e.note).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    return entries.map(e=>`${e.time} ${e.note}`);
+  }
+  if(catKey==='insulinNote'){
+    const entries = (day.insulin||[]).filter(e=>e.note).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    return entries.map(e=>`${e.time} ${e.note}`);
+  }
   const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
-  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}` + (e.note ? ` (${e.note})` : ''));
+  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}`);
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='insulin') return entries.map(e=>{
     const extra = [];
     if(e.site) extra.push(e.site);
     if(e.needle) extra.push(e.needle);
-    if(e.note) extra.push(e.note);
     return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
   });
-  if(catKey==='water') return entries.map(e=>`${e.time} ${e.ml}ml`);
+  if(catKey==='water'){
+    if(entries.length===0) return [];
+    const total = entries.reduce((s,e)=>s+(e.ml||0),0);
+    return [`${total} ml`];
+  }
   if(catKey==='urine') return entries.map(e=>{
     if(e.ml!=null) return `${e.time} ${e.ml}ml` + (e.note ? ` (${e.note})` : '');
     return `${e.time} ${e.note || ''}`;
