@@ -2413,6 +2413,8 @@ const REPORT_COLUMNS = [
   {key:'weight', label:'體重', icon:'⚖️'},
   {key:'insulin', label:'胰島素', icon:'💉'},
   {key:'insulinNote', label:'胰島素備註', icon:'📝'},
+  {key:'insulinSite', label:'胰島素位置', icon:'📍'},
+  {key:'insulinNeedle', label:'針管型號', icon:'💉'},
   {key:'urine', label:'排尿', icon:'🚽'},
   {key:'stool', label:'排便', icon:'💩'},
   {key:'vomit', label:'嘔吐', icon:'🤮'},
@@ -2454,15 +2456,18 @@ function reportCellLines(day, catKey){
     const entries = (day.insulin||[]).filter(e=>e.note).slice().sort((a,b)=>a.time.localeCompare(b.time));
     return entries.map(e=>`${e.time} ${e.note}`);
   }
+  if(catKey==='insulinSite'){
+    const entries = (day.insulin||[]).filter(e=>e.site).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    return entries.map(e=>`${e.time} ${e.site}`);
+  }
+  if(catKey==='insulinNeedle'){
+    const entries = (day.insulin||[]).filter(e=>e.needle).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    return entries.map(e=>`${e.time} ${e.needle}`);
+  }
   const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
   if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}`);
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
-  if(catKey==='insulin') return entries.map(e=>{
-    const extra = [];
-    if(e.site) extra.push(e.site);
-    if(e.needle) extra.push(e.needle);
-    return `${e.time} ${e.dose}` + (extra.length ? ` (${extra.join(' · ')})` : '');
-  });
+  if(catKey==='insulin') return entries.map(e=>`${e.time} ${e.dose}`);
   if(catKey==='water'){
     if(entries.length===0) return [];
     const total = entries.reduce((s,e)=>s+(e.ml||0),0);
