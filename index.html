@@ -2451,7 +2451,9 @@ function buildWeightChart(allEntries){
   svg += `<path d="${path}" fill="none" stroke="#3F7A5C" stroke-width="2.5"/>`;
   sorted.forEach(e=>{
     const x = xFor(toTs(e)), y = yFor(e.value);
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#3F7A5C" stroke="#F8FAF7" stroke-width="1.2"/>`;
+    const d = new Date(toTs(e));
+    const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#3F7A5C" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} → ${e.value} kg</title></circle>`;
   });
 
   svg += `</svg>`;
