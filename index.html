@@ -869,8 +869,8 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',mood:'😺',appetite:'🍖'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',mood:'精神',appetite:'食慾'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',mood:'😺',appetite:'🍖',noteEntries:'📝'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
   if(!entries || entries.length===0) return null;
@@ -1151,7 +1151,7 @@ function renderRowHtml(dateStr, cat, e, idx){
     valHtml = e.note || '';
   }
   const thumbHtml = getEntryPhotos(e).map(p=>`<img class="thumb" src="${p}" data-photo="${p}">`).join('');
-  const timeHtml = (cat==='mood' || cat==='appetite') ? '' : `<span class="time">${e.time}</span>`;
+  const timeHtml = (cat==='mood' || cat==='appetite' || (cat==='noteEntries' && e.showTime===false)) ? '' : `<span class="time">${e.time}</span>`;
   return `<div class="row">
     <span class="icon">${ICONS[cat]}</span>
     ${timeHtml}
@@ -1163,7 +1163,7 @@ function renderRowHtml(dateStr, cat, e, idx){
 }
 
 function renderDayRows(dateStr, day){
-  const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med'];
+  const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -1183,7 +1183,7 @@ function escapeHtml(s){
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
-    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
   const dates = Object.keys(data).sort().reverse();
   if(dates.length===0){
@@ -1300,7 +1300,7 @@ document.getElementById('jumpDateBtn').addEventListener('click', ()=>{
     const target = document.getElementById('jumpDateInput').value;
     if(!target){ return; }
     if(!data[target]){
-      data[target] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+      data[target] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
     }
     render();
     close();
@@ -1433,7 +1433,7 @@ function renderPhotoPreview(){
   });
 }
 let editContext = null; // {date, cat, idx} when editing, null when creating new
-const PHOTO_CATS = ['insulin','vomit','stool','urine'];
+const PHOTO_CATS = ['insulin','vomit','stool','urine','noteEntries'];
 
 let savedScrollY = 0;
 function openSheet(){
@@ -1767,7 +1767,7 @@ function setCategory(cat){
     b.classList.toggle('active', b.dataset.cat===cat);
   });
   timeWrap.style.display = 'block';
-  photoField.style.display = PHOTO_CATS.includes(cat) ? 'block' : 'none';
+  photoField.style.display = (PHOTO_CATS.includes(cat) || (cat==='note' && !(editContext && editContext.isDayNote))) ? 'block' : 'none';
   if(waterTimeListener){
     fTime.removeEventListener('input', waterTimeListener);
     waterTimeListener = null;
@@ -1889,7 +1889,7 @@ function setCategory(cat){
           <input type="checkbox" id="fNoteTimestamp" checked style="width:auto;flex:0 0 auto;">
           加上時間戳記（不勾選則存成純文字，不綁時間）
         </label>
-        <p style="margin:6px 0 0;font-size:11px;color:var(--ink-soft);">這則會加到當天備註的最後一行；一天可以新增多次，各自分行顯示。</p>
+        <p style="margin:6px 0 0;font-size:11px;color:var(--ink-soft);">這則備註會獨立成一筆記錄，可以附照片；一天可以新增多次。</p>
       `;
     }
   } else if(cat==='med'){
@@ -1938,6 +1938,8 @@ function setCategory(cat){
       btn.addEventListener('click', ()=> selectFoodType(btn.dataset.type, true));
     });
     selectFoodType(foodTypes[0], true);
+  } else if(cat==='noteEntries'){
+    dynamicFields.innerHTML = `<label>備註內容</label><textarea id="fVal" placeholder="自由記錄今天的觀察…"></textarea>`;
   } else if(FIXED_OPTIONS[cat]){
     const opts = FIXED_OPTIONS[cat];
     dynamicFields.innerHTML = `
@@ -2117,7 +2119,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -2187,8 +2189,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined});
     } else if(currentCat==='note'){
       const wantTimestamp = document.getElementById('fNoteTimestamp') ? document.getElementById('fNoteTimestamp').checked : false;
-      const entryText = wantTimestamp ? `${time} ${rawVal}` : rawVal;
-      data[dateStr].notes = data[dateStr].notes ? data[dateStr].notes + '\n' + entryText : entryText;
+      if(!data[dateStr].noteEntries) data[dateStr].noteEntries = [];
+      data[dateStr].noteEntries.push({time, note: rawVal, photos: photosToSave, showTime: wantTimestamp});
     } else {
       data[dateStr][currentCat].push({time, note: rawVal, photos: photosToSave});
     }
@@ -2870,7 +2872,7 @@ const galleryEmpty = document.getElementById('galleryEmpty');
 const galleryFilterGrid = document.getElementById('galleryFilterGrid');
 const backFromGallery = document.getElementById('backFromGallery');
 let galleryFilter = 'all';
-const GALLERY_CATS = ['insulin','vomit','stool','urine'];
+const GALLERY_CATS = ['insulin','vomit','stool','urine','noteEntries'];
 
 function collectAllPhotos(){
   const items = [];
@@ -2984,7 +2986,7 @@ csvReportBtn.addEventListener('click', ()=>{
 // ---- Full backup (zip, includes photos) ----
 const backupBtn = document.getElementById('backupBtn');
 const restoreZipInput = document.getElementById('restoreZipInput');
-const PHOTO_CAT_LIST = ['insulin','vomit','stool','urine'];
+const PHOTO_CAT_LIST = ['insulin','vomit','stool','urine','noteEntries'];
 
 function collectPhotoEntries(){
   const list = [];
@@ -3239,7 +3241,7 @@ function parseCsvToImportData(csvText){
     if(row.every(c=>(c||'').trim()==='')) continue;
     const dateStr = (row[dateIdx]||'').trim();
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
-    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
     headerKeys.forEach((key, i)=>{
       if(key==null || key==='date') return;
       const cell = (row[i]||'').trim();
@@ -3305,7 +3307,7 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
       addedDays++;
     }
     ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite'].forEach(cat=>{
