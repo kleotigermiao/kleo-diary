@@ -118,9 +118,14 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 }
 .status-item.quick-add{cursor:pointer;transition:background .12s;}
 .status-item.quick-add:hover, .status-item.quick-add:active{background:#00000010;}
+.status-item.missing-data{background:#FCE4EC;}
+.status-item.missing-data.quick-add:hover, .status-item.missing-data.quick-add:active{background:#F9C9D6;}
 .reminder-dot{
-  position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;
-  background:var(--high);
+  width:7px;height:7px;border-radius:50%;
+  background:var(--high);display:inline-block;
+}
+.reminder-dots{
+  position:absolute;top:6px;right:6px;display:flex;gap:3px;
 }
 .si-label{
   font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);
@@ -898,8 +903,8 @@ function buildCustomStatusPanel(dateStr, day){
       </div>`;
     }
     const {hasData, html} = renderGenericStatusValue(cat, day);
-    return `<div class="status-item quick-add custom-slot" data-date="${dateStr}" data-cat="${cat}" data-slot="${slotIdx}">
-      ${!hasData?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS[cat]} ${CAT_LABELS[cat]}</span><span class="si-val">${html}</span>
+    return `<div class="status-item quick-add custom-slot${!hasData?' missing-data':''}" data-date="${dateStr}" data-cat="${cat}" data-slot="${slotIdx}">
+      <span class="si-label">${ICONS[cat]} ${CAT_LABELS[cat]}</span><span class="si-val">${html}</span>
     </div>`;
   }).join('');
   return `<div class="status-summary custom-status-grid">${items}</div>`;
@@ -952,12 +957,16 @@ function buildStatusSummary(dateStr, day, dates, idx){
     urineValHtml = `${urineEntries.length} 次（未標示ml）`;
   }
 
+  const waterMissingCount = Math.max(0, 2 - waterEntries.length);
+  const waterDotsHtml = waterMissingCount>0
+    ? `<span class="reminder-dots">${'<span class="reminder-dot"></span>'.repeat(waterMissingCount)}</span>`
+    : '';
   return `<div class="status-summary">
-    <div class="status-item quick-add" data-date="${dateStr}" data-cat="mood">${!moodLevel?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.mood} 精神</span><span class="si-val">${moodLevel ? `${moodLevel.emoji} ${moodLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
-    <div class="status-item quick-add" data-date="${dateStr}" data-cat="appetite">${!appetiteLevel?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.appetite} 食慾</span><span class="si-val">${appetiteLevel ? `${appetiteLevel.emoji} ${appetiteLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
-    <div class="status-item quick-add" data-date="${dateStr}" data-cat="weight">${!weightLatest?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.weight} 體重</span><span class="si-val">${weightLatest ? weightValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
-    <div class="status-item quick-add" data-date="${dateStr}" data-cat="water">${waterEntries.length===0?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.water} 飲水</span><span class="si-val">${waterEntries.length>0 ? waterValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
-    <div class="status-item quick-add" data-date="${dateStr}" data-cat="urine">${urineEntries.length===0?'<span class="reminder-dot"></span>':''}<span class="si-label">${ICONS.urine} 排尿</span><span class="si-val">${urineEntries.length>0 ? urineValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add${!moodLevel?' missing-data':''}" data-date="${dateStr}" data-cat="mood"><span class="si-label">${ICONS.mood} 精神</span><span class="si-val">${moodLevel ? `${moodLevel.emoji} ${moodLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add${!appetiteLevel?' missing-data':''}" data-date="${dateStr}" data-cat="appetite"><span class="si-label">${ICONS.appetite} 食慾</span><span class="si-val">${appetiteLevel ? `${appetiteLevel.emoji} ${appetiteLevel.label}` : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add${!weightLatest?' missing-data':''}" data-date="${dateStr}" data-cat="weight"><span class="si-label">${ICONS.weight} 體重</span><span class="si-val">${weightLatest ? weightValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add${waterMissingCount>0?' missing-data':''}" data-date="${dateStr}" data-cat="water">${waterDotsHtml}<span class="si-label">${ICONS.water} 飲水</span><span class="si-val">${waterEntries.length>0 ? waterValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
+    <div class="status-item quick-add${urineEntries.length===0?' missing-data':''}" data-date="${dateStr}" data-cat="urine"><span class="si-label">${ICONS.urine} 排尿</span><span class="si-val">${urineEntries.length>0 ? urineValHtml : '<span class="si-empty">點此記錄</span>'}</span></div>
   </div>`;
 }
 
@@ -1318,6 +1327,16 @@ const fDate = document.getElementById('fDate');
 const fTime = document.getElementById('fTime');
 let waterTimeListener = null;
 const dynamicFields = document.getElementById('dynamicFields');
+function autoGrowTextarea(el){
+  el.style.height = 'auto';
+  el.style.height = Math.max(el.scrollHeight, 44) + 'px';
+}
+function autoGrowAllTextareas(){
+  dynamicFields.querySelectorAll('textarea').forEach(autoGrowTextarea);
+}
+dynamicFields.addEventListener('input', (e)=>{
+  if(e.target.tagName==='TEXTAREA') autoGrowTextarea(e.target);
+});
 const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
 const fTimeNowBtn = document.getElementById('fTimeNowBtn');
@@ -1426,6 +1445,7 @@ function openSheetForEditNote(dateStr){
   document.getElementById('catGrid').style.display = 'none';
   setCategory('note');
   document.getElementById('fVal').value = (data[dateStr] && data[dateStr].notes) || '';
+  autoGrowAllTextareas();
   sheet.classList.add('open');
   backdrop.classList.add('open');
 }
@@ -1549,6 +1569,7 @@ function openSheetForEdit(dateStr, cat, idx){
     else valEl.value = entry.note || '';
   }
   }
+  autoGrowAllTextareas();
   sheet.classList.add('open');
   backdrop.classList.add('open');
 }
@@ -1737,11 +1758,11 @@ function setCategory(cat){
   } else if(cat==='glucose'){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
       <label>補充說明（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如左耳、同滴血、餐前…">`;
+      <textarea id="fDetail" placeholder="例如左耳、同滴血、餐前…" style="height:80px;"></textarea>`;
   } else if(cat==='urine'){
     dynamicFields.innerHTML = `<label>尿量估計 (ml)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 150">
       <label>補充說明（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如尿團偏小、顏色偏深…">`;
+      <textarea id="fDetail" placeholder="例如尿團偏小、顏色偏深…" style="height:44px;"></textarea>`;
   } else if(cat==='weight'){
     dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 4.20">`;
   } else if(cat==='insulin'){
@@ -1770,7 +1791,7 @@ function setCategory(cat){
         <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
       </div>
       <label>備註（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如新開封胰島素、換位置…">
+      <textarea id="fDetail" placeholder="例如新開封胰島素、換位置…" style="height:44px;"></textarea>
       <input type="hidden" id="fSite">
       <input type="hidden" id="fNeedle">
     `;
@@ -1847,7 +1868,7 @@ function setCategory(cat){
       </div>
       <input type="hidden" id="fVal">
       <label>劑量 / 備註（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如 13:15、100mg…">
+      <textarea id="fDetail" placeholder="例如 13:15、100mg…" style="height:44px;"></textarea>
     `;
     wireMedTagButtons();
     document.getElementById('addTagBtn').addEventListener('click', ()=>{
@@ -1877,7 +1898,7 @@ function setCategory(cat){
       <div class="option-grid" id="foodBrandGrid"></div>
       <input type="hidden" id="fVal">
       <label>份量 / 備註（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如 30g、吃一半…">
+      <textarea id="fDetail" placeholder="例如 30g、吃一半…" style="height:44px;"></textarea>
     `;
     document.querySelectorAll('#foodTypeGrid .option-btn').forEach(btn=>{
       btn.addEventListener('click', ()=> selectFoodType(btn.dataset.type, true));
@@ -1892,7 +1913,7 @@ function setCategory(cat){
       </div>
       <input type="hidden" id="fVal">
       <label>補充說明（可選）</label>
-      <input type="text" id="fDetail" placeholder="例如顏色、份量、次數…">
+      <textarea id="fDetail" placeholder="例如顏色、份量、次數…" style="height:44px;"></textarea>
     `;
     document.querySelectorAll('.option-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
