@@ -620,7 +620,12 @@ textarea{resize:vertical; min-height:64px;}
   <div class="sheet-handle"></div>
   <h2>匯入資料</h2>
 
-  <label>本機儲存空間</label>
+  <label style="margin-top:18px;">診斷紀錄（儲存有沒有真的成功）</label>
+  <p>如果常常覺得「有記錄但沒存到」，App現在會偷偷記下每次儲存的結果（成功/失敗、當下有沒有離線、分頁是不是在背景等）。下次遇到問題，先點「重新整理」讓App確實抓到最新狀態，再回來看這份紀錄，把它複製起來回報就好，不用再截圖找證據。</p>
+  <button class="save-btn" id="viewSaveLogBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">查看診斷紀錄</button>
+  <div id="saveLogResult" style="margin-top:8px;"></div>
+
+  <label style="margin-top:18px;">本機儲存空間</label>
   <p>這個App的資料（含照片）存在瀏覽器的本機儲存空間，跟手機本身還有多少空間是兩回事——瀏覽器通常只給每個網站幾MB到十幾MB左右，跟手機容量無關。如果常常「儲存失敗」，可以先檢查目前用了多少。</p>
   <button class="save-btn" id="checkStorageBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">檢查目前用量</button>
   <p id="storageUsageResult" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
@@ -784,13 +789,42 @@ async function load(){
   }
   render();
 }
-function save(){
+const SAVE_LOG_KEY = 'kleo-save-log-v1';
+function logSaveActivity(success, errorMsg, extra){
   try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const raw = localStorage.getItem(SAVE_LOG_KEY);
+    const log = raw ? JSON.parse(raw) : [];
+    log.push({
+      time: new Date().toISOString(),
+      success,
+      error: errorMsg || undefined,
+      online: navigator.onLine,
+      visibility: document.visibilityState,
+      extra: extra || undefined
+    });
+    while(log.length > 50) log.shift();
+    localStorage.setItem(SAVE_LOG_KEY, JSON.stringify(log));
+  }catch(e){ /* logging itself must never throw or block saving */ }
+}
+function save(extraContext){
+  try{
+    const payload = JSON.stringify(data);
+    localStorage.setItem(STORAGE_KEY, payload);
     localStorage.setItem('kleo-last-modified', String(Date.now()));
+    // verify the write actually landed, since some browsers can silently no-op
+    // a localStorage write (instead of throwing) under certain storage-pressure
+    // or private-browsing conditions.
+    const readBack = localStorage.getItem(STORAGE_KEY);
+    if(readBack !== payload){
+      logSaveActivity(false, 'silent write mismatch (讀回的內容跟寫入的不一樣)', extraContext);
+      alert('儲存似乎沒有真的成功（讀回驗證失敗），請重新整理App後再試一次，並把「診斷紀錄」截圖給開發者看。');
+      return false;
+    }
+    logSaveActivity(true, null, extraContext);
     if(typeof pushToDrive === 'function') pushToDrive();
     return true;
   }catch(e){
+    logSaveActivity(false, e.message, extraContext);
     alert('儲存失敗：' + e.message + '（可能是照片太多佔滿本機空間，建議先同步到Drive後清除舊照片）');
     return false;
   }
@@ -3313,6 +3347,41 @@ function restoreSnapshot(){
 document.getElementById('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
 
 // ---- Storage usage & photo cleanup ----
+document.getElementById('viewSaveLogBtn').addEventListener('click', ()=>{
+  const resultEl = document.getElementById('saveLogResult');
+  let log = [];
+  try{
+    const raw = localStorage.getItem(SAVE_LOG_KEY);
+    log = raw ? JSON.parse(raw) : [];
+  }catch(e){}
+  if(log.length===0){
+    resultEl.innerHTML = `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有紀錄（會從您安裝這次更新之後開始累積）。</p>`;
+    return;
+  }
+  const failCount = log.filter(l=>!l.success).length;
+  const lines = log.slice().reverse().map(l=>{
+    const t = new Date(l.time).toLocaleString('zh-TW');
+    const status = l.success ? '✅ 成功' : '❌ 失敗';
+    const parts = [`${t}　${status}`];
+    if(!l.online) parts.push('（當時離線）');
+    if(l.visibility!=='visible') parts.push(`（分頁狀態:${l.visibility}）`);
+    if(l.error) parts.push(`錯誤: ${l.error}`);
+    return parts.join(' ');
+  });
+  const text = lines.join('\n');
+  resultEl.innerHTML = `
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:6px;">共 ${log.length} 筆紀錄，其中 ${failCount} 筆失敗。</p>
+    <textarea readonly style="height:160px;font-family:'IBM Plex Mono',monospace;font-size:11px;">${text}</textarea>
+    <button type="button" id="copySaveLogBtn" class="tag-add-btn" style="margin-top:6px;">複製紀錄</button>
+  `;
+  document.getElementById('copySaveLogBtn').addEventListener('click', ()=>{
+    navigator.clipboard.writeText(text).then(()=>{
+      alert('已複製到剪貼簿，可以直接貼給開發者看。');
+    }).catch(()=>{
+      alert('複製失敗，請手動選取文字複製。');
+    });
+  });
+});
 document.getElementById('checkStorageBtn').addEventListener('click', async ()=>{
   const resultEl = document.getElementById('storageUsageResult');
   resultEl.textContent = '檢查中…';
