@@ -2359,9 +2359,13 @@ function buildGlucoseChart(allEntries, allInsulin){
     if(!isValidTs(ts) || ts < tsMin || ts > tsMax) return;
     const x = xFor(ts);
     const d = new Date(ts);
-    const insulinLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 施打胰島素${e.dose ? '（'+e.dose+'）' : ''}`;
-    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#C0392B" stroke-width="10" opacity="0"><title>${insulinLabel}</title></line>`;
-    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="#C0392B" stroke-width="1.5" opacity="0.7"><title>${insulinLabel}</title></line>`;
+    const isSkip = (e.dose||'').trim().toLowerCase()==='skip';
+    const insulinLabel = isSkip
+      ? `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 跳過胰島素`
+      : `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 施打胰島素${e.dose ? '（'+e.dose+'）' : ''}`;
+    const lineColor = isSkip ? '#9AA0A6' : '#C0392B';
+    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="${lineColor}" stroke-width="10" opacity="0"><title>${insulinLabel}</title></line>`;
+    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT+chartH}" stroke="${lineColor}" stroke-width="1.5" opacity="0.7"><title>${insulinLabel}</title></line>`;
   });
 
   // x-axis labels: date + weekday, no time (multiple glucose readings per day made per-tick times noisy)
