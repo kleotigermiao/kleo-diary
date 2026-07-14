@@ -132,6 +132,7 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   text-transform:uppercase;letter-spacing:0.03em;
 }
 .si-val{font-size:13px;font-weight:600;color:var(--ink);}
+.si-substat{font-size:10px;font-weight:400;color:var(--ink-soft);margin-top:2px;line-height:1.4;}
 .si-empty{font-weight:400;color:var(--ink-soft);}
 .delta{font-size:10.5px;font-weight:500;margin-left:2px;}
 .delta.up{color:var(--high);}
@@ -625,6 +626,11 @@ textarea{resize:vertical; min-height:64px;}
   <button class="save-btn" id="viewSaveLogBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">查看診斷紀錄</button>
   <div id="saveLogResult" style="margin-top:8px;"></div>
 
+  <label style="margin-top:18px;">每日自動備份（Google Drive）</label>
+  <p>只要登入Google，每天打開App時會自動存一份「當天日期」的獨立備份到雲端（跟一般連續同步不同，這份不會被覆蓋），保留最近30天，太舊的會自動清掉。這是為了萬一哪天資料同步出問題，還能回頭挑一份沒壞的日期救回來。</p>
+  <p id="lastBackupStatus" style="font-size:12.5px;color:var(--ink-soft);"></p>
+  <button class="save-btn" id="backupNowBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">立即備份一份</button>
+
   <label style="margin-top:18px;">本機儲存空間</label>
   <p>這個App的資料（含照片）存在瀏覽器的本機儲存空間，跟手機本身還有多少空間是兩回事——瀏覽器通常只給每個網站幾MB到十幾MB左右，跟手機容量無關。如果常常「儲存失敗」，可以先檢查目前用了多少。</p>
   <button class="save-btn" id="checkStorageBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">檢查目前用量</button>
@@ -973,7 +979,15 @@ function buildStatusSummary(dateStr, day, dates, idx){
     const todayTotal = waterEntries.reduce((s,e)=>s+(e.ml||0),0);
     const prev = findPrevDayAggregate(dates, idx, 'water', es=>es.reduce((s,e)=>s+(e.ml||0),0));
     const diff = prev ? Math.round(todayTotal - prev.value) : null;
-    waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '');
+    let dayTotal = 0, nightTotal = 0;
+    waterEntries.forEach(e=>{
+      const m = (e.time||'').match(/^(\d{1,2}):(\d{2})/);
+      const hour = m ? parseInt(m[1],10) : 12;
+      if(hour>=8 && hour<20) dayTotal += (e.ml||0);
+      else nightTotal += (e.ml||0);
+    });
+    waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '') +
+      `<div class="si-substat">☀️8-20 ${dayTotal}ml<br>🌙20-8 ${nightTotal}ml</div>`;
   }
 
   const urineEntries = day.urine || [];
@@ -3295,6 +3309,13 @@ const importBackdrop = document.getElementById('importBackdrop');
 const closeImportSheet = document.getElementById('closeImportSheet');
 
 importBtn.addEventListener('click', ()=>{
+  const lastBackup = localStorage.getItem(LAST_AUTO_BACKUP_KEY);
+  const statusEl = document.getElementById('lastBackupStatus');
+  if(statusEl){
+    statusEl.textContent = gAccessToken
+      ? (lastBackup ? `上次自動備份日期：${lastBackup}` : '尚未備份過（下次連上Google時會自動備份）')
+      : '尚未登入Google，無法備份。';
+  }
   importSheet.classList.add('open');
   importBackdrop.classList.add('open');
 });
@@ -3389,6 +3410,25 @@ document.getElementById('viewSaveLogBtn').addEventListener('click', ()=>{
       alert('複製失敗，請手動選取文字複製。');
     });
   });
+});
+document.getElementById('backupNowBtn').addEventListener('click', async ()=>{
+  if(!gAccessToken){
+    alert('請先登入Google才能備份。');
+    return;
+  }
+  const btn = document.getElementById('backupNowBtn');
+  btn.textContent = '備份中…';
+  btn.disabled = true;
+  try{
+    localStorage.removeItem(LAST_AUTO_BACKUP_KEY); // force today's backup to (re)run even if already done
+    await performDailyBackupIfNeeded();
+    document.getElementById('lastBackupStatus').textContent = `上次自動備份日期：${todayStr()}`;
+    alert('已備份一份到 Google Drive。');
+  }catch(e){
+    alert('備份失敗：' + e.message);
+  }
+  btn.textContent = '立即備份一份';
+  btn.disabled = false;
 });
 document.getElementById('checkStorageBtn').addEventListener('click', async ()=>{
   const resultEl = document.getElementById('storageUsageResult');
@@ -3563,6 +3603,56 @@ async function findOrCreateDriveFile(){
   driveFileId = createJson.id;
 }
 
+const AUTO_BACKUP_RETENTION_DAYS = 30;
+const LAST_AUTO_BACKUP_KEY = 'kleo-last-auto-backup-date';
+async function performDailyBackupIfNeeded(){
+  if(!gAccessToken) return;
+  const today = todayStr();
+  if(localStorage.getItem(LAST_AUTO_BACKUP_KEY) === today) return;
+  try{
+    const backupName = `kleo-auto-backup-${today}.json`;
+    // Intentionally use the lightweight in-memory `data` (photo fields are just
+    // small IndexedDB reference ids here, not hydrated base64) so 30 days of
+    // dated snapshots stay tiny. Photos themselves are already protected by the
+    // regular continuous sync file, which does carry full photo data.
+    const envelope = { _meta: { backupDate: today, createdAt: Date.now() }, diary: data };
+    const metadata = { name: backupName, parents: ['appDataFolder'] };
+    const boundary = 'kleobackupboundary';
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(envelope)}\r\n--${boundary}--`;
+    await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body
+    });
+    localStorage.setItem(LAST_AUTO_BACKUP_KEY, today);
+    cleanupOldAutoBackups();
+  }catch(e){
+    console.error('daily auto backup failed', e);
+  }
+}
+async function cleanupOldAutoBackups(){
+  try{
+    const searchUrl = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
+      encodeURIComponent(`name contains 'kleo-auto-backup-'`) + '&fields=files(id,name)';
+    const res = await driveApiFetch(searchUrl);
+    const json = await res.json();
+    if(!json.files) return;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - AUTO_BACKUP_RETENTION_DAYS);
+    for(const f of json.files){
+      const m = f.name.match(/kleo-auto-backup-(\d{4}-\d{2}-\d{2})\.json/);
+      if(!m) continue;
+      const fileDate = new Date(m[1]+'T00:00:00');
+      if(fileDate < cutoff){
+        try{ await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method:'DELETE' }); }
+        catch(delErr){ console.warn('failed to delete old backup', f.name, delErr); }
+      }
+    }
+  }catch(e){ console.error('cleanup old auto-backups failed', e); }
+}
+
 async function syncFromDriveOnLogin(){
   if(isSyncing) return; // prevent overlapping sync calls from racing each other
   isSyncing = true;
@@ -3583,11 +3673,13 @@ async function syncFromDriveOnLogin(){
         localStorage.setItem('kleo-last-modified', String(remoteLastModified));
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
+        performDailyBackupIfNeeded();
       } else {
         // This device's copy is newer or equal: push it up so the cloud catches up
         updateAuthUI(true, '本機已是最新');
         isSyncing = false;
         pushToDrive(true);
+        performDailyBackupIfNeeded();
         return;
       }
     } else {
@@ -3595,6 +3687,7 @@ async function syncFromDriveOnLogin(){
       updateAuthUI(true, '已連接');
       isSyncing = false;
       pushToDrive(true);
+      performDailyBackupIfNeeded();
       return;
     }
   }catch(e){
