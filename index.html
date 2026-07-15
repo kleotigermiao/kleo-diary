@@ -363,6 +363,18 @@ textarea{resize:vertical; min-height:64px;}
 }
 @media (min-width:640px){ .gallery-grid{grid-template-columns:repeat(5,1fr);} }
 .gallery-item{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--paper-raised);}
+.todo-item{
+  display:flex;align-items:center;gap:10px;padding:12px 4px;
+  border-bottom:1px solid var(--line);
+}
+.todo-item input[type="checkbox"]{width:auto;flex:0 0 auto;margin:0;}
+.todo-text{flex:1;font-size:14px;color:var(--ink);word-break:break-word;}
+.todo-item.done .todo-text{text-decoration:line-through;color:var(--ink-soft);}
+.todo-del{
+  flex-shrink:0;background:none;border:none;color:var(--ink-soft);
+  font-size:15px;cursor:pointer;padding:4px 6px;opacity:0.5;
+}
+.todo-del:hover{opacity:1;}
 .gallery-item img{width:100%;height:100%;object-fit:cover;display:block;}
 .gallery-item .gi-tag{
   position:absolute;left:4px;bottom:4px;font-size:10px;background:rgba(0,0,0,0.55);
@@ -509,6 +521,7 @@ textarea{resize:vertical; min-height:64px;}
       <button class="sync-btn" id="jumpDateBtn">跳轉日期</button>
       <button class="sync-btn" id="importBtn">匯入</button>
       <button class="sync-btn" id="galleryBtn">圖庫</button>
+      <button class="sync-btn" id="todoBtn">待辦</button>
       <button class="sync-btn" id="reportBtn">報表</button>
     </div>
   </div>
@@ -613,6 +626,20 @@ textarea{resize:vertical; min-height:64px;}
   <div class="cat-grid" id="galleryFilterGrid" style="grid-template-columns:repeat(3,1fr);margin:0 16px 14px;"></div>
   <div id="galleryGrid" class="gallery-grid"></div>
   <p id="galleryEmpty" style="text-align:center;color:var(--ink-soft);display:none;">這個分類目前還沒有照片</p>
+</div>
+
+<div id="todoView" style="display:none;">
+  <div class="report-toolbar">
+    <button class="sync-btn" id="backFromTodo">← 返回</button>
+  </div>
+  <div style="padding:16px;max-width:640px;margin:0 auto;">
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input type="text" id="todoInput" placeholder="想到什麼就打上去…" style="flex:1;">
+      <button type="button" id="todoAddBtn" class="tag-add-btn" style="padding:0 20px;">新增</button>
+    </div>
+    <div id="todoList"></div>
+    <p id="todoEmpty" style="text-align:center;color:var(--ink-soft);display:none;padding:40px 0;">還沒有待辦事項，想到什麼就加一條吧。</p>
+  </div>
 </div>
 
 <div class="sheet-backdrop" id="importBackdrop"></div>
@@ -987,7 +1014,7 @@ function buildStatusSummary(dateStr, day, dates, idx){
       else nightTotal += (e.ml||0);
     });
     waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '') +
-      `<div class="si-substat">☀️8-20 ${dayTotal}ml<br>🌙20-8 ${nightTotal}ml</div>`;
+      `<div class="si-substat">☀️08-20 ${dayTotal}ml<br>🌙20-08 ${nightTotal}ml</div>`;
   }
 
   const urineEntries = day.urine || [];
@@ -2962,6 +2989,84 @@ backFromGallery.addEventListener('click', ()=>{
   document.querySelector('.topbar').style.display = 'block';
   fabBtn.style.display = 'flex';
 });
+
+// ---- TODO ----
+const TODO_KEY = 'kleo-todos-v1';
+function loadTodos(){
+  try{
+    const raw = localStorage.getItem(TODO_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function saveTodos(todos){
+  try{ localStorage.setItem(TODO_KEY, JSON.stringify(todos)); }catch(e){}
+}
+let todos = loadTodos();
+function renderTodos(){
+  const listEl = document.getElementById('todoList');
+  const emptyEl = document.getElementById('todoEmpty');
+  if(todos.length===0){
+    listEl.innerHTML = '';
+    emptyEl.style.display = 'block';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  const sorted = [...todos].sort((a,b)=>{
+    if(a.done !== b.done) return a.done ? 1 : -1;
+    return b.createdAt - a.createdAt;
+  });
+  listEl.innerHTML = sorted.map(t=>`
+    <div class="todo-item${t.done?' done':''}" data-id="${t.id}">
+      <input type="checkbox" class="todo-check" ${t.done?'checked':''}>
+      <span class="todo-text">${escapeHtml(t.text)}</span>
+      <button type="button" class="todo-del">✕</button>
+    </div>
+  `).join('');
+  listEl.querySelectorAll('.todo-check').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const id = cb.closest('.todo-item').dataset.id;
+      const t = todos.find(x=>String(x.id)===id);
+      if(t){ t.done = cb.checked; saveTodos(todos); renderTodos(); }
+    });
+  });
+  listEl.querySelectorAll('.todo-del').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.closest('.todo-item').dataset.id;
+      if(!confirm('確定要刪除這條待辦嗎？')) return;
+      todos = todos.filter(x=>String(x.id)!==id);
+      saveTodos(todos);
+      renderTodos();
+    });
+  });
+}
+function addTodo(){
+  const input = document.getElementById('todoInput');
+  const text = input.value.trim();
+  if(!text) return;
+  todos.push({id: Date.now()+'-'+Math.random().toString(36).slice(2,7), text, done:false, createdAt: Date.now()});
+  saveTodos(todos);
+  input.value = '';
+  renderTodos();
+}
+document.getElementById('todoAddBtn').addEventListener('click', addTodo);
+document.getElementById('todoInput').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter'){ e.preventDefault(); addTodo(); }
+});
+document.getElementById('todoBtn').addEventListener('click', ()=>{
+  document.getElementById('main').style.display = 'none';
+  document.querySelector('.topbar').style.display = 'none';
+  fabBtn.style.display = 'none';
+  document.getElementById('todoView').style.display = 'block';
+  renderTodos();
+  window.scrollTo(0,0);
+});
+document.getElementById('backFromTodo').addEventListener('click', ()=>{
+  document.getElementById('todoView').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.querySelector('.topbar').style.display = 'block';
+  fabBtn.style.display = 'flex';
+});
+
 printReportBtn.addEventListener('click', ()=> window.print());
 
 function buildReportCSV(){
