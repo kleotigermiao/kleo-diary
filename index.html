@@ -1008,9 +1008,13 @@ function buildStatusSummary(dateStr, day, dates, idx){
     const diff = prev ? Math.round(todayTotal - prev.value) : null;
     let dayTotal = 0, nightTotal = 0;
     waterEntries.forEach(e=>{
+      if(e.period==='evening'){ dayTotal += (e.ml||0); return; }
+      if(e.period==='morning'){ nightTotal += (e.ml||0); return; }
+      // legacy entries without an explicit period: fall back to a noon split,
+      // since "morning" checks tend to happen before noon and "evening" checks after
       const m = (e.time||'').match(/^(\d{1,2}):(\d{2})/);
       const hour = m ? parseInt(m[1],10) : 12;
-      if(hour>=8 && hour<20) dayTotal += (e.ml||0);
+      if(hour>=12) dayTotal += (e.ml||0);
       else nightTotal += (e.ml||0);
     });
     waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '') +
@@ -1894,11 +1898,13 @@ function setCategory(cat){
       <label>剩餘水量 (ml)</label>
       <input type="text" inputmode="numeric" id="fRemaining" placeholder="例如 50">
       <input type="hidden" id="fVal">
+      <input type="hidden" id="fWaterPeriod" value="${isNewEntry ? defaultPeriod : ((editContext && data[editContext.date] && data[editContext.date].water && data[editContext.date].water[editContext.idx] && data[editContext.date].water[editContext.idx].period) || '')}">
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
     `;
     wireWaterInputs();
     if(isNewEntry){
       const applyWaterPeriodDate = (period)=>{
+        document.getElementById('fWaterPeriod').value = period;
         if(period==='morning'){
           const d = new Date();
           d.setDate(d.getDate()-1);
@@ -2190,7 +2196,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
-      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined};
+      const periodEl = document.getElementById('fWaterPeriod');
+      const origEntry = (data[oldDate] && data[oldDate].water && data[oldDate].water[idx]) || null;
+      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntry && origEntry.period) || undefined};
     } else {
       updated = {time, note: rawVal, photos: photosToSave};
     }
@@ -2227,7 +2235,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
-      data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined});
+      const periodEl = document.getElementById('fWaterPeriod');
+      data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || undefined});
     } else if(currentCat==='note'){
       const wantTimestamp = document.getElementById('fNoteTimestamp') ? document.getElementById('fNoteTimestamp').checked : false;
       if(!data[dateStr].noteEntries) data[dateStr].noteEntries = [];
@@ -3673,25 +3682,39 @@ async function driveApiFetch(url, options={}){
   return fetch(url, Object.assign({}, options, { headers }));
 }
 
-async function findOrCreateDriveFile(){
+async function searchDriveFiles(){
   const searchUrl = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
-    encodeURIComponent(`name='${DRIVE_FILE_NAME}'`) + '&fields=files(id,modifiedTime)';
+    encodeURIComponent(`name='${DRIVE_FILE_NAME}'`) + '&fields=files(id,modifiedTime,size)';
   const res = await driveApiFetch(searchUrl);
   const json = await res.json();
-  if(json.files && json.files.length > 0){
-    if(json.files.length > 1){
-      // Duplicate files exist from a past race condition. Keep the most recently modified one,
-      // delete the rest so future syncs are unambiguous.
-      const sorted = [...json.files].sort((a,b)=> new Date(b.modifiedTime) - new Date(a.modifiedTime));
+  return (json && json.files) || [];
+}
+async function findOrCreateDriveFile(){
+  let files = await searchDriveFiles();
+  if(files.length===0){
+    // Retry once after a short delay in case this was a transient/replication-lag
+    // empty result rather than a genuinely brand-new user. Wrongly concluding
+    // "no file exists" here is dangerous: it leads to creating a fresh empty
+    // file, which can then look like a "duplicate" and risk real data being
+    // treated as the one to discard.
+    await new Promise(r=>setTimeout(r, 1200));
+    files = await searchDriveFiles();
+  }
+  if(files.length > 0){
+    if(files.length > 1){
+      // Duplicate files exist from a past race condition. Do NOT auto-delete —
+      // deleting is irreversible and "most recently modified" is not a safe
+      // signal (a freshly-created near-empty file always looks "newest").
+      // Instead, pick the LARGEST file (by byte size) as the one to use now,
+      // since more data is a much more reliable signal of being the real one,
+      // and leave the smaller duplicate(s) alone for manual review later.
+      const sorted = [...files].sort((a,b)=> parseInt(b.size||0) - parseInt(a.size||0));
       driveFileId = sorted[0].id;
-      for(let i=1;i<sorted.length;i++){
-        try{ await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${sorted[i].id}`, { method: 'DELETE' }); }
-        catch(e){ console.warn('failed to delete duplicate drive file', sorted[i].id, e); }
-      }
+      console.warn('發現多個同名Drive備份檔案，本次選用檔案大小最大的一份，其餘保留未刪除：', files);
     } else {
-      driveFileId = json.files[0].id;
+      driveFileId = files[0].id;
     }
-    return;
+    return false; // existing file found, nothing created
   }
   const metadata = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
   const boundary = 'kleoboundary';
@@ -3706,6 +3729,7 @@ async function findOrCreateDriveFile(){
   });
   const createJson = await createRes.json();
   driveFileId = createJson.id;
+  return true; // brand new file created just now
 }
 
 const AUTO_BACKUP_RETENTION_DAYS = 30;
@@ -3763,9 +3787,10 @@ async function syncFromDriveOnLogin(){
   isSyncing = true;
   try{
     if(loadPromise) await loadPromise; // make sure local data + photo cache finished initializing first
-    await findOrCreateDriveFile();
+    const justCreated = await findOrCreateDriveFile();
     const res = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
-    const remoteEnvelope = await res.json().catch(()=>null);
+    const fetchOk = res.ok;
+    const remoteEnvelope = fetchOk ? await res.json().catch(()=>null) : null;
     const localLastModified = parseInt(localStorage.getItem('kleo-last-modified') || '0');
 
     if(remoteEnvelope && remoteEnvelope._meta && remoteEnvelope.diary){
@@ -3787,13 +3812,21 @@ async function syncFromDriveOnLogin(){
         performDailyBackupIfNeeded();
         return;
       }
-    } else {
-      // No usable cloud data yet (first time, or old format): push local up as the source of truth
+    } else if(justCreated){
+      // Genuinely a brand-new file we just created ourselves in this same call —
+      // safe to treat local data as the source of truth.
       updateAuthUI(true, '已連接');
       isSyncing = false;
       pushToDrive(true);
       performDailyBackupIfNeeded();
       return;
+    } else {
+      // An existing cloud file was found, but we couldn't fetch/parse it just now.
+      // This is NOT the same as "no cloud data" — pushing here could silently
+      // overwrite real data with whatever is (or isn't) on this device. Stop and
+      // surface an error instead of guessing.
+      console.error('Drive sync: existing file found but could not be read (fetchOk=' + fetchOk + '). Refusing to push to avoid overwriting cloud data.');
+      updateAuthUI(true, '同步時發生錯誤，本次未覆蓋雲端資料，請稍後點「重新整理」再試一次');
     }
   }catch(e){
     console.error('Drive sync error', e);
