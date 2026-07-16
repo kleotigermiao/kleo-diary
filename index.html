@@ -1006,19 +1006,20 @@ function buildStatusSummary(dateStr, day, dates, idx){
     const todayTotal = waterEntries.reduce((s,e)=>s+(e.ml||0),0);
     const prev = findPrevDayAggregate(dates, idx, 'water', es=>es.reduce((s,e)=>s+(e.ml||0),0));
     const diff = prev ? Math.round(todayTotal - prev.value) : null;
-    let dayTotal = 0, nightTotal = 0;
+    let daytimeTotal = 0, eveningTotal = 0, midnightTotal = 0;
     waterEntries.forEach(e=>{
-      if(e.period==='evening'){ dayTotal += (e.ml||0); return; }
-      if(e.period==='morning'){ nightTotal += (e.ml||0); return; }
-      // legacy entries without an explicit period: fall back to a noon split,
-      // since "morning" checks tend to happen before noon and "evening" checks after
+      if(e.period==='daytime' || e.period==='evening'){ daytimeTotal += (e.ml||0); return; }
+      if(e.period==='lateevening'){ eveningTotal += (e.ml||0); return; }
+      if(e.period==='midnight' || e.period==='morning'){ midnightTotal += (e.ml||0); return; }
+      // legacy entries without any period tag at all: fall back to time-of-day
       const m = (e.time||'').match(/^(\d{1,2}):(\d{2})/);
       const hour = m ? parseInt(m[1],10) : 12;
-      if(hour>=12) dayTotal += (e.ml||0);
-      else nightTotal += (e.ml||0);
+      if(hour>=8 && hour<20) daytimeTotal += (e.ml||0);
+      else if(hour>=20) eveningTotal += (e.ml||0);
+      else midnightTotal += (e.ml||0);
     });
     waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '') +
-      `<div class="si-substat">☀️08-20 ${dayTotal}ml<br>🌙20-08 ${nightTotal}ml</div>`;
+      `<div class="si-substat">🌆08-20 ${daytimeTotal}ml<br>🏙️20-00 ${eveningTotal}ml<br>🌃00-08 ${midnightTotal}ml</div>`;
   }
 
   const urineEntries = day.urine || [];
@@ -1884,13 +1885,22 @@ function setCategory(cat){
     const currentBase = loadWaterBase();
     const isNewEntry = !editContext;
     const currentHour = new Date().getHours();
-    const defaultPeriod = currentHour < 12 ? 'morning' : 'evening';
+    let defaultPeriod;
+    if(currentHour>=8 && currentHour<20) defaultPeriod = 'daytime';
+    else if(currentHour>=20) defaultPeriod = 'lateevening';
+    else defaultPeriod = 'midnight';
+    const periodLabels = {
+      daytime: '🌆 白天（08-20，記到今天）',
+      lateevening: '🏙️ 晚上（20-00，記到今天）',
+      midnight: '🌃 剛跨午夜（00-08）'
+    };
     dynamicFields.innerHTML = `
       ${isNewEntry ? `
-      <label>這是早上還是晚上量的水？</label>
+      <label>這是哪一段的水？</label>
       <div class="option-grid" id="waterPeriodGrid">
-        <button type="button" class="option-btn water-period-btn${defaultPeriod==='morning'?' active':''}" data-period="morning">早（隔夜水量，記到前一天）</button>
-        <button type="button" class="option-btn water-period-btn${defaultPeriod==='evening'?' active':''}" data-period="evening">晚（白天水量，記到今天）</button>
+        <button type="button" class="option-btn water-period-btn${defaultPeriod==='daytime'?' active':''}" data-period="daytime">${periodLabels.daytime}</button>
+        <button type="button" class="option-btn water-period-btn${defaultPeriod==='lateevening'?' active':''}" data-period="lateevening">${periodLabels.lateevening}</button>
+        <button type="button" class="option-btn water-period-btn${defaultPeriod==='midnight'?' active':''}" data-period="midnight">${periodLabels.midnight}</button>
       </div>
       ` : ''}
       <label>固定水量 (ml)</label>
@@ -1905,10 +1915,19 @@ function setCategory(cat){
     if(isNewEntry){
       const applyWaterPeriodDate = (period)=>{
         document.getElementById('fWaterPeriod').value = period;
-        if(period==='morning'){
-          const d = new Date();
-          d.setDate(d.getDate()-1);
-          fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        if(period==='midnight'){
+          // "Midnight" reading covers 00:00-08:00. If it's being logged before
+          // actual midnight has passed (e.g. 23:30/23:55), the date should stay
+          // today (nothing to shift yet). Only shift back a day once midnight
+          // has genuinely passed and it's now early morning.
+          const nowHour = new Date().getHours();
+          if(nowHour < 12){
+            const d = new Date();
+            d.setDate(d.getDate()-1);
+            fDate.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+          } else {
+            fDate.value = todayStr();
+          }
         } else {
           fDate.value = todayStr();
         }
