@@ -370,6 +370,15 @@ textarea{resize:vertical; min-height:64px;}
 }
 @media (min-width:640px){ .gallery-grid{grid-template-columns:repeat(5,1fr);} }
 .gallery-item{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--paper-raised);}
+.supply-card{
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+  padding:16px;margin-bottom:14px;
+}
+.supply-card.warn{background:#FCE4EC;border-color:#F4A6BC;}
+.supply-title{font-family:'Archivo Narrow',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px;}
+.supply-stock{font-size:14px;color:var(--ink);margin-bottom:4px;}
+.supply-days{font-size:12.5px;color:var(--ink-soft);}
+.supply-add-input{flex:1;}
 .todo-item{
   display:flex;align-items:center;gap:10px;padding:12px 4px;
   border-bottom:1px solid var(--line);
@@ -532,6 +541,7 @@ textarea{resize:vertical; min-height:64px;}
         <button type="button" class="more-menu-item" id="refreshBtn">重新整理</button>
         <button type="button" class="more-menu-item" id="jumpDateBtn">跳轉日期</button>
         <button type="button" class="more-menu-item" id="importBtn">匯入</button>
+        <button type="button" class="more-menu-item" id="suppliesBtn">耗材庫存</button>
       </div>
     </div>
   </div>
@@ -650,6 +660,13 @@ textarea{resize:vertical; min-height:64px;}
     <div id="todoList"></div>
     <p id="todoEmpty" style="text-align:center;color:var(--ink-soft);display:none;padding:40px 0;">還沒有待辦事項，想到什麼就加一條吧。</p>
   </div>
+</div>
+
+<div id="suppliesView" style="display:none;">
+  <div class="report-toolbar">
+    <button class="sync-btn" id="backFromSupplies">← 返回</button>
+  </div>
+  <div id="suppliesContent" style="padding:16px;max-width:640px;margin:0 auto;"></div>
 </div>
 
 <div class="sheet-backdrop" id="importBackdrop"></div>
@@ -1022,11 +1039,12 @@ function buildStatusSummary(dateStr, day, dates, idx){
       if(e.period==='lateevening'){ eveningTotal += (e.ml||0); return; }
       if(e.period==='midnight' || e.period==='morning'){ midnightTotal += (e.ml||0); return; }
       // legacy entries without any period tag at all: fall back to time-of-day
+      // using the same midpoint boundaries as the default-period guess above
       const m = (e.time||'').match(/^(\d{1,2}):(\d{2})/);
       const hour = m ? parseInt(m[1],10) : 12;
-      if(hour>=8 && hour<20) daytimeTotal += (e.ml||0);
-      else if(hour>=20) eveningTotal += (e.ml||0);
-      else midnightTotal += (e.ml||0);
+      if(hour>=22 || hour<4) eveningTotal += (e.ml||0);
+      else if(hour>=4 && hour<14) midnightTotal += (e.ml||0);
+      else daytimeTotal += (e.ml||0);
     });
     waterValHtml = `${todayTotal} ml` + (diff!=null ? ' ' + deltaSpan(diff, v=>v+'ml') : '') +
       `<div class="si-substat">🌆08-20 ${daytimeTotal}ml<br>🏙️20-00 ${eveningTotal}ml<br>🌃00-08 ${midnightTotal}ml</div>`;
@@ -1280,6 +1298,7 @@ function render(){
         alert('刪除失敗，已還原成刪除前的狀態，請稍後再試一次。');
       } else {
         photoRefsToClean.forEach(id=>{ idbDeletePhoto(id).catch(()=>{}); photoCache.delete(id); });
+        if(cat==='glucose' || cat==='insulin') refundSupplyOnDelete(cat, removedEntry);
       }
       render();
     });
@@ -1911,9 +1930,14 @@ function setCategory(cat){
     const isNewEntry = !editContext;
     const currentHour = new Date().getHours();
     let defaultPeriod;
-    if(currentHour>=8 && currentHour<20) defaultPeriod = 'daytime';
-    else if(currentHour>=20) defaultPeriod = 'lateevening';
-    else defaultPeriod = 'midnight';
+    // Guess based on which of the three check-in times (00:00 / 08:00 / 20:00)
+    // "now" is closest to, using midpoints between them as boundaries:
+    //   22:00-04:00 → closest to the 00:00 check → lateevening (20-24)
+    //   04:00-14:00 → closest to the 08:00 check → midnight (00-08)
+    //   14:00-22:00 → closest to the 20:00 check → daytime (08-20)
+    if(currentHour>=22 || currentHour<4) defaultPeriod = 'lateevening';
+    else if(currentHour>=4 && currentHour<14) defaultPeriod = 'midnight';
+    else defaultPeriod = 'daytime';
     const periodLabels = {
       daytime: '🌆 白天（08-20，記到今天）',
       lateevening: '🏙️ 晚上（20-00，記到今天）',
@@ -1940,11 +1964,11 @@ function setCategory(cat){
     if(isNewEntry){
       const applyWaterPeriodDate = (period)=>{
         document.getElementById('fWaterPeriod').value = period;
-        if(period==='midnight'){
-          // "Midnight" reading covers 00:00-08:00. If it's being logged before
-          // actual midnight has passed (e.g. 23:30/23:55), the date should stay
-          // today (nothing to shift yet). Only shift back a day once midnight
-          // has genuinely passed and it's now early morning.
+        if(period==='lateevening'){
+          // "lateevening" covers 20:00-24:00. If it's being logged before actual
+          // midnight has passed (e.g. 23:30/23:55), the date should stay today
+          // (that 20:00-24:00 window is still today's). Only shift back a day
+          // once midnight has genuinely passed and it's now early morning.
           const nowHour = new Date().getHours();
           if(nowHour < 12){
             const d = new Date();
@@ -1954,6 +1978,8 @@ function setCategory(cat){
             fDate.value = todayStr();
           }
         } else {
+          // 'midnight' (00-08) and 'daytime' (08-20) always belong to today —
+          // there is nothing to shift for either of these.
           fDate.value = todayStr();
         }
       };
@@ -2266,6 +2292,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
       data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
+      consumeSupplyOnGlucose();
     } else if(currentCat==='urine'){
       data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='mood' || currentCat==='appetite'){
@@ -2276,6 +2303,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
       data[dateStr].insulin.push({time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave});
+      consumeSupplyOnInsulin(numRaw);
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -3038,6 +3066,161 @@ galleryBtn.addEventListener('click', ()=>{
 
 backFromGallery.addEventListener('click', ()=>{
   galleryView.style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.querySelector('.topbar').style.display = 'block';
+  fabBtn.style.display = 'flex';
+});
+
+// ---- Supplies (test strips / needles / lancets) ----
+const SUPPLIES_KEY = 'kleo-supplies-v1';
+function loadSupplies(){
+  const defaults = {
+    strips: {stock: 0},
+    needles: {stock: 0},
+    lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
+    countSkipAsNeedleUse: true
+  };
+  try{
+    const raw = localStorage.getItem(SUPPLIES_KEY);
+    if(!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return Object.assign({}, defaults, parsed, {
+      strips: Object.assign({}, defaults.strips, parsed.strips),
+      needles: Object.assign({}, defaults.needles, parsed.needles),
+      lancets: Object.assign({}, defaults.lancets, parsed.lancets)
+    });
+  }catch(e){ return defaults; }
+}
+function saveSupplies(){
+  try{ localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies)); }catch(e){}
+}
+let supplies = loadSupplies();
+
+function consumeSupplyOnGlucose(){
+  supplies.strips.stock = Math.max(0, (supplies.strips.stock||0) - 1);
+  supplies.lancets.testsSinceChange = (supplies.lancets.testsSinceChange||0) + 1;
+  saveSupplies();
+  if(supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold){
+    setTimeout(()=>{
+      alert(`已經測了 ${supplies.lancets.testsSinceChange} 次血糖，該換採血針囉！可以到「耗材庫存」按「已更換」重新計算。`);
+    }, 300);
+  }
+}
+function consumeSupplyOnInsulin(doseText){
+  const isSkip = (doseText||'').trim().toLowerCase()==='skip';
+  if(isSkip && !supplies.countSkipAsNeedleUse) return;
+  supplies.needles.stock = Math.max(0, (supplies.needles.stock||0) - 1);
+  saveSupplies();
+}
+function refundSupplyOnDelete(cat, entry){
+  if(cat==='glucose'){
+    supplies.strips.stock = (supplies.strips.stock||0) + 1;
+    supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
+    saveSupplies();
+  } else if(cat==='insulin'){
+    const isSkip = (entry && entry.dose || '').trim().toLowerCase()==='skip';
+    if(!isSkip || supplies.countSkipAsNeedleUse){
+      supplies.needles.stock = (supplies.needles.stock||0) + 1;
+      saveSupplies();
+    }
+  }
+}
+function estimateDailyUsage(cat){
+  // average daily count of glucose/insulin entries over the last 30 days with data
+  const cutoff = Date.now() - 30*24*60*60*1000;
+  let total = 0, dayCount = 0;
+  Object.keys(data).forEach(dateStr=>{
+    const ts = new Date(dateStr+'T00:00:00').getTime();
+    if(ts < cutoff) return;
+    const entries = (data[dateStr][cat]||[]);
+    if(entries.length>0){ total += entries.length; dayCount++; }
+  });
+  if(dayCount===0) return 0;
+  return total/dayCount;
+}
+function renderSupplies(){
+  const el = document.getElementById('suppliesContent');
+  const stripsRate = estimateDailyUsage('glucose');
+  const needlesRate = estimateDailyUsage('insulin');
+  const stripsDaysLeft = stripsRate>0 ? Math.floor(supplies.strips.stock/stripsRate) : null;
+  const needlesDaysLeft = needlesRate>0 ? Math.floor(supplies.needles.stock/needlesRate) : null;
+  const warnThreshold = 60;
+  function supplyCard(key, label, icon, daysLeft){
+    const s = supplies[key];
+    const warn = daysLeft!=null && daysLeft < warnThreshold;
+    return `<div class="supply-card${warn?' warn':''}">
+      <div class="supply-title">${icon} ${label}</div>
+      <div class="supply-stock">庫存：<b>${s.stock}</b> 個</div>
+      ${daysLeft!=null ? `<div class="supply-days">照最近用量，估計還能用 <b>${daysLeft}</b> 天${warn?'　⚠️建議補貨':''}</div>` : `<div class="supply-days" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算</div>`}
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input type="text" inputmode="numeric" class="supply-add-input" data-key="${key}" placeholder="新增數量">
+        <button type="button" class="tag-add-btn supply-add-btn" data-key="${key}">加入庫存</button>
+      </div>
+    </div>`;
+  }
+  const lancetWarn = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
+  el.innerHTML = `
+    ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft)}
+    ${supplyCard('needles', '針管', '💉', needlesDaysLeft)}
+    <div class="supply-card${lancetWarn?' warn':''}">
+      <div class="supply-title">🔴 採血針</div>
+      <div class="supply-stock">庫存：<b>${supplies.lancets.stock}</b> 支</div>
+      <div class="supply-days">已測 <b>${supplies.lancets.testsSinceChange}</b> / ${supplies.lancets.changeThreshold} 次${lancetWarn?'　⚠️該換針了':''}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button type="button" class="tag-add-btn" id="lancetChangedBtn">✅ 已更換採血針</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">每幾次換針：</label>
+        <input type="text" inputmode="numeric" id="lancetThresholdInput" value="${supplies.lancets.changeThreshold}" style="width:70px;">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input type="text" inputmode="numeric" class="supply-add-input" data-key="lancets" placeholder="新增數量">
+        <button type="button" class="tag-add-btn supply-add-btn" data-key="lancets">加入庫存</button>
+      </div>
+    </div>
+    <div class="supply-card">
+      <label style="display:flex;align-items:center;gap:8px;margin:0;text-transform:none;font-family:'Inter',sans-serif;font-size:13px;color:var(--ink);">
+        <input type="checkbox" id="countSkipToggle" ${supplies.countSkipAsNeedleUse?'checked':''} style="width:auto;flex:0 0 auto;">
+        胰島素記錄「skip」時，也算用掉一根針管
+      </label>
+    </div>
+  `;
+  el.querySelectorAll('.supply-add-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.key;
+      const input = el.querySelector(`.supply-add-input[data-key="${key}"]`);
+      const n = parseInt(input.value);
+      if(!n || n<=0) return;
+      supplies[key].stock = (supplies[key].stock||0) + n;
+      saveSupplies();
+      renderSupplies();
+    });
+  });
+  document.getElementById('lancetChangedBtn').addEventListener('click', ()=>{
+    supplies.lancets.stock = Math.max(0, (supplies.lancets.stock||0) - 1);
+    supplies.lancets.testsSinceChange = 0;
+    saveSupplies();
+    renderSupplies();
+  });
+  document.getElementById('lancetThresholdInput').addEventListener('change', (e)=>{
+    const n = parseInt(e.target.value);
+    if(n && n>0){ supplies.lancets.changeThreshold = n; saveSupplies(); renderSupplies(); }
+  });
+  document.getElementById('countSkipToggle').addEventListener('change', (e)=>{
+    supplies.countSkipAsNeedleUse = e.target.checked;
+    saveSupplies();
+  });
+}
+document.getElementById('suppliesBtn').addEventListener('click', ()=>{
+  document.getElementById('main').style.display = 'none';
+  document.querySelector('.topbar').style.display = 'none';
+  fabBtn.style.display = 'none';
+  document.getElementById('suppliesView').style.display = 'block';
+  renderSupplies();
+  window.scrollTo(0,0);
+});
+document.getElementById('backFromSupplies').addEventListener('click', ()=>{
+  document.getElementById('suppliesView').style.display = 'none';
   document.getElementById('main').style.display = 'block';
   document.querySelector('.topbar').style.display = 'block';
   fabBtn.style.display = 'flex';
