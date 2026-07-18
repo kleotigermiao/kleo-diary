@@ -57,6 +57,13 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   color:var(--ink-soft);cursor:pointer;white-space:nowrap;
 }
 .sync-btn:active{background:var(--line);}
+.more-menu-item{
+  display:block;width:100%;text-align:left;padding:11px 14px;
+  background:none;border:none;border-bottom:1px solid var(--line);
+  font-size:13px;font-family:'Inter',sans-serif;color:var(--ink);cursor:pointer;
+}
+.more-menu-item:last-child{border-bottom:none;}
+.more-menu-item:active{background:var(--line);}
 .legend{
   display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;
 }
@@ -514,15 +521,18 @@ textarea{resize:vertical; min-height:64px;}
       <h1>Kleo 健康記錄</h1>
       <div class="sub" id="statusSub">糖尿病照護日誌 · 本機儲存</div>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;position:relative;">
       <button class="sync-btn" id="googleAuthBtn">登入 Google 同步</button>
-      <button class="sync-btn" id="backupBtn">完整備份</button>
-      <button class="sync-btn" id="refreshBtn">重新整理</button>
-      <button class="sync-btn" id="jumpDateBtn">跳轉日期</button>
-      <button class="sync-btn" id="importBtn">匯入</button>
       <button class="sync-btn" id="galleryBtn">圖庫</button>
       <button class="sync-btn" id="todoBtn">待辦</button>
       <button class="sync-btn" id="reportBtn">報表</button>
+      <button class="sync-btn" id="moreMenuBtn">⋯ 更多</button>
+      <div id="moreMenuDropdown" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--paper);border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:50;min-width:160px;overflow:hidden;">
+        <button type="button" class="more-menu-item" id="backupBtn">完整備份</button>
+        <button type="button" class="more-menu-item" id="refreshBtn">重新整理</button>
+        <button type="button" class="more-menu-item" id="jumpDateBtn">跳轉日期</button>
+        <button type="button" class="more-menu-item" id="importBtn">匯入</button>
+      </div>
     </div>
   </div>
   <div class="legend">
@@ -1323,6 +1333,21 @@ function render(){
   });
   refreshAddMenuVisibility();
 }
+
+const moreMenuBtn = document.getElementById('moreMenuBtn');
+const moreMenuDropdown = document.getElementById('moreMenuDropdown');
+moreMenuBtn.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  moreMenuDropdown.style.display = moreMenuDropdown.style.display==='none' ? 'block' : 'none';
+});
+document.addEventListener('click', (e)=>{
+  if(moreMenuDropdown.style.display==='block' && !moreMenuDropdown.contains(e.target) && e.target!==moreMenuBtn){
+    moreMenuDropdown.style.display = 'none';
+  }
+});
+moreMenuDropdown.querySelectorAll('.more-menu-item').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ moreMenuDropdown.style.display = 'none'; });
+});
 
 document.getElementById('refreshBtn').addEventListener('click', ()=>{
   window.location.reload();
