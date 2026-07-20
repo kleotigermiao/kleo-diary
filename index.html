@@ -3156,6 +3156,10 @@ function renderSupplies(){
         <input type="text" inputmode="numeric" class="supply-add-input" data-key="${key}" placeholder="新增數量">
         <button type="button" class="tag-add-btn supply-add-btn" data-key="${key}">加入庫存</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" inputmode="numeric" class="supply-set-input" data-key="${key}" placeholder="打錯了？直接輸入正確庫存數">
+        <button type="button" class="tag-add-btn supply-set-btn" data-key="${key}" style="background:none;border:1px solid var(--ink);color:var(--ink);">修正為</button>
+      </div>
     </div>`;
   }
   const lancetWarn = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
@@ -3177,6 +3181,10 @@ function renderSupplies(){
         <input type="text" inputmode="numeric" class="supply-add-input" data-key="lancets" placeholder="新增數量">
         <button type="button" class="tag-add-btn supply-add-btn" data-key="lancets">加入庫存</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" inputmode="numeric" class="supply-set-input" data-key="lancets" placeholder="打錯了？直接輸入正確庫存數">
+        <button type="button" class="tag-add-btn supply-set-btn" data-key="lancets" style="background:none;border:1px solid var(--ink);color:var(--ink);">修正為</button>
+      </div>
     </div>
     <div class="supply-card">
       <label style="display:flex;align-items:center;gap:8px;margin:0;text-transform:none;font-family:'Inter',sans-serif;font-size:13px;color:var(--ink);">
@@ -3192,6 +3200,17 @@ function renderSupplies(){
       const n = parseInt(input.value);
       if(!n || n<=0) return;
       supplies[key].stock = (supplies[key].stock||0) + n;
+      saveSupplies();
+      renderSupplies();
+    });
+  });
+  el.querySelectorAll('.supply-set-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.key;
+      const input = el.querySelector(`.supply-set-input[data-key="${key}"]`);
+      const n = parseInt(input.value);
+      if(isNaN(n) || n<0) return;
+      supplies[key].stock = n;
       saveSupplies();
       renderSupplies();
     });
