@@ -70,6 +70,10 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   background:var(--paper);border:1px solid var(--line);border-radius:10px;
   box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:50;min-width:200px;overflow:hidden;
 }
+.modal-close-btn{
+  display:block;width:100%;text-align:center;padding:10px 12px;margin-top:14px;
+  border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;
+}
 .legend{
   display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;
 }
@@ -764,29 +768,7 @@ textarea{resize:vertical; min-height:64px;}
   <div class="sheet-handle"></div>
   <h2>匯入資料</h2>
 
-  <label style="margin-top:18px;">診斷紀錄（儲存有沒有真的成功）</label>
-  <p>如果常常覺得「有記錄但沒存到」，App現在會偷偷記下每次儲存的結果（成功/失敗、當下有沒有離線、分頁是不是在背景等）。下次遇到問題，先點「重新整理」讓App確實抓到最新狀態，再回來看這份紀錄，把它複製起來回報就好，不用再截圖找證據。</p>
-  <button class="save-btn" id="viewSaveLogBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">查看診斷紀錄</button>
-  <div id="saveLogResult" style="margin-top:8px;"></div>
-
-  <label style="margin-top:18px;">每日自動備份（Google Drive）</label>
-  <p>只要登入Google，每天打開App時會自動存一份「當天日期」的獨立備份到雲端（跟一般連續同步不同，這份不會被覆蓋），保留最近30天，太舊的會自動清掉。這是為了萬一哪天資料同步出問題，還能回頭挑一份沒壞的日期救回來。</p>
-  <p id="lastBackupStatus" style="font-size:12.5px;color:var(--ink-soft);"></p>
-  <button class="save-btn" id="backupNowBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">立即備份一份</button>
-
-  <label style="margin-top:18px;">本機儲存空間</label>
-  <p>這個App的資料（含照片）存在瀏覽器的本機儲存空間，跟手機本身還有多少空間是兩回事——瀏覽器通常只給每個網站幾MB到十幾MB左右，跟手機容量無關。如果常常「儲存失敗」，可以先檢查目前用了多少。</p>
-  <button class="save-btn" id="checkStorageBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">檢查目前用量</button>
-  <p id="storageUsageResult" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
-
-  <label style="margin-top:18px;">清除舊照片釋放空間</label>
-  <p>只會刪除「照片」，血糖/胰島素/文字紀錄等資料完全不受影響。<b>建議先用上面「登入Google」同步過一次，確認照片已經備份到Drive，再清除本機的，比較保險。</b></p>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <button class="save-btn" id="clearOldPhotosBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);flex:1;">清除90天前的照片</button>
-    <button class="save-btn" id="clearAllPhotosBtn" style="background:none;border:1px solid #B23A48;color:#B23A48;flex:1;">清除全部照片</button>
-  </div>
-
-  <label style="margin-top:22px;">方式一：從完整備份(.zip)還原（含照片）</label>
+  <label style="margin-top:18px;">方式一：從完整備份(.zip)還原（含照片）</label>
   <input type="file" accept=".zip" id="restoreZipInput">
 
   <label style="margin-top:22px;">方式二：選擇Claude整理好的 .json 檔案（不含照片）</label>
@@ -796,10 +778,6 @@ textarea{resize:vertical; min-height:64px;}
   <label style="margin-top:22px;">方式三：選擇 .csv 檔案（不含照片）</label>
   <p>欄位格式要跟「下載CSV」匯出的格式一樣（日期、血糖、胰島素、飲水等欄位），可以先下載一份參考格式，或直接把整理好的CSV拿來匯入。</p>
   <input type="file" accept=".csv,text/csv" id="importCsvFileInput">
-
-  <label style="margin-top:22px;">還原</label>
-  <p>每次匯入前，App會自動存一份「匯入前」的快照。如果發現剛剛的匯入結果不對，可以整個復原回去，不用一筆筆刪。</p>
-  <button class="save-btn" id="restoreSnapshotBtn" style="background:none;border:1px solid var(--ink);color:var(--ink);">復原到匯入前</button>
 </div>
 
 <script>
@@ -1459,14 +1437,6 @@ document.addEventListener('click', (e)=>{
 document.querySelectorAll('.nav-dropdown .more-menu-item').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.nav-dropdown').forEach(dd=>{ dd.style.display = 'none'; });
-  });
-});
-// These system-panel items all live inside the same "匯入/系統" sheet together
-// (diagnostic log, storage usage, manual Drive backup, restore, photo cleanup),
-// so each one simply opens that shared panel where the relevant section is.
-['viewLogMenuItem','checkStorageMenuItem','backupNowMenuItem','restoreMenuItem','clearPhotosMenuItem'].forEach(id=>{
-  document.getElementById(id).addEventListener('click', ()=>{
-    document.getElementById('importBtn').click();
   });
 });
 document.getElementById('refreshBtn2').addEventListener('click', ()=>{
@@ -3178,23 +3148,28 @@ backFromGallery.addEventListener('click', ()=>{
 
 // ---- Supplies (test strips / needles / lancets) ----
 const SUPPLIES_KEY = 'kleo-supplies-v1';
+const SUPPLIES_DEFAULTS = {
+  strips: {stock: 0},
+  needles: {stock: 0},
+  lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
+  countSkipAsNeedleUse: true
+};
+function normalizeSupplies(parsed){
+  if(!parsed) return JSON.parse(JSON.stringify(SUPPLIES_DEFAULTS));
+  return Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
+    strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
+    needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
+    lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets)
+  });
+}
 function loadSupplies(){
-  const defaults = {
-    strips: {stock: 0},
-    needles: {stock: 0},
-    lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
-    countSkipAsNeedleUse: true
-  };
   try{
     const raw = localStorage.getItem(SUPPLIES_KEY);
-    if(!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    return Object.assign({}, defaults, parsed, {
-      strips: Object.assign({}, defaults.strips, parsed.strips),
-      needles: Object.assign({}, defaults.needles, parsed.needles),
-      lancets: Object.assign({}, defaults.lancets, parsed.lancets)
-    });
-  }catch(e){ return defaults; }
+    return normalizeSupplies(raw ? JSON.parse(raw) : null);
+  }catch(e){ return normalizeSupplies(null); }
+}
+function loadSuppliesFromRemote(remote){
+  return normalizeSupplies(remote);
 }
 function saveSupplies(){
   try{ localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies)); }catch(e){}
@@ -4004,13 +3979,6 @@ const importBackdrop = document.getElementById('importBackdrop');
 const closeImportSheet = document.getElementById('closeImportSheet');
 
 importBtn.addEventListener('click', ()=>{
-  const lastBackup = localStorage.getItem(LAST_AUTO_BACKUP_KEY);
-  const statusEl = document.getElementById('lastBackupStatus');
-  if(statusEl){
-    statusEl.textContent = gAccessToken
-      ? (lastBackup ? `上次自動備份日期：${lastBackup}` : '尚未備份過（下次連上Google時會自動備份）')
-      : '尚未登入Google，無法備份。';
-  }
   importSheet.classList.add('open');
   importBackdrop.classList.add('open');
 });
@@ -4068,82 +4036,134 @@ function restoreSnapshot(){
   alert('已復原到匯入前的狀態。');
 }
 
-document.getElementById('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
-
-// ---- Storage usage & photo cleanup ----
-document.getElementById('viewSaveLogBtn').addEventListener('click', ()=>{
-  const resultEl = document.getElementById('saveLogResult');
+// ---- Standalone system tool modals (independent of the import sheet) ----
+function showSaveLogModal(){
   let log = [];
   try{
     const raw = localStorage.getItem(SAVE_LOG_KEY);
     log = raw ? JSON.parse(raw) : [];
   }catch(e){}
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:80vh;overflow-y:auto;';
+  let bodyHtml;
   if(log.length===0){
-    resultEl.innerHTML = `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有紀錄（會從您安裝這次更新之後開始累積）。</p>`;
-    return;
-  }
-  const failCount = log.filter(l=>!l.success).length;
-  const lines = log.slice().reverse().map(l=>{
-    const t = new Date(l.time).toLocaleString('zh-TW');
-    const status = l.success ? '✅ 成功' : '❌ 失敗';
-    const parts = [`${t}　${status}`];
-    if(!l.online) parts.push('（當時離線）');
-    if(l.visibility!=='visible') parts.push(`（分頁狀態:${l.visibility}）`);
-    if(l.error) parts.push(`錯誤: ${l.error}`);
-    return parts.join(' ');
-  });
-  const text = lines.join('\n');
-  resultEl.innerHTML = `
-    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:6px;">共 ${log.length} 筆紀錄，其中 ${failCount} 筆失敗。</p>
-    <textarea readonly style="height:160px;font-family:'IBM Plex Mono',monospace;font-size:11px;">${text}</textarea>
-    <button type="button" id="copySaveLogBtn" class="tag-add-btn" style="margin-top:6px;">複製紀錄</button>
-  `;
-  document.getElementById('copySaveLogBtn').addEventListener('click', ()=>{
-    navigator.clipboard.writeText(text).then(()=>{
-      alert('已複製到剪貼簿，可以直接貼給開發者看。');
-    }).catch(()=>{
-      alert('複製失敗，請手動選取文字複製。');
+    bodyHtml = `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有紀錄（會從安裝這次更新之後開始累積）。</p>`;
+  } else {
+    const failCount = log.filter(l=>!l.success).length;
+    const lines = log.slice().reverse().map(l=>{
+      const t = new Date(l.time).toLocaleString('zh-TW');
+      const status = l.success ? '✅ 成功' : '❌ 失敗';
+      const parts = [`${t}　${status}`];
+      if(!l.online) parts.push('（當時離線）');
+      if(l.visibility!=='visible') parts.push(`（分頁狀態:${l.visibility}）`);
+      if(l.error) parts.push(`錯誤: ${l.error}`);
+      return parts.join(' ');
     });
-  });
-});
-document.getElementById('backupNowBtn').addEventListener('click', async ()=>{
-  if(!gAccessToken){
-    alert('請先登入Google才能備份。');
-    return;
+    const text = lines.join('\n');
+    bodyHtml = `
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:6px;">共 ${log.length} 筆紀錄，其中 ${failCount} 筆失敗。</p>
+      <textarea readonly style="height:220px;font-family:'IBM Plex Mono',monospace;font-size:11px;">${text}</textarea>
+      <button type="button" id="copySaveLogBtn" class="tag-add-btn" style="margin-top:6px;">複製紀錄</button>
+    `;
   }
-  const btn = document.getElementById('backupNowBtn');
-  btn.textContent = '備份中…';
-  btn.disabled = true;
-  try{
-    localStorage.removeItem(LAST_AUTO_BACKUP_KEY); // force today's backup to (re)run even if already done
-    await performDailyBackupIfNeeded();
-    document.getElementById('lastBackupStatus').textContent = `上次自動備份日期：${todayStr()}`;
-    alert('已備份一份到 Google Drive。');
-  }catch(e){
-    alert('備份失敗：' + e.message);
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">診斷紀錄</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">如果常常覺得「有記錄但沒存到」，這裡會記下每次儲存的結果，遇到問題時複製起來回報就好。</p>
+    ${bodyHtml}
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  const copyBtn = document.getElementById('copySaveLogBtn');
+  if(copyBtn){
+    copyBtn.addEventListener('click', ()=>{
+      const text = box.querySelector('textarea').value;
+      navigator.clipboard.writeText(text).then(()=>{
+        alert('已複製到剪貼簿，可以直接貼給開發者看。');
+      }).catch(()=>{ alert('複製失敗，請手動選取文字複製。'); });
+    });
   }
-  btn.textContent = '立即備份一份';
-  btn.disabled = false;
-});
-document.getElementById('checkStorageBtn').addEventListener('click', async ()=>{
-  const resultEl = document.getElementById('storageUsageResult');
-  resultEl.textContent = '檢查中…';
-  try{
-    if(navigator.storage && navigator.storage.estimate){
-      const est = await navigator.storage.estimate();
-      const usedMB = (est.usage/1024/1024).toFixed(1);
-      const quotaMB = (est.quota/1024/1024).toFixed(0);
-      const pct = est.quota>0 ? Math.round(est.usage/est.quota*100) : 0;
-      resultEl.textContent = `已用約 ${usedMB} MB／瀏覽器配額約 ${quotaMB} MB（約${pct}%）。這是「這個網站」在瀏覽器裡能用的空間，跟手機本身還有多少容量是兩回事。`;
-    } else {
-      const raw = localStorage.getItem(STORAGE_KEY) || '';
-      const sizeMB = (new Blob([raw]).size/1024/1024).toFixed(1);
-      resultEl.textContent = `這個瀏覽器不支援精確查詢，但目前App資料本身約 ${sizeMB} MB（不含瀏覽器保留的額外空間）。`;
+}
+
+function showBackupModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:360px;width:100%;';
+  const lastBackup = localStorage.getItem(LAST_AUTO_BACKUP_KEY);
+  const statusText = gAccessToken
+    ? (lastBackup ? `上次自動備份日期：${lastBackup}` : '尚未備份過（下次連上Google時會自動備份）')
+    : '尚未登入Google，無法備份。';
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">每日自動備份（Google Drive）</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">只要登入Google，每天打開App會自動存一份帶日期的獨立備份，保留最近30天，太舊的自動清掉。</p>
+    <p id="modalBackupStatus" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;">${statusText}</p>
+    <button type="button" id="modalBackupNowBtn" class="save-btn" style="background:none;border:1px solid var(--ink);color:var(--ink);width:100%;">立即備份一份</button>
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  document.getElementById('modalBackupNowBtn').addEventListener('click', async ()=>{
+    if(!gAccessToken){ alert('請先登入Google才能備份。'); return; }
+    const btn = document.getElementById('modalBackupNowBtn');
+    btn.textContent = '備份中…';
+    btn.disabled = true;
+    try{
+      localStorage.removeItem(LAST_AUTO_BACKUP_KEY);
+      await performDailyBackupIfNeeded();
+      document.getElementById('modalBackupStatus').textContent = `上次自動備份日期：${todayStr()}`;
+      alert('已備份一份到 Google Drive。');
+    }catch(e){
+      alert('備份失敗：' + e.message);
     }
-  }catch(e){
-    resultEl.textContent = '查詢失敗：' + e.message;
-  }
-});
+    btn.textContent = '立即備份一份';
+    btn.disabled = false;
+  });
+}
+
+function showStorageModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:360px;width:100%;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">本機儲存空間</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">這個App的資料存在瀏覽器的本機儲存空間，跟手機本身還有多少空間是兩回事。</p>
+    <p id="modalStorageResult" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;">檢查中…</p>
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  (async ()=>{
+    const resultEl = document.getElementById('modalStorageResult');
+    try{
+      if(navigator.storage && navigator.storage.estimate){
+        const est = await navigator.storage.estimate();
+        const usedMB = (est.usage/1024/1024).toFixed(1);
+        const quotaMB = (est.quota/1024/1024).toFixed(0);
+        const pct = est.quota>0 ? Math.round(est.usage/est.quota*100) : 0;
+        resultEl.textContent = `已用約 ${usedMB} MB／瀏覽器配額約 ${quotaMB} MB（約${pct}%）。`;
+      } else {
+        const raw = localStorage.getItem(STORAGE_KEY) || '';
+        const sizeMB = (new Blob([raw]).size/1024/1024).toFixed(1);
+        resultEl.textContent = `這個瀏覽器不支援精確查詢，但目前App資料本身約 ${sizeMB} MB。`;
+      }
+    }catch(e){
+      resultEl.textContent = '查詢失敗：' + e.message;
+    }
+  })();
+}
 
 function countAllPhotos(){
   let count = 0;
@@ -4176,26 +4196,46 @@ function clearPhotosOlderThan(days){
   });
   return removed;
 }
-document.getElementById('clearOldPhotosBtn').addEventListener('click', ()=>{
-  const total = countAllPhotos();
-  if(total===0){ alert('目前沒有照片可以清除。'); return; }
-  if(!confirm(`目前共有約 ${total} 張照片。確定要清除「90天前」的所有照片嗎？（只刪照片，文字/數值紀錄不受影響）建議先確認已經同步過Google Drive。`)) return;
-  const removed = clearPhotosOlderThan(90);
-  if(save()){
-    render();
-    alert(`已清除 ${removed} 張90天前的照片。`);
-  }
-});
-document.getElementById('clearAllPhotosBtn').addEventListener('click', ()=>{
-  const total = countAllPhotos();
-  if(total===0){ alert('目前沒有照片可以清除。'); return; }
-  if(!confirm(`目前共有約 ${total} 張照片。確定要清除「全部」照片嗎？（只刪照片，文字/數值紀錄不受影響，此動作無法復原）建議先確認已經同步過Google Drive。`)) return;
-  const removed = clearPhotosOlderThan(null);
-  if(save()){
-    render();
-    alert(`已清除全部 ${removed} 張照片。`);
-  }
-});
+function showClearPhotosModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:380px;width:100%;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">清除舊照片釋放空間</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">只會刪除「照片」，文字/數值紀錄不受影響。<b>建議先登入Google同步過，確認照片已備份到Drive，再清除本機的比較保險。</b></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <button type="button" id="modalClearOldBtn" class="save-btn" style="background:none;border:1px solid var(--ink);color:var(--ink);flex:1;">清除90天前的照片</button>
+      <button type="button" id="modalClearAllBtn" class="save-btn" style="background:none;border:1px solid #B23A48;color:#B23A48;flex:1;">清除全部照片</button>
+    </div>
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  document.getElementById('modalClearOldBtn').addEventListener('click', ()=>{
+    const total = countAllPhotos();
+    if(total===0){ alert('目前沒有照片可以清除。'); return; }
+    if(!confirm(`目前共有約 ${total} 張照片。確定要清除「90天前」的所有照片嗎？建議先確認已經同步過Google Drive。`)) return;
+    const removed = clearPhotosOlderThan(90);
+    if(save()){ render(); alert(`已清除 ${removed} 張90天前的照片。`); }
+  });
+  document.getElementById('modalClearAllBtn').addEventListener('click', ()=>{
+    const total = countAllPhotos();
+    if(total===0){ alert('目前沒有照片可以清除。'); return; }
+    if(!confirm(`目前共有約 ${total} 張照片。確定要清除「全部」照片嗎？此動作無法復原，建議先確認已經同步過Google Drive。`)) return;
+    const removed = clearPhotosOlderThan(null);
+    if(save()){ render(); alert(`已清除全部 ${removed} 張照片。`); }
+  });
+}
+
+document.getElementById('viewLogMenuItem').addEventListener('click', showSaveLogModal);
+document.getElementById('checkStorageMenuItem').addEventListener('click', showStorageModal);
+document.getElementById('backupNowMenuItem').addEventListener('click', showBackupModal);
+document.getElementById('restoreMenuItem').addEventListener('click', restoreSnapshot);
+document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
 
 // ---- Google Sign-In + Drive auto-sync ----
@@ -4382,6 +4422,10 @@ async function syncFromDriveOnLogin(){
         await migrateEmbeddedPhotos(); // move any embedded base64 photos from the cloud copy into IndexedDB
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         localStorage.setItem('kleo-last-modified', String(remoteLastModified));
+        if(remoteEnvelope.supplies){
+          supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          saveSupplies();
+        }
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
         performDailyBackupIfNeeded();
@@ -4433,7 +4477,7 @@ function pushToDrive(immediate){
           });
         });
       });
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary };
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies };
       await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
