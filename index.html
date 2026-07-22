@@ -385,9 +385,9 @@ textarea{resize:vertical; min-height:64px;}
   font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);
   margin-bottom:6px;
 }
-.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-auto-rows:60px;gap:4px;}
 .cal-day{
-  aspect-ratio:1;max-width:100%;max-height:78px;border-radius:8px;background:#00000006;position:relative;
+  height:60px;max-width:100%;border-radius:8px;background:#00000006;position:relative;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   cursor:pointer;font-size:12.5px;color:var(--ink);overflow:hidden;
 }
@@ -3172,7 +3172,11 @@ function loadSuppliesFromRemote(remote){
   return normalizeSupplies(remote);
 }
 function saveSupplies(){
-  try{ localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies)); }catch(e){}
+  try{
+    localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies));
+    localStorage.setItem('kleo-last-modified', String(Date.now()));
+  }catch(e){}
+  if(typeof pushToDrive === 'function') pushToDrive();
 }
 let supplies = loadSupplies();
 
@@ -3408,39 +3412,13 @@ function renderCalendar(){
   });
 }
 
-function showDayDetailFloating(dateStr){
+function openCalDayMenu(dateStr){
+  const existing = calEvents[dateStr] || [];
   const day = data[dateStr];
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:210;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;';
   const box = document.createElement('div');
-  box.style.cssText = 'background:var(--paper);border-radius:14px;max-width:480px;width:100%;margin:20px auto;position:relative;';
-  const allDatesSorted = Object.keys(data).sort().reverse();
-  const idx = allDatesSorted.indexOf(dateStr);
-  const rowsHtml = day ? renderDayRows(dateStr, day) : '<p style="padding:16px;color:var(--ink-soft);">這天沒有任何記錄。</p>';
-  const notesHtml = day && day.notes ? `<div class="notes-row"><div class="notes-text">${escapeHtml(day.notes).replace(/\n/g,'<br>')}</div></div>` : '';
-  box.innerHTML = `
-    <button type="button" id="dayFloatCloseBtn" style="position:absolute;top:10px;right:10px;background:none;border:none;font-size:20px;color:var(--ink-soft);cursor:pointer;z-index:2;">✕</button>
-    <div class="day-head">
-      <span class="date">${formatDateLabel(dateStr)}</span>
-      <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
-    </div>
-    ${day ? buildStatusSummary(dateStr, day, allDatesSorted, idx) : ''}
-    ${day ? buildCatScoreWidget(dateStr, day, allDatesSorted, idx) : ''}
-    <div class="section" style="pointer-events:none;opacity:0.92;">${rowsHtml}${notesHtml}</div>
-    <p style="text-align:center;font-size:11px;color:var(--ink-soft);padding:0 16px 16px;">這是唯讀快速預覽，如果要編輯這天的記錄，請先關閉月曆回到主畫面。</p>
-  `;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const close = ()=> overlay.remove();
-  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
-  document.getElementById('dayFloatCloseBtn').addEventListener('click', close);
-}
-function openCalDayMenu(dateStr){
-  const existing = calEvents[dateStr] || [];
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:320px;width:100%;max-height:80vh;overflow-y:auto;';
+  box.style.cssText = 'background:var(--paper);border-radius:14px;max-width:480px;width:100%;margin:20px auto;position:relative;padding-bottom:16px;';
   const eventsHtml = existing.map((ev,i)=>`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
       <span style="flex:1;font-size:13.5px;">📌 ${escapeHtml(ev)}</span>
@@ -3463,33 +3441,38 @@ function openCalDayMenu(dateStr){
     supplyNotes.push('🔴 今天該換採血針了');
   }
   const supplyNoticeHtml = supplyNotes.length
-    ? `<div style="background:#FCE4EC;border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:12.5px;color:#C0392B;">${supplyNotes.join('<br>')}</div>`
+    ? `<div style="background:#FCE4EC;border-radius:8px;padding:8px 10px;margin:0 16px 12px;font-size:12.5px;color:#C0392B;">${supplyNotes.join('<br>')}</div>`
     : '';
+  const allDatesSorted = Object.keys(data).sort().reverse();
+  const idx = allDatesSorted.indexOf(dateStr);
+  const rowsHtml = day ? renderDayRows(dateStr, day) : '<p style="padding:16px;color:var(--ink-soft);">這天沒有任何記錄。</p>';
+  const notesHtml = day && day.notes ? `<div class="notes-row"><div class="notes-text">${escapeHtml(day.notes).replace(/\n/g,'<br>')}</div></div>` : '';
   box.innerHTML = `
-    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">${dateStr}</h3>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">${weekdayName(dateStr)}</p>
-    ${supplyNoticeHtml}
-    ${data[dateStr] ? `<button type="button" id="calJumpBtn" class="tag-add-btn" style="width:100%;margin-bottom:14px;">查看這天的日記 →</button>` : ''}
-    <label style="margin-top:0;">預定事項（例如：回診、換胰島素）</label>
-    <div id="calEventList" style="margin:8px 0;">${eventsHtml || '<p style="font-size:12.5px;color:var(--ink-soft);">目前沒有預定事項</p>'}</div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <input type="text" id="calEventInput" placeholder="新增預定事項…" style="flex:1;">
-      <button type="button" id="calEventAddBtn" class="tag-add-btn">新增</button>
+    <button type="button" id="dayFloatCloseBtn" style="position:absolute;top:10px;right:10px;background:none;border:none;font-size:20px;color:var(--ink-soft);cursor:pointer;z-index:2;">✕</button>
+    <div class="day-head">
+      <span class="date">${formatDateLabel(dateStr)}</span>
+      <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
     </div>
-    <button type="button" id="calCloseBtn" style="display:block;width:100%;text-align:center;padding:10px 12px;margin-top:14px;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;">關閉</button>
+    ${supplyNoticeHtml}
+    <div style="padding:0 16px;">
+      <label style="margin-top:0;">預定事項（例如：回診、換胰島素）</label>
+      <div id="calEventList" style="margin:8px 0;">${eventsHtml || '<p style="font-size:12.5px;color:var(--ink-soft);">目前沒有預定事項</p>'}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" id="calEventInput" placeholder="新增預定事項…" style="flex:1;">
+        <button type="button" id="calEventAddBtn" class="tag-add-btn">新增</button>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0;">
+    ${day ? buildStatusSummary(dateStr, day, allDatesSorted, idx) : ''}
+    ${day ? buildCatScoreWidget(dateStr, day, allDatesSorted, idx) : ''}
+    <div class="section" style="pointer-events:none;opacity:0.92;">${rowsHtml}${notesHtml}</div>
+    <p style="text-align:center;font-size:11px;color:var(--ink-soft);padding:0 16px;">這是唯讀快速預覽，如果要編輯這天的記錄，請先關閉月曆回到主畫面。</p>
   `;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   const close = ()=>{ overlay.remove(); renderCalendar(); };
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
-  document.getElementById('calCloseBtn').addEventListener('click', close);
-  const jumpBtn = document.getElementById('calJumpBtn');
-  if(jumpBtn){
-    jumpBtn.addEventListener('click', ()=>{
-      overlay.remove();
-      showDayDetailFloating(dateStr);
-    });
-  }
+  document.getElementById('dayFloatCloseBtn').addEventListener('click', close);
   document.getElementById('calEventAddBtn').addEventListener('click', ()=>{
     const input = document.getElementById('calEventInput');
     const text = input.value.trim();
