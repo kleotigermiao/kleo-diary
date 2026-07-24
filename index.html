@@ -413,6 +413,7 @@ textarea{resize:vertical; min-height:64px;}
 .supply-title{font-family:'Archivo Narrow',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px;}
 .supply-stock{font-size:14px;color:var(--ink);margin-bottom:4px;}
 .supply-days{font-size:12.5px;color:var(--ink-soft);}
+.supply-buy{font-size:12.5px;color:var(--ink);margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);}
 .supply-add-input{flex:1;}
 .todo-item{
   display:flex;align-items:center;gap:10px;padding:12px 4px;
@@ -583,6 +584,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="backupNowMenuItem">備份到Google（需登入）</button>
           <button type="button" class="more-menu-item" id="importBtn">匯入（從完整備份／從CSV）</button>
           <button type="button" class="more-menu-item" id="restoreMenuItem">復原到匯入前</button>
+          <button type="button" class="more-menu-item" id="localHistoryMenuItem">本機備份歷史</button>
           <button type="button" class="more-menu-item" id="clearPhotosMenuItem">清除舊照片</button>
         </div>
       </div>
@@ -3229,13 +3231,31 @@ function renderSupplies(){
   const stripsDaysLeft = stripsRate>0 ? Math.floor(supplies.strips.stock/stripsRate) : null;
   const needlesDaysLeft = needlesRate>0 ? Math.floor(supplies.needles.stock/needlesRate) : null;
   const warnThreshold = 60;
-  function supplyCard(key, label, icon, daysLeft){
+  const SIX_MONTHS_DAYS = 182;
+  const PACKAGE_SIZE = {strips: 50, needles: 10, lancets: 50};
+  const PACKAGE_UNIT = {strips: '罐', needles: '包', lancets: '盒'};
+  function sixMonthBuyHtml(key, dailyRate){
+    if(!dailyRate || dailyRate<=0){
+      return `<div class="supply-buy" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算未來6個月需要買多少</div>`;
+    }
+    const neededTotal = dailyRate * SIX_MONTHS_DAYS;
+    const shortfall = Math.max(0, neededTotal - supplies[key].stock);
+    const size = PACKAGE_SIZE[key];
+    const unit = PACKAGE_UNIT[key];
+    if(shortfall<=0){
+      return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} 個，目前庫存夠用，暫時不用買。</div>`;
+    }
+    const packagesToBuy = Math.ceil(shortfall/size);
+    return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} 個，庫存還差 ${Math.round(shortfall)} 個 → 建議買 <b>${packagesToBuy}</b> ${unit}（每${unit} ${size}個）</div>`;
+  }
+  function supplyCard(key, label, icon, daysLeft, dailyRate){
     const s = supplies[key];
     const warn = daysLeft!=null && daysLeft < warnThreshold;
     return `<div class="supply-card${warn?' warn':''}">
       <div class="supply-title">${icon} ${label}</div>
       <div class="supply-stock">庫存：<b>${s.stock}</b> 個</div>
       ${daysLeft!=null ? `<div class="supply-days">照最近用量，估計還能用 <b>${daysLeft}</b> 天${warn?'　⚠️建議補貨':''}</div>` : `<div class="supply-days" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算</div>`}
+      ${sixMonthBuyHtml(key, dailyRate)}
       <div style="display:flex;gap:8px;margin-top:10px;">
         <input type="text" inputmode="numeric" class="supply-add-input" data-key="${key}" placeholder="新增數量">
         <button type="button" class="tag-add-btn supply-add-btn" data-key="${key}">加入庫存</button>
@@ -3247,13 +3267,17 @@ function renderSupplies(){
     </div>`;
   }
   const lancetWarn = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
+  // Lancets aren't consumed per test — they're consumed per "changed" event.
+  // Rate of lancet changes per day = (glucose tests per day) / (tests per change).
+  const lancetChangeRate = (stripsRate>0 && supplies.lancets.changeThreshold>0) ? (stripsRate/supplies.lancets.changeThreshold) : 0;
   el.innerHTML = `
-    ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft)}
-    ${supplyCard('needles', '針管', '💉', needlesDaysLeft)}
+    ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft, stripsRate)}
+    ${supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate)}
     <div class="supply-card${lancetWarn?' warn':''}">
       <div class="supply-title">🔴 採血針</div>
       <div class="supply-stock">庫存：<b>${supplies.lancets.stock}</b> 支</div>
       <div class="supply-days">已測 <b>${supplies.lancets.testsSinceChange}</b> / ${supplies.lancets.changeThreshold} 次${lancetWarn?'　⚠️該換針了':''}</div>
+      ${sixMonthBuyHtml('lancets', lancetChangeRate)}
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
         <button type="button" class="tag-add-btn" id="lancetChangedBtn">✅ 已更換採血針</button>
       </div>
@@ -3997,6 +4021,75 @@ function mergeImportedData(incoming){
   return {addedDays, addedEntries};
 }
 
+const LOCAL_HISTORY_KEY = 'kleo-local-history-v1';
+const LOCAL_HISTORY_MAX = 10;
+function saveLocalHistorySnapshot(reason){
+  try{
+    const raw = localStorage.getItem(LOCAL_HISTORY_KEY);
+    const history = raw ? JSON.parse(raw) : [];
+    history.push({
+      savedAt: new Date().toISOString(),
+      reason: reason || '',
+      data: JSON.parse(JSON.stringify(data))
+    });
+    while(history.length > LOCAL_HISTORY_MAX) history.shift();
+    localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(history));
+  }catch(e){
+    console.error('local history snapshot failed (likely storage full, non-fatal):', e);
+  }
+}
+function loadLocalHistory(){
+  try{
+    const raw = localStorage.getItem(LOCAL_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function showLocalHistoryModal(){
+  const history = loadLocalHistory();
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:80vh;overflow-y:auto;';
+  const listHtml = history.length===0
+    ? `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有本機備份紀錄（會在每次雲端資料要蓋掉本機之前自動存一份，之後遇到就會累積起來）。</p>`
+    : history.slice().reverse().map((h,revIdx)=>{
+        const realIdx = history.length-1-revIdx;
+        const t = new Date(h.savedAt).toLocaleString('zh-TW');
+        const dayCount = Object.keys(h.data||{}).length;
+        return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+          <div style="font-size:12.5px;color:var(--ink);">${t}</div>
+          <div style="font-size:11px;color:var(--ink-soft);margin:2px 0 8px;">${h.reason || '自動備份'}　·　共 ${dayCount} 天的資料</div>
+          <button type="button" class="tag-add-btn local-history-restore-btn" data-idx="${realIdx}" style="padding:4px 12px;font-size:12px;">還原這個版本</button>
+        </div>`;
+      }).join('');
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">本機備份歷史</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">每次雲端資料要整份蓋掉本機之前，系統會先自動存一份「蓋掉前」的快照，最多留最近 ${LOCAL_HISTORY_MAX} 份。就算同步出狀況，本機資料也不會真的消失，隨時可以挑一份還原回來。</p>
+    ${listHtml}
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  box.querySelectorAll('.local-history-restore-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.dataset.idx);
+      const entry = history[idx];
+      if(!entry) return;
+      if(!confirm(`確定要還原到「${new Date(entry.savedAt).toLocaleString('zh-TW')}」的版本嗎？目前的資料會先被存成一份新快照再被取代，不會真的遺失。`)) return;
+      saveLocalHistorySnapshot('還原前的自動備份');
+      data = JSON.parse(JSON.stringify(entry.data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem('kleo-last-modified', String(Date.now()));
+      render();
+      close();
+      alert('已還原。');
+    });
+  });
+}
+
 const SNAPSHOT_KEY = 'kleo-pre-import-snapshot';
 function saveSnapshot(){
   try{
@@ -4218,6 +4311,7 @@ document.getElementById('viewLogMenuItem').addEventListener('click', showSaveLog
 document.getElementById('checkStorageMenuItem').addEventListener('click', showStorageModal);
 document.getElementById('backupNowMenuItem').addEventListener('click', showBackupModal);
 document.getElementById('restoreMenuItem').addEventListener('click', restoreSnapshot);
+document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
 
@@ -4246,6 +4340,27 @@ function updateAuthUI(signedIn, extra){
 
 let isManualAuthAttempt = false;
 
+const TOKEN_CACHE_KEY = 'kleo-google-token-cache';
+function getCachedToken(){
+  try{
+    const raw = sessionStorage.getItem(TOKEN_CACHE_KEY);
+    if(!raw) return null;
+    const cached = JSON.parse(raw);
+    // treat as valid if it still has more than 5 minutes of life left
+    if(cached.expiresAt && cached.expiresAt > Date.now() + 5*60*1000){
+      return cached.token;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+function cacheToken(token, expiresInSeconds){
+  try{
+    sessionStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify({
+      token,
+      expiresAt: Date.now() + (expiresInSeconds||3600)*1000
+    }));
+  }catch(e){}
+}
 function initGoogleAuth(){
   if(typeof google === 'undefined' || !google.accounts){
     setTimeout(initGoogleAuth, 300);
@@ -4264,14 +4379,26 @@ function initGoogleAuth(){
         return;
       }
       gAccessToken = resp.access_token;
+      cacheToken(resp.access_token, resp.expires_in);
       localStorage.setItem('kleo-google-authorized', '1');
       updateAuthUI(true, '同步中…');
       await syncFromDriveOnLogin();
     }
   });
   if(localStorage.getItem('kleo-google-authorized') === '1'){
-    isManualAuthAttempt = false;
-    gTokenClient.requestAccessToken({ prompt: '' });
+    // Reuse a still-valid cached token within this browser tab/session instead
+    // of asking Google for a fresh one on every single reload — this cuts down
+    // how often Google's own sign-in activity monitoring sees "new" access,
+    // which is what was triggering frequent security notification emails.
+    const cached = getCachedToken();
+    if(cached){
+      gAccessToken = cached;
+      updateAuthUI(true, '同步中…');
+      syncFromDriveOnLogin();
+    } else {
+      isManualAuthAttempt = false;
+      gTokenClient.requestAccessToken({ prompt: '' });
+    }
   }
 }
 
@@ -4354,11 +4481,15 @@ async function performDailyBackupIfNeeded(){
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(envelope)}\r\n--${boundary}--`;
-    await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    const res = await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
       body
     });
+    if(!res.ok){
+      console.error('daily auto backup rejected by server:', res.status);
+      return; // don't mark today as backed-up if it wasn't
+    }
     localStorage.setItem(LAST_AUTO_BACKUP_KEY, today);
     cleanupOldAutoBackups();
   }catch(e){
@@ -4386,6 +4517,56 @@ async function cleanupOldAutoBackups(){
   }catch(e){ console.error('cleanup old auto-backups failed', e); }
 }
 
+const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
+function showConflictMergeNotice(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:220;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:380px;width:100%;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 8px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">⚠️ 偵測到多裝置同時異動</h3>
+    <p style="font-size:13px;color:var(--ink);margin:0 0 10px;">這台裝置跟另一台裝置，在還沒互相同步的情況下都各自新增了東西。系統已經<b>自動合併保留兩邊新增的內容</b>（不會刪掉任何一邊的資料），並存回雲端。</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px;">麻煩檢查一下最近幾天的記錄有沒有重複或不對的地方。如果合併結果有問題，可以到「系統」選單裡的「復原到匯入前」，復原成這次合併之前、這台裝置原本的樣子。</p>
+    <button type="button" class="modal-close-btn" style="margin-top:0;">知道了</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+}
+const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite','noteEntries'];
+function mergeDiaryData(localD, remoteD){
+  const merged = {};
+  const allDates = new Set([...Object.keys(localD||{}), ...Object.keys(remoteD||{})]);
+  allDates.forEach(dateStr=>{
+    const l = (localD && localD[dateStr]) || null;
+    const r = (remoteD && remoteD[dateStr]) || null;
+    if(l && !r){ merged[dateStr] = l; return; }
+    if(r && !l){ merged[dateStr] = r; return; }
+    // both sides have this date: union each category's entries, de-duping exact matches
+    const day = {};
+    ALL_DIARY_CATS.forEach(cat=>{
+      const la = (l[cat]||[]).map(e=>JSON.stringify(e));
+      const ra = (r[cat]||[]).map(e=>JSON.stringify(e));
+      const seen = new Set();
+      const combined = [];
+      [...la, ...ra].forEach(s=>{
+        if(!seen.has(s)){ seen.add(s); combined.push(JSON.parse(s)); }
+      });
+      combined.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
+      day[cat] = combined;
+    });
+    // free-text day notes: if they differ, keep both, clearly separated
+    if(l.notes && r.notes && l.notes!==r.notes){
+      day.notes = l.notes + '\n----- (另一台裝置的備註) -----\n' + r.notes;
+    } else {
+      day.notes = l.notes || r.notes || '';
+    }
+    merged[dateStr] = day;
+  });
+  return merged;
+}
 async function syncFromDriveOnLogin(){
   if(isSyncing) return; // prevent overlapping sync calls from racing each other
   isSyncing = true;
@@ -4396,15 +4577,48 @@ async function syncFromDriveOnLogin(){
     const fetchOk = res.ok;
     const remoteEnvelope = fetchOk ? await res.json().catch(()=>null) : null;
     const localLastModified = parseInt(localStorage.getItem('kleo-last-modified') || '0');
+    const lastSyncedModified = parseInt(localStorage.getItem(LAST_SYNCED_KEY) || '0');
 
     if(remoteEnvelope && remoteEnvelope._meta && remoteEnvelope.diary){
       const remoteLastModified = remoteEnvelope._meta.lastModified || 0;
-      if(remoteLastModified > localLastModified){
-        // Cloud version is newer than this device's copy: replace local with cloud version
+      const localChangedSinceSync = localLastModified > lastSyncedModified;
+      const remoteChangedSinceSync = remoteLastModified > lastSyncedModified;
+
+      if(localChangedSinceSync && remoteChangedSinceSync && remoteLastModified !== localLastModified){
+        // TRUE CONFLICT: both this device and another device made changes
+        // independently since they last agreed on a common state. Never pick
+        // one side blindly — merge additively (union of both sides' entries)
+        // so neither device's new data gets silently discarded.
+        saveLocalHistorySnapshot('多裝置衝突合併前的本機備份');
+        const mergedData = mergeDiaryData(data, remoteEnvelope.diary);
+        data = mergedData;
+        await migrateEmbeddedPhotos();
+        const newTs = Date.now();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem('kleo-last-modified', String(newTs));
+        localStorage.setItem(LAST_SYNCED_KEY, String(newTs));
+        if(remoteEnvelope.supplies){
+          supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          saveSupplies();
+        }
+        render();
+        isSyncing = false;
+        pushToDrive(true);
+        updateAuthUI(true, '偵測到多裝置同時異動，已自動合併');
+        showConflictMergeNotice();
+        performDailyBackupIfNeeded();
+        return;
+      } else if(remoteLastModified > localLastModified){
+        // Cloud version is newer than this device's copy: replace local with cloud version.
+        // Always snapshot local first — even a "normal" pull could be wrong
+        // (e.g. if a push earlier silently failed), so this must never be a
+        // one-way door.
+        saveLocalHistorySnapshot('雲端資料蓋掉本機前的備份');
         data = remoteEnvelope.diary;
         await migrateEmbeddedPhotos(); // move any embedded base64 photos from the cloud copy into IndexedDB
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         localStorage.setItem('kleo-last-modified', String(remoteLastModified));
+        localStorage.setItem(LAST_SYNCED_KEY, String(remoteLastModified));
         if(remoteEnvelope.supplies){
           supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
           saveSupplies();
@@ -4414,6 +4628,7 @@ async function syncFromDriveOnLogin(){
         performDailyBackupIfNeeded();
       } else {
         // This device's copy is newer or equal: push it up so the cloud catches up
+        localStorage.setItem(LAST_SYNCED_KEY, String(localLastModified));
         updateAuthUI(true, '本機已是最新');
         isSyncing = false;
         pushToDrive(true);
@@ -4423,6 +4638,7 @@ async function syncFromDriveOnLogin(){
     } else if(justCreated){
       // Genuinely a brand-new file we just created ourselves in this same call —
       // safe to treat local data as the source of truth.
+      localStorage.setItem(LAST_SYNCED_KEY, String(localLastModified));
       updateAuthUI(true, '已連接');
       isSyncing = false;
       pushToDrive(true);
@@ -4461,14 +4677,27 @@ function pushToDrive(immediate){
         });
       });
       const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies };
-      await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+      const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(envelope)
       });
+      if(!res.ok){
+        // The request went out but Google rejected it (expired token, quota,
+        // etc). This must NOT be treated as a successful sync — doing so was
+        // the root cause of real data loss: a failed push got marked as
+        // "synced", so a later sync trusted the (stale, unchanged) cloud copy
+        // and overwrote the newer local data with it.
+        const errText = await res.text().catch(()=>'');
+        console.error('push to drive rejected by server:', res.status, errText);
+        updateAuthUI(true, `⚠️ 同步失敗（${res.status}），本機資料仍保留，請稍後點「重新整理」再試`);
+        return;
+      }
+      localStorage.setItem(LAST_SYNCED_KEY, String(lastModified));
       updateAuthUI(true, '已同步 ' + new Date().toLocaleTimeString('zh-TW'));
     }catch(e){
       console.error('push to drive failed', e);
+      updateAuthUI(true, '⚠️ 同步失敗（網路問題），本機資料仍保留，請稍後再試');
     }
   };
   if(immediate){ doPush(); }
