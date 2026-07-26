@@ -572,7 +572,8 @@ textarea{resize:vertical; min-height:64px;}
       <div class="sub" id="statusSub">糖尿病照護日誌 · 本機儲存</div>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
-      <button class="sync-btn" id="googleAuthBtn">登入</button>
+      <button class="sync-btn" id="localSaveBtn">本機儲存</button>
+      <button class="sync-btn" id="googleAuthBtn">同步</button>
 
       <div class="nav-dropdown-wrap">
         <button class="sync-btn nav-dropdown-btn" data-menu="systemMenu">系統</button>
@@ -581,10 +582,8 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="viewLogMenuItem">查看診斷紀錄</button>
           <button type="button" class="more-menu-item" id="checkStorageMenuItem">檢查目前用量</button>
           <button type="button" class="more-menu-item" id="backupBtn">完整備份</button>
-          <button type="button" class="more-menu-item" id="backupNowMenuItem">備份到Google（需登入）</button>
           <button type="button" class="more-menu-item" id="importBtn">匯入（從完整備份／從CSV）</button>
-          <button type="button" class="more-menu-item" id="restoreMenuItem">復原到匯入前</button>
-          <button type="button" class="more-menu-item" id="localHistoryMenuItem">本機備份歷史</button>
+          <button type="button" class="more-menu-item" id="localHistoryMenuItem">還原</button>
           <button type="button" class="more-menu-item" id="clearPhotosMenuItem">清除舊照片</button>
         </div>
       </div>
@@ -593,7 +592,6 @@ textarea{resize:vertical; min-height:64px;}
         <button class="sync-btn nav-dropdown-btn" data-menu="dataMenu">資料</button>
         <div class="nav-dropdown" id="dataMenu">
           <button type="button" class="more-menu-item" id="refreshBtn2">重新整理</button>
-          <button type="button" class="more-menu-item" id="jumpDateBtn">跳轉日期</button>
           <button type="button" class="more-menu-item" id="galleryBtn">圖庫</button>
           <button type="button" class="more-menu-item" id="reportBtn">報表</button>
         </div>
@@ -950,13 +948,30 @@ function save(extraContext){
       return false;
     }
     logSaveActivity(true, null, extraContext);
-    if(typeof pushToDrive === 'function') pushToDrive();
+    showSavedToast();
+    // NOTE: syncing to Google Drive is no longer automatic here — the person
+    // explicitly chooses when to sync via the "同步" button, to avoid the
+    // background sync races that previously caused data loss.
     return true;
   }catch(e){
     logSaveActivity(false, e.message, extraContext);
     alert('儲存失敗：' + e.message + '（可能是照片太多佔滿本機空間，建議先同步到Drive後清除舊照片）');
     return false;
   }
+}
+let savedToastTimer = null;
+function showSavedToast(){
+  let toast = document.getElementById('savedToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'savedToast';
+    toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper-raised);padding:8px 18px;border-radius:20px;font-size:12.5px;font-family:\'IBM Plex Mono\',monospace;z-index:300;opacity:0;transition:opacity .2s;pointer-events:none;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = '✓ 已儲存到本機';
+  toast.style.opacity = '1';
+  clearTimeout(savedToastTimer);
+  savedToastTimer = setTimeout(()=>{ toast.style.opacity = '0'; }, 1400);
 }
 
 function glucoseLevel(v){
@@ -1258,6 +1273,11 @@ const FOOD_OPTIONS = {
   '罐頭': ['Tiki Ahi Tuna'],
   '零食': ['YA Lid Treats','YA Treats','凍乾 Pure Bites Tuna','凍乾 Ocean White Fish']
 };
+const FOOD_TYPES_KEY = 'kleo-food-types-v1';
+function loadFoodTypes(){ return loadTagsGeneric(FOOD_TYPES_KEY, Object.keys(FOOD_OPTIONS)); }
+function saveFoodTypes(types){ saveTagsGeneric(FOOD_TYPES_KEY, types); }
+function loadFoodBrands(type){ return loadTagsGeneric('kleo-food-brands-'+type, FOOD_OPTIONS[type] || []); }
+function saveFoodBrands(type, brands){ saveTagsGeneric('kleo-food-brands-'+type, brands); }
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
   stool: ['正常','軟便','拉稀']
@@ -1447,35 +1467,6 @@ document.getElementById('refreshBtn2').addEventListener('click', ()=>{
 
 document.getElementById('refreshBtn').addEventListener('click', ()=>{
   window.location.reload();
-});
-
-document.getElementById('jumpDateBtn').addEventListener('click', ()=>{
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:320px;width:100%;';
-  box.innerHTML = `<h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">跳轉到指定日期</h3>
-    <input type="date" id="jumpDateInput" value="${todayStr()}" style="margin-bottom:12px;">
-    <button type="button" id="jumpDateGoBtn" class="save-btn" style="margin-bottom:8px;">跳轉</button>
-    <button type="button" id="jumpDateCancelBtn" style="display:block;width:100%;text-align:center;padding:8px 12px;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;">取消</button>`;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const close = ()=> overlay.remove();
-  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
-  document.getElementById('jumpDateCancelBtn').addEventListener('click', close);
-  document.getElementById('jumpDateGoBtn').addEventListener('click', ()=>{
-    const target = document.getElementById('jumpDateInput').value;
-    if(!target){ return; }
-    if(!data[target]){
-      data[target] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
-    }
-    render();
-    close();
-    setTimeout(()=>{
-      const card = document.querySelector(`.day-card[data-date="${target}"]`);
-      if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
-    }, 50);
-  });
 });
 
 function openSlotPicker(dateStr, slotIdx){
@@ -1703,24 +1694,26 @@ function openSheetForEdit(dateStr, cat, idx){
     const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
     const mainPart = m ? m[1] : raw;
     const detailPart = m ? m[2] : '';
-    const sepIdx = mainPart.indexOf('：');
-    const type = sepIdx>=0 ? mainPart.slice(0,sepIdx) : null;
-    const brand = sepIdx>=0 ? mainPart.slice(sepIdx+1) : null;
-    if(type && FOOD_OPTIONS[type]){
-      selectFoodType(type, false);
-      if(brand){
-        const brandBtn = Array.from(document.querySelectorAll('#foodBrandGrid .option-btn')).find(b=>b.dataset.opt===brand);
-        if(brandBtn){
-          brandBtn.classList.add('active');
-          valEl.value = mainPart;
-        }
+    const groups = mainPart.split('、').filter(Boolean);
+    groups.forEach(group=>{
+      const sepIdx = group.indexOf('：');
+      const type = sepIdx>=0 ? group.slice(0,sepIdx) : group;
+      const brandsStr = sepIdx>=0 ? group.slice(sepIdx+1) : '';
+      const typeBtn = document.querySelector(`.food-type-btn[data-type="${CSS.escape(type)}"]`);
+      if(typeBtn && !typeBtn.classList.contains('active')){
+        typeBtn.click(); // triggers the normal toggle handler, which renders the brand section too
       }
-      const detailEl = document.getElementById('fDetail');
-      if(detailEl) detailEl.value = detailPart || '';
-    } else {
-      const detailEl = document.getElementById('fDetail');
-      if(detailEl) detailEl.value = raw;
-    }
+      if(brandsStr){
+        brandsStr.split('+').filter(Boolean).forEach(brandName=>{
+          setTimeout(()=>{
+            const brandBtn = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-btn[data-brand="${CSS.escape(brandName)}"]`);
+            if(brandBtn && !brandBtn.classList.contains('active')) brandBtn.click();
+          }, 0);
+        });
+      }
+    });
+    const detailEl = document.getElementById('fDetail');
+    if(detailEl) detailEl.value = detailPart || '';
   } else {
   const optsForCat = getOptionsForCat(cat);
   if(optsForCat){
@@ -1869,35 +1862,6 @@ function wireMedTagButtons(){
       document.getElementById('fVal').value = btn.dataset.opt;
     });
   });
-}
-function renderFoodBrandButtons(type){
-  const brands = FOOD_OPTIONS[type] || [];
-  return brands.map(b=>`<button type="button" class="option-btn" data-opt="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('');
-}
-function wireFoodBrandButtons(){
-  document.querySelectorAll('#foodBrandGrid .option-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      document.querySelectorAll('#foodBrandGrid .option-btn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      const type = document.querySelector('#foodTypeGrid .option-btn.active').dataset.type;
-      document.getElementById('fVal').value = `${type}：${btn.dataset.opt}`;
-    });
-  });
-}
-function selectFoodType(type, autoSelectBrand){
-  document.querySelectorAll('#foodTypeGrid .option-btn').forEach(b=>{
-    b.classList.toggle('active', b.dataset.type===type);
-  });
-  document.getElementById('foodBrandGrid').innerHTML = renderFoodBrandButtons(type);
-  wireFoodBrandButtons();
-  const brands = FOOD_OPTIONS[type] || [];
-  if(autoSelectBrand && brands.length===1){
-    const onlyBtn = document.querySelector('#foodBrandGrid .option-btn');
-    if(onlyBtn){
-      onlyBtn.classList.add('active');
-      document.getElementById('fVal').value = `${type}：${brands[0]}`;
-    }
-  }
 }
 
 function wireWaterInputs(){
@@ -2116,22 +2080,113 @@ function setCategory(cat){
       input.value = '';
     });
   } else if(cat==='food'){
-    const foodTypes = Object.keys(FOOD_OPTIONS);
+    const foodTypes = loadFoodTypes();
     dynamicFields.innerHTML = `
-      <label>類型</label>
+      <label>類型（可多選，例如乾糧+罐頭混餵）</label>
       <div class="option-grid" id="foodTypeGrid">
-        ${foodTypes.map(t=>`<button type="button" class="option-btn" data-type="${t}">${t}</button>`).join('')}
+        ${foodTypes.map(t=>`<button type="button" class="option-btn food-type-btn" data-type="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')}
       </div>
-      <label>品項</label>
-      <div class="option-grid" id="foodBrandGrid"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input type="text" id="newFoodTypeInput" placeholder="新增類型…" style="flex:1;">
+        <button type="button" id="addFoodTypeBtn" class="tag-add-btn">新增</button>
+      </div>
+      <div id="foodBrandSections"></div>
       <input type="hidden" id="fVal">
       <label>份量 / 備註（可選）</label>
       <textarea id="fDetail" placeholder="例如 30g、吃一半…" style="height:44px;"></textarea>
     `;
-    document.querySelectorAll('#foodTypeGrid .option-btn').forEach(btn=>{
-      btn.addEventListener('click', ()=> selectFoodType(btn.dataset.type, true));
+    const selectedBrands = {}; // type -> Set of selected brand names
+    function composeFoodValue(){
+      const parts = [];
+      document.querySelectorAll('.food-type-btn.active').forEach(btn=>{
+        const type = btn.dataset.type;
+        const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
+        parts.push(brands.length ? `${type}：${brands.join('+')}` : type);
+      });
+      document.getElementById('fVal').value = parts.join('、');
+    }
+    function renderBrandSection(type){
+      const brands = loadFoodBrands(type);
+      const section = document.createElement('div');
+      section.className = 'food-brand-section';
+      section.dataset.type = type;
+      section.innerHTML = `
+        <label style="margin-top:14px;">${escapeHtml(type)} 的品項（可多選）</label>
+        <div class="option-grid food-brand-grid">
+          ${brands.map(b=>`<button type="button" class="option-btn food-brand-btn" data-brand="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <input type="text" class="new-food-brand-input" placeholder="新增${escapeHtml(type)}品項…" style="flex:1;">
+          <button type="button" class="tag-add-btn add-food-brand-btn">新增</button>
+        </div>
+      `;
+      document.getElementById('foodBrandSections').appendChild(section);
+      section.querySelectorAll('.food-brand-btn').forEach(bbtn=>{
+        bbtn.addEventListener('click', ()=>{
+          bbtn.classList.toggle('active');
+          if(!selectedBrands[type]) selectedBrands[type] = new Set();
+          if(bbtn.classList.contains('active')) selectedBrands[type].add(bbtn.dataset.brand);
+          else selectedBrands[type].delete(bbtn.dataset.brand);
+          composeFoodValue();
+        });
+      });
+      section.querySelector('.add-food-brand-btn').addEventListener('click', ()=>{
+        const input = section.querySelector('.new-food-brand-input');
+        const name = input.value.trim();
+        if(!name) return;
+        const current = loadFoodBrands(type);
+        if(!current.includes(name)){ current.push(name); saveFoodBrands(type, current); }
+        input.value = '';
+        section.querySelector('.food-brand-grid').insertAdjacentHTML('beforeend', `<button type="button" class="option-btn food-brand-btn active" data-brand="${escapeHtml(name)}">${escapeHtml(name)}</button>`);
+        const newBtn = section.querySelector(`.food-brand-btn[data-brand="${CSS.escape(name)}"]`);
+        newBtn.addEventListener('click', ()=>{
+          newBtn.classList.toggle('active');
+          if(!selectedBrands[type]) selectedBrands[type] = new Set();
+          if(newBtn.classList.contains('active')) selectedBrands[type].add(name);
+          else selectedBrands[type].delete(name);
+          composeFoodValue();
+        });
+        if(!selectedBrands[type]) selectedBrands[type] = new Set();
+        selectedBrands[type].add(name);
+        composeFoodValue();
+      });
+    }
+    document.querySelectorAll('.food-type-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const type = btn.dataset.type;
+        btn.classList.toggle('active');
+        if(btn.classList.contains('active')){
+          renderBrandSection(type);
+        } else {
+          delete selectedBrands[type];
+          const section = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"]`);
+          if(section) section.remove();
+        }
+        composeFoodValue();
+      });
     });
-    selectFoodType(foodTypes[0], true);
+    document.getElementById('addFoodTypeBtn').addEventListener('click', ()=>{
+      const input = document.getElementById('newFoodTypeInput');
+      const name = input.value.trim();
+      if(!name) return;
+      const current = loadFoodTypes();
+      if(!current.includes(name)){ current.push(name); saveFoodTypes(current); }
+      input.value = '';
+      document.getElementById('foodTypeGrid').insertAdjacentHTML('beforeend', `<button type="button" class="option-btn food-type-btn active" data-type="${escapeHtml(name)}">${escapeHtml(name)}</button>`);
+      const newBtn = document.querySelector(`.food-type-btn[data-type="${CSS.escape(name)}"]:last-child`);
+      newBtn.addEventListener('click', ()=>{
+        newBtn.classList.toggle('active');
+        if(newBtn.classList.contains('active')) renderBrandSection(name);
+        else {
+          delete selectedBrands[name];
+          const section = document.querySelector(`.food-brand-section[data-type="${CSS.escape(name)}"]`);
+          if(section) section.remove();
+        }
+        composeFoodValue();
+      });
+      renderBrandSection(name);
+      composeFoodValue();
+    });
   } else if(cat==='noteEntries'){
     dynamicFields.innerHTML = `<label>備註內容</label><textarea id="fVal" placeholder="自由記錄今天的觀察…"></textarea>`;
   } else if(FIXED_OPTIONS[cat]){
@@ -3775,7 +3830,7 @@ async function restoreFromZipFile(file){
       });
     });
 
-    saveSnapshot();
+    saveLocalHistorySnapshot('匯入前的備份');
     const {addedDays, addedEntries} = mergeImportedData(incoming);
     await migrateEmbeddedPhotos();
     if(save()){
@@ -3798,7 +3853,7 @@ restoreZipInput.addEventListener('change', ()=>{
 // ---- Direct JSON file import (avoids copy/paste corruption) ----
 const importJsonFileInput = document.getElementById('importJsonFileInput');
 async function applyImportedJson(parsed, sourceLabel){
-  saveSnapshot();
+  saveLocalHistorySnapshot('匯入前的備份');
   const {addedDays, addedEntries} = mergeImportedData(parsed);
   await migrateEmbeddedPhotos();
   if(save()){
@@ -4051,7 +4106,7 @@ function showLocalHistoryModal(){
   const box = document.createElement('div');
   box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:80vh;overflow-y:auto;';
   const listHtml = history.length===0
-    ? `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有本機備份紀錄（會在每次雲端資料要蓋掉本機之前自動存一份，之後遇到就會累積起來）。</p>`
+    ? `<p style="font-size:12.5px;color:var(--ink-soft);">目前還沒有備份紀錄（會在每次匯入資料、或雲端資料要蓋掉本機之前自動存一份，之後遇到就會累積起來）。</p>`
     : history.slice().reverse().map((h,revIdx)=>{
         const realIdx = history.length-1-revIdx;
         const t = new Date(h.savedAt).toLocaleString('zh-TW');
@@ -4063,8 +4118,8 @@ function showLocalHistoryModal(){
         </div>`;
       }).join('');
   box.innerHTML = `
-    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">本機備份歷史</h3>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">每次雲端資料要整份蓋掉本機之前，系統會先自動存一份「蓋掉前」的快照，最多留最近 ${LOCAL_HISTORY_MAX} 份。就算同步出狀況，本機資料也不會真的消失，隨時可以挑一份還原回來。</p>
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">還原</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">在匯入資料、或雲端資料要蓋掉本機之前，系統都會先自動存一份「動作前」的快照，最多留最近 ${LOCAL_HISTORY_MAX} 份。不管遇到哪一種狀況，本機資料都不會真的消失，隨時可以挑一份還原回來。</p>
     ${listHtml}
     <button type="button" class="modal-close-btn">關閉</button>
   `;
@@ -4090,27 +4145,7 @@ function showLocalHistoryModal(){
   });
 }
 
-const SNAPSHOT_KEY = 'kleo-pre-import-snapshot';
-function saveSnapshot(){
-  try{
-    const snapshot = {
-      savedAt: new Date().toLocaleString('zh-TW'),
-      data: JSON.parse(JSON.stringify(data))
-    };
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
-  }catch(e){ console.error('snapshot save failed', e); }
-}
-function restoreSnapshot(){
-  const raw = localStorage.getItem(SNAPSHOT_KEY);
-  if(!raw){ alert('目前沒有可還原的匯入前快照。'); return; }
-  const snapshot = JSON.parse(raw);
-  if(!confirm(`確定要復原到匯入前的狀態嗎？（快照時間：${snapshot.savedAt}）\n目前的資料會被這個快照取代。`)) return;
-  data = snapshot.data;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  localStorage.setItem('kleo-last-modified', String(Date.now()));
-  render();
-  alert('已復原到匯入前的狀態。');
-}
+
 
 // ---- Standalone system tool modals (independent of the import sheet) ----
 function showSaveLogModal(){
@@ -4164,45 +4199,6 @@ function showSaveLogModal(){
       }).catch(()=>{ alert('複製失敗，請手動選取文字複製。'); });
     });
   }
-}
-
-function showBackupModal(){
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:360px;width:100%;';
-  const lastBackup = localStorage.getItem(LAST_AUTO_BACKUP_KEY);
-  const statusText = gAccessToken
-    ? (lastBackup ? `上次自動備份日期：${lastBackup}` : '尚未備份過（下次連上Google時會自動備份）')
-    : '尚未登入Google，無法備份。';
-  box.innerHTML = `
-    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">每日自動備份（Google Drive）</h3>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">只要登入Google，每天打開App會自動存一份帶日期的獨立備份，保留最近30天，太舊的自動清掉。</p>
-    <p id="modalBackupStatus" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;">${statusText}</p>
-    <button type="button" id="modalBackupNowBtn" class="save-btn" style="background:none;border:1px solid var(--ink);color:var(--ink);width:100%;">立即備份一份</button>
-    <button type="button" class="modal-close-btn">關閉</button>
-  `;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const close = ()=> overlay.remove();
-  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
-  box.querySelector('.modal-close-btn').addEventListener('click', close);
-  document.getElementById('modalBackupNowBtn').addEventListener('click', async ()=>{
-    if(!gAccessToken){ alert('請先登入Google才能備份。'); return; }
-    const btn = document.getElementById('modalBackupNowBtn');
-    btn.textContent = '備份中…';
-    btn.disabled = true;
-    try{
-      localStorage.removeItem(LAST_AUTO_BACKUP_KEY);
-      await performDailyBackupIfNeeded();
-      document.getElementById('modalBackupStatus').textContent = `上次自動備份日期：${todayStr()}`;
-      alert('已備份一份到 Google Drive。');
-    }catch(e){
-      alert('備份失敗：' + e.message);
-    }
-    btn.textContent = '立即備份一份';
-    btn.disabled = false;
-  });
 }
 
 function showStorageModal(){
@@ -4309,8 +4305,6 @@ function showClearPhotosModal(){
 
 document.getElementById('viewLogMenuItem').addEventListener('click', showSaveLogModal);
 document.getElementById('checkStorageMenuItem').addEventListener('click', showStorageModal);
-document.getElementById('backupNowMenuItem').addEventListener('click', showBackupModal);
-document.getElementById('restoreMenuItem').addEventListener('click', restoreSnapshot);
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
@@ -4330,11 +4324,11 @@ const statusSub = document.getElementById('statusSub');
 
 function updateAuthUI(signedIn, extra){
   if(signedIn){
-    googleAuthBtn.textContent = '已連接 Google ✓';
-    statusSub.textContent = '糖尿病照護日誌 · 已同步到 Google Drive' + (extra ? (' · ' + extra) : '');
+    googleAuthBtn.textContent = '重新同步';
+    statusSub.textContent = '糖尿病照護日誌 · 手動同步' + (extra ? (' · ' + extra) : '');
   } else {
-    googleAuthBtn.textContent = '登入';
-    statusSub.textContent = '糖尿病照護日誌 · 本機儲存';
+    googleAuthBtn.textContent = '同步';
+    statusSub.textContent = '糖尿病照護日誌 · 本機儲存（尚未同步）';
   }
 }
 
@@ -4371,11 +4365,8 @@ function initGoogleAuth(){
     scope: DRIVE_SCOPE,
     callback: async (resp)=>{
       if(resp.error){
-        if(isManualAuthAttempt){
-          alert('Google 登入失敗：' + resp.error);
-        } else {
-          console.warn('Silent Google re-auth failed, user will need to click login manually:', resp.error);
-        }
+        alert('Google 登入失敗：' + resp.error);
+        updateAuthUI(false);
         return;
       }
       gAccessToken = resp.access_token;
@@ -4385,27 +4376,27 @@ function initGoogleAuth(){
       await syncFromDriveOnLogin();
     }
   });
-  if(localStorage.getItem('kleo-google-authorized') === '1'){
-    // Reuse a still-valid cached token within this browser tab/session instead
-    // of asking Google for a fresh one on every single reload — this cuts down
-    // how often Google's own sign-in activity monitoring sees "new" access,
-    // which is what was triggering frequent security notification emails.
-    const cached = getCachedToken();
-    if(cached){
-      gAccessToken = cached;
-      updateAuthUI(true, '同步中…');
-      syncFromDriveOnLogin();
-    } else {
-      isManualAuthAttempt = false;
-      gTokenClient.requestAccessToken({ prompt: '' });
-    }
-  }
+  // No automatic sign-in or sync on page load anymore — syncing to Google
+  // Drive only ever happens when the person explicitly presses the sync
+  // button below, to avoid background sync races that previously caused
+  // data loss, and so opening the app never requires being logged in.
 }
 
+document.getElementById('localSaveBtn').addEventListener('click', ()=>{
+  if(save()){
+    render();
+  }
+});
 googleAuthBtn.addEventListener('click', ()=>{
   if(!gTokenClient){ alert('Google 登入元件尚未載入完成，請稍後再試。'); return; }
-  isManualAuthAttempt = true;
-  gTokenClient.requestAccessToken({ prompt: gAccessToken ? '' : 'consent' });
+  const cached = getCachedToken();
+  if(cached){
+    gAccessToken = cached;
+    updateAuthUI(true, '同步中…');
+    syncFromDriveOnLogin();
+  } else {
+    gTokenClient.requestAccessToken({ prompt: gAccessToken ? '' : 'consent' });
+  }
 });
 
 async function driveApiFetch(url, options={}){
@@ -4463,60 +4454,6 @@ async function findOrCreateDriveFile(){
   return true; // brand new file created just now
 }
 
-const AUTO_BACKUP_RETENTION_DAYS = 30;
-const LAST_AUTO_BACKUP_KEY = 'kleo-last-auto-backup-date';
-async function performDailyBackupIfNeeded(){
-  if(!gAccessToken) return;
-  const today = todayStr();
-  if(localStorage.getItem(LAST_AUTO_BACKUP_KEY) === today) return;
-  try{
-    const backupName = `kleo-auto-backup-${today}.json`;
-    // Intentionally use the lightweight in-memory `data` (photo fields are just
-    // small IndexedDB reference ids here, not hydrated base64) so 30 days of
-    // dated snapshots stay tiny. Photos themselves are already protected by the
-    // regular continuous sync file, which does carry full photo data.
-    const envelope = { _meta: { backupDate: today, createdAt: Date.now() }, diary: data };
-    const metadata = { name: backupName, parents: ['appDataFolder'] };
-    const boundary = 'kleobackupboundary';
-    const body =
-      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(envelope)}\r\n--${boundary}--`;
-    const res = await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-      method: 'POST',
-      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-      body
-    });
-    if(!res.ok){
-      console.error('daily auto backup rejected by server:', res.status);
-      return; // don't mark today as backed-up if it wasn't
-    }
-    localStorage.setItem(LAST_AUTO_BACKUP_KEY, today);
-    cleanupOldAutoBackups();
-  }catch(e){
-    console.error('daily auto backup failed', e);
-  }
-}
-async function cleanupOldAutoBackups(){
-  try{
-    const searchUrl = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
-      encodeURIComponent(`name contains 'kleo-auto-backup-'`) + '&fields=files(id,name)';
-    const res = await driveApiFetch(searchUrl);
-    const json = await res.json();
-    if(!json.files) return;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - AUTO_BACKUP_RETENTION_DAYS);
-    for(const f of json.files){
-      const m = f.name.match(/kleo-auto-backup-(\d{4}-\d{2}-\d{2})\.json/);
-      if(!m) continue;
-      const fileDate = new Date(m[1]+'T00:00:00');
-      if(fileDate < cutoff){
-        try{ await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method:'DELETE' }); }
-        catch(delErr){ console.warn('failed to delete old backup', f.name, delErr); }
-      }
-    }
-  }catch(e){ console.error('cleanup old auto-backups failed', e); }
-}
-
 const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
 function showConflictMergeNotice(){
   const overlay = document.createElement('div');
@@ -4539,21 +4476,39 @@ const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med
 function mergeDiaryData(localD, remoteD){
   const merged = {};
   const allDates = new Set([...Object.keys(localD||{}), ...Object.keys(remoteD||{})]);
+  function entryIdentityKey(e){
+    // Photos are represented differently locally (short IndexedDB ref ids)
+    // vs on the cloud copy (hydrated base64 strings) for the exact same
+    // photo, so comparing the raw object (including photos) makes identical
+    // entries look "different" and creates duplicates. Compare everything
+    // except photos to determine if two entries are really the same record.
+    const clone = Object.assign({}, e);
+    delete clone.photos;
+    return JSON.stringify(clone);
+  }
   allDates.forEach(dateStr=>{
     const l = (localD && localD[dateStr]) || null;
     const r = (remoteD && remoteD[dateStr]) || null;
     if(l && !r){ merged[dateStr] = l; return; }
     if(r && !l){ merged[dateStr] = r; return; }
-    // both sides have this date: union each category's entries, de-duping exact matches
+    // both sides have this date: union each category's entries, de-duping by identity (ignoring photos)
     const day = {};
     ALL_DIARY_CATS.forEach(cat=>{
-      const la = (l[cat]||[]).map(e=>JSON.stringify(e));
-      const ra = (r[cat]||[]).map(e=>JSON.stringify(e));
-      const seen = new Set();
-      const combined = [];
-      [...la, ...ra].forEach(s=>{
-        if(!seen.has(s)){ seen.add(s); combined.push(JSON.parse(s)); }
+      const byKey = new Map(); // identityKey -> entry (photos merged in from any duplicate found)
+      [...(l[cat]||[]), ...(r[cat]||[])].forEach(e=>{
+        const key = entryIdentityKey(e);
+        if(!byKey.has(key)){
+          byKey.set(key, Object.assign({}, e));
+        } else {
+          // same underlying entry found on both sides: merge their photo lists instead of duplicating the row
+          const existing = byKey.get(key);
+          const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
+          const newPhotos = Array.isArray(e.photos) ? e.photos : [];
+          const combinedPhotos = [...existingPhotos, ...newPhotos.filter(p=>!existingPhotos.includes(p))];
+          if(combinedPhotos.length>0) existing.photos = combinedPhotos;
+        }
       });
+      const combined = Array.from(byKey.values());
       combined.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       day[cat] = combined;
     });
@@ -4606,7 +4561,6 @@ async function syncFromDriveOnLogin(){
         pushToDrive(true);
         updateAuthUI(true, '偵測到多裝置同時異動，已自動合併');
         showConflictMergeNotice();
-        performDailyBackupIfNeeded();
         return;
       } else if(remoteLastModified > localLastModified){
         // Cloud version is newer than this device's copy: replace local with cloud version.
@@ -4625,14 +4579,12 @@ async function syncFromDriveOnLogin(){
         }
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
-        performDailyBackupIfNeeded();
       } else {
         // This device's copy is newer or equal: push it up so the cloud catches up
         localStorage.setItem(LAST_SYNCED_KEY, String(localLastModified));
         updateAuthUI(true, '本機已是最新');
         isSyncing = false;
         pushToDrive(true);
-        performDailyBackupIfNeeded();
         return;
       }
     } else if(justCreated){
@@ -4642,7 +4594,6 @@ async function syncFromDriveOnLogin(){
       updateAuthUI(true, '已連接');
       isSyncing = false;
       pushToDrive(true);
-      performDailyBackupIfNeeded();
       return;
     } else {
       // An existing cloud file was found, but we couldn't fetch/parse it just now.
