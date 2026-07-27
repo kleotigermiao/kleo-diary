@@ -201,7 +201,7 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .section{padding:4px 16px 12px;}
 .row{
   display:flex; gap:10px; padding:6px 0; font-size:13px; line-height:1.5;
-  border-bottom:1px solid #00000008; align-items:center;
+  border-bottom:1px solid #00000008; align-items:center; flex-wrap:wrap;
 }
 .row:last-child{border-bottom:none;}
 .row .icon{width:18px;text-align:center;flex-shrink:0;opacity:0.85;}
@@ -209,7 +209,7 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft);
   flex-shrink:0; width:42px;
 }
-.row .val{flex:1; word-break:break-word;}
+.row .val{flex:1 1 140px; min-width:140px; word-break:break-word;}
 .row .val .tag{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12.5px;}
 .row .val .tag.high{color:var(--high);}
 .row .val .tag.low{color:var(--low);}
@@ -4500,11 +4500,19 @@ function mergeDiaryData(localD, remoteD){
         if(!byKey.has(key)){
           byKey.set(key, Object.assign({}, e));
         } else {
-          // same underlying entry found on both sides: merge their photo lists instead of duplicating the row
+          // same underlying entry found on both sides: merge their photo lists instead of duplicating the row.
+          // A photo can appear as a short IndexedDB ref-id locally but as raw
+          // base64 when it comes from the cloud copy — resolve refs before
+          // comparing, or the same photo gets counted as "different" and duplicated.
           const existing = byKey.get(key);
           const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
           const newPhotos = Array.isArray(e.photos) ? e.photos : [];
-          const combinedPhotos = [...existingPhotos, ...newPhotos.filter(p=>!existingPhotos.includes(p))];
+          const resolvedExisting = existingPhotos.map(p => isPhotoRef(p) ? (photoCache.get(p) || p) : p);
+          const trulyNewPhotos = newPhotos.filter(p=>{
+            const resolvedP = isPhotoRef(p) ? (photoCache.get(p) || p) : p;
+            return !resolvedExisting.includes(resolvedP);
+          });
+          const combinedPhotos = [...existingPhotos, ...trulyNewPhotos];
           if(combinedPhotos.length>0) existing.photos = combinedPhotos;
         }
       });
