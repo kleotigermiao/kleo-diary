@@ -1397,25 +1397,25 @@ function buildMissingTodayLines(){
 function buildRemindersBanner(){
   const todayStrVal = todayStr();
   const allDates = Object.keys(calEvents).sort();
-  const todayEvents = calEvents[todayStrVal] || [];
+  const todayEvents = (calEvents[todayStrVal] || []).filter(ev=>!ev.done);
   const upcoming = []; // within next 7 days, excluding today
   const overdue = []; // past dates (within last 14 days) that still have events left
   allDates.forEach(dateStr=>{
     if(dateStr===todayStrVal) return;
     const diffDays = Math.round((new Date(dateStr+'T00:00:00') - new Date(todayStrVal+'T00:00:00')) / 86400000);
     if(diffDays>0 && diffDays<=7){
-      calEvents[dateStr].forEach(ev=> upcoming.push({dateStr, ev, diffDays}));
+      calEvents[dateStr].filter(ev=>!ev.done).forEach(ev=> upcoming.push({dateStr, ev, diffDays}));
     } else if(diffDays<0 && diffDays>=-14){
-      calEvents[dateStr].forEach(ev=> overdue.push({dateStr, ev, diffDays}));
+      calEvents[dateStr].filter(ev=>!ev.done).forEach(ev=> overdue.push({dateStr, ev, diffDays}));
     }
   });
   const missingTodayLines = buildMissingTodayLines();
   if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0) return '';
   const lines = [];
   missingTodayLines.forEach(l=> lines.push(l));
-  todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev)}</div>`));
-  overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
-  upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev)}</div>`));
+  todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
+  overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev.text)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
+  upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev.text)}</div>`));
   return `<div class="reminders-banner">${lines.join('')}</div>`;
 }
 function render(){
@@ -3518,14 +3518,27 @@ document.getElementById('backFromSupplies').addEventListener('click', ()=>{
 
 // ---- Calendar ----
 const CAL_EVENTS_KEY = 'kleo-calendar-events-v1';
+function normalizeCalEvent(ev){
+  if(typeof ev === 'string') return {text: ev, done: false};
+  return {text: ev.text||'', done: !!ev.done};
+}
 function loadCalEvents(){
   try{
     const raw = localStorage.getItem(CAL_EVENTS_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const parsed = raw ? JSON.parse(raw) : {};
+    const normalized = {};
+    Object.keys(parsed).forEach(d=>{
+      normalized[d] = (parsed[d]||[]).map(normalizeCalEvent);
+    });
+    return normalized;
   }catch(e){ return {}; }
 }
 function saveCalEvents(){
-  try{ localStorage.setItem(CAL_EVENTS_KEY, JSON.stringify(calEvents)); }catch(e){}
+  try{
+    localStorage.setItem(CAL_EVENTS_KEY, JSON.stringify(calEvents));
+    localStorage.setItem('kleo-last-modified', String(Date.now()));
+  }catch(e){}
+  if(typeof pushToDrive === 'function') pushToDrive();
 }
 let calEvents = loadCalEvents();
 let calViewYear, calViewMonth; // calViewMonth is 0-indexed
@@ -3568,7 +3581,7 @@ function renderCalendar(){
   for(let d=1; d<=daysInMonth; d++){
     const dateStr = `${calViewYear}-${String(calViewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const day = data[dateStr];
-    const hasEvents = calEvents[dateStr] && calEvents[dateStr].length>0;
+    const hasEvents = calEvents[dateStr] && calEvents[dateStr].some(ev=>!ev.done);
     let bg = '';
     if(day){
       const score = computeCatScore(dateStr, day, allDatesSorted, allDatesSorted.indexOf(dateStr));
@@ -3608,7 +3621,8 @@ function openCalDayMenu(dateStr){
   box.style.cssText = 'background:var(--paper);border-radius:14px;max-width:480px;width:100%;margin:20px auto;position:relative;padding-bottom:16px;';
   const eventsHtml = existing.map((ev,i)=>`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-      <span style="flex:1;font-size:13.5px;">📌 ${escapeHtml(ev)}</span>
+      <input type="checkbox" class="cal-event-check" data-i="${i}" ${ev.done?'checked':''} style="width:auto;flex:0 0 auto;margin:0;">
+      <span style="flex:1;font-size:13.5px;${ev.done?'text-decoration:line-through;color:var(--ink-soft);':''}">📌 ${escapeHtml(ev.text)}</span>
       <button type="button" class="cal-event-del" data-i="${i}" style="background:none;border:none;color:var(--ink-soft);cursor:pointer;font-size:14px;">✕</button>
     </div>`).join('');
   const stripsRate = estimateDailyUsage('glucose');
@@ -3665,10 +3679,19 @@ function openCalDayMenu(dateStr){
     const text = input.value.trim();
     if(!text) return;
     if(!calEvents[dateStr]) calEvents[dateStr] = [];
-    calEvents[dateStr].push(text);
+    calEvents[dateStr].push({text, done:false});
     saveCalEvents();
     overlay.remove();
     openCalDayMenu(dateStr);
+  });
+  box.querySelectorAll('.cal-event-check').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const i = parseInt(cb.dataset.i);
+      calEvents[dateStr][i].done = cb.checked;
+      saveCalEvents();
+      overlay.remove();
+      openCalDayMenu(dateStr);
+    });
   });
   box.querySelectorAll('.cal-event-del').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -4672,6 +4695,32 @@ async function syncFromDriveOnLogin(){
           supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
           saveSupplies();
         }
+        if(remoteEnvelope.calEvents){
+          const remoteNormalized = {};
+          Object.keys(remoteEnvelope.calEvents).forEach(d=>{
+            remoteNormalized[d] = (remoteEnvelope.calEvents[d]||[]).map(normalizeCalEvent);
+          });
+          const mergedEvents = {};
+          const allEventDates = new Set([...Object.keys(calEvents||{}), ...Object.keys(remoteNormalized)]);
+          allEventDates.forEach(d=>{
+            const localList = (calEvents && calEvents[d]) || [];
+            const remoteList = remoteNormalized[d] || [];
+            const byText = new Map();
+            localList.forEach(ev=> byText.set(ev.text, {text: ev.text, done: ev.done}));
+            remoteList.forEach(ev=>{
+              if(byText.has(ev.text)){
+                const existing = byText.get(ev.text);
+                existing.done = existing.done || ev.done; // if either side completed it, keep it completed
+              } else {
+                byText.set(ev.text, {text: ev.text, done: ev.done});
+              }
+            });
+            const combined = Array.from(byText.values());
+            if(combined.length>0) mergedEvents[d] = combined;
+          });
+          calEvents = mergedEvents;
+          saveCalEvents();
+        }
         render();
         isSyncing = false;
         pushToDrive(true);
@@ -4692,6 +4741,14 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.supplies){
           supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
           saveSupplies();
+        }
+        if(remoteEnvelope.calEvents){
+          const normalized = {};
+          Object.keys(remoteEnvelope.calEvents).forEach(d=>{
+            normalized[d] = (remoteEnvelope.calEvents[d]||[]).map(normalizeCalEvent);
+          });
+          calEvents = normalized;
+          saveCalEvents();
         }
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
@@ -4743,7 +4800,7 @@ function pushToDrive(immediate){
           });
         });
       });
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies };
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents };
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
