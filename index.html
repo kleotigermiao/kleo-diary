@@ -93,6 +93,14 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 .empty .glyph{font-size:34px;margin-bottom:10px;opacity:0.5;}
 .empty p{font-size:14px;line-height:1.6;max-width:280px;margin:6px auto 0;}
 
+.reminders-banner{
+  background:#FFF6DE;border:1px solid #F0DFA8;border-radius:10px;
+  padding:10px 14px;margin-bottom:14px;
+}
+.reminder-line{font-size:12.5px;color:var(--ink);padding:3px 0;cursor:pointer;}
+.reminder-line.overdue{color:#C0392B;}
+.reminder-hint{font-size:11px;color:var(--ink-soft);}
+
 .day-card{
   background:var(--paper-raised);
   border:1px solid var(--line);
@@ -171,6 +179,10 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   display:flex;gap:10px;margin:10px 16px 4px;align-items:stretch;flex-wrap:wrap;
 }
 .second-row-wrap .cat-score-widget{flex:1 1 240px;margin:0;}
+.food-stats-widget{
+  margin:10px 16px 0;padding:9px 12px;border-radius:8px;
+  background:#00000005;font-size:12px;color:var(--ink);
+}
 .cat-score-widget{
   padding:12px 14px;border-radius:10px;
   background:linear-gradient(135deg,#00000006,#00000002);border:1px solid var(--line);
@@ -1325,6 +1337,25 @@ function renderRowHtml(dateStr, cat, e, idx){
   </div>`;
 }
 
+function computeFoodStats(day){
+  const stats = {};
+  (day.food || []).forEach(e=>{
+    const raw = e.note || '';
+    const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
+    const mainPart = m ? m[1] : raw;
+    const groups = mainPart.split('、').filter(Boolean);
+    groups.forEach(group=>{
+      const gramsMatch = group.match(/\s+([\d.]+)g$/);
+      if(!gramsMatch) return; // entries without a parseable gram amount aren't counted
+      const grams = parseFloat(gramsMatch[1]);
+      const groupNoGrams = group.slice(0, gramsMatch.index);
+      const sepIdx = groupNoGrams.indexOf('：');
+      const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
+      stats[type] = (stats[type]||0) + grams;
+    });
+  });
+  return stats;
+}
 function renderDayRows(dateStr, day){
   const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
@@ -1343,6 +1374,28 @@ function escapeHtml(s){
   return d.innerHTML;
 }
 
+function buildRemindersBanner(){
+  const todayStrVal = todayStr();
+  const allDates = Object.keys(calEvents).sort();
+  const todayEvents = calEvents[todayStrVal] || [];
+  const upcoming = []; // within next 7 days, excluding today
+  const overdue = []; // past dates (within last 14 days) that still have events left
+  allDates.forEach(dateStr=>{
+    if(dateStr===todayStrVal) return;
+    const diffDays = Math.round((new Date(dateStr+'T00:00:00') - new Date(todayStrVal+'T00:00:00')) / 86400000);
+    if(diffDays>0 && diffDays<=7){
+      calEvents[dateStr].forEach(ev=> upcoming.push({dateStr, ev, diffDays}));
+    } else if(diffDays<0 && diffDays>=-14){
+      calEvents[dateStr].forEach(ev=> overdue.push({dateStr, ev, diffDays}));
+    }
+  });
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0) return '';
+  const lines = [];
+  todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev)}</div>`));
+  overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
+  upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev)}</div>`));
+  return `<div class="reminders-banner">${lines.join('')}</div>`;
+}
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
@@ -1350,12 +1403,17 @@ function render(){
   }
   const dates = Object.keys(data).sort().reverse();
   if(dates.length===0){
-    main.innerHTML = `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
+    main.innerHTML = buildRemindersBanner() + `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
     return;
   }
-  main.innerHTML = dates.map((dateStr, idx)=>{
+  main.innerHTML = buildRemindersBanner() + dates.map((dateStr, idx)=>{
     const day = data[dateStr];
     const rowsHtml = renderDayRows(dateStr, day);
+    const foodStats = computeFoodStats(day);
+    const foodStatsKeys = Object.keys(foodStats);
+    const foodStatsHtml = foodStatsKeys.length>0
+      ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}g`).join('　')}</div>`
+      : '';
     const notesHtml = `<div class="notes-row">
       <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
       <button class="note-edit-btn" data-date="${dateStr}">✎</button>
@@ -1370,10 +1428,14 @@ function render(){
         ${buildCatScoreWidget(dateStr, day, dates, idx)}
         ${buildCustomStatusPanel(dateStr, day)}
       </div>
+      ${foodStatsHtml}
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
   }).join('');
 
+  main.querySelectorAll('.reminder-line').forEach(line=>{
+    line.addEventListener('click', ()=> openCalDayMenu(line.dataset.date));
+  });
   main.querySelectorAll('.del').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const {date, cat, idx} = btn.dataset;
@@ -1696,12 +1758,22 @@ function openSheetForEdit(dateStr, cat, idx){
     const detailPart = m ? m[2] : '';
     const groups = mainPart.split('、').filter(Boolean);
     groups.forEach(group=>{
-      const sepIdx = group.indexOf('：');
-      const type = sepIdx>=0 ? group.slice(0,sepIdx) : group;
-      const brandsStr = sepIdx>=0 ? group.slice(sepIdx+1) : '';
+      // each group looks like "TYPE：BRAND1+BRAND2 12g" or just "TYPE 12g" or "TYPE"
+      const gramsMatch = group.match(/\s+([\d.]+)g$/);
+      const grams = gramsMatch ? gramsMatch[1] : '';
+      const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
+      const sepIdx = groupNoGrams.indexOf('：');
+      const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
+      const brandsStr = sepIdx>=0 ? groupNoGrams.slice(sepIdx+1) : '';
       const typeBtn = document.querySelector(`.food-type-btn[data-type="${CSS.escape(type)}"]`);
       if(typeBtn && !typeBtn.classList.contains('active')){
         typeBtn.click(); // triggers the normal toggle handler, which renders the brand section too
+      }
+      if(grams){
+        setTimeout(()=>{
+          const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
+          if(gramsInput) gramsInput.value = grams;
+        }, 0);
       }
       if(brandsStr){
         brandsStr.split('+').filter(Boolean).forEach(brandName=>{
@@ -2092,8 +2164,8 @@ function setCategory(cat){
       </div>
       <div id="foodBrandSections"></div>
       <input type="hidden" id="fVal">
-      <label>份量 / 備註（可選）</label>
-      <textarea id="fDetail" placeholder="例如 30g、吃一半…" style="height:44px;"></textarea>
+      <label>備註（可選，例如吃一半、換餐具…）</label>
+      <textarea id="fDetail" placeholder="例如吃一半、換餐具…" style="height:44px;"></textarea>
     `;
     const selectedBrands = {}; // type -> Set of selected brand names
     function composeFoodValue(){
@@ -2101,7 +2173,12 @@ function setCategory(cat){
       document.querySelectorAll('.food-type-btn.active').forEach(btn=>{
         const type = btn.dataset.type;
         const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
-        parts.push(brands.length ? `${type}：${brands.join('+')}` : type);
+        const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
+        const grams = gramsInput ? gramsInput.value.trim() : '';
+        const brandStr = brands.length ? brands.join('+') : '';
+        let part = brandStr ? `${type}：${brandStr}` : type;
+        if(grams) part += ` ${grams}g`;
+        parts.push(part);
       });
       document.getElementById('fVal').value = parts.join('、');
     }
@@ -2119,8 +2196,11 @@ function setCategory(cat){
           <input type="text" class="new-food-brand-input" placeholder="新增${escapeHtml(type)}品項…" style="flex:1;">
           <button type="button" class="tag-add-btn add-food-brand-btn">新增</button>
         </div>
+        <label style="margin-top:10px;">${escapeHtml(type)} 份量 (g)</label>
+        <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 5">
       `;
       document.getElementById('foodBrandSections').appendChild(section);
+      section.querySelector('.food-type-grams').addEventListener('input', composeFoodValue);
       section.querySelectorAll('.food-brand-btn').forEach(bbtn=>{
         bbtn.addEventListener('click', ()=>{
           bbtn.classList.toggle('active');
