@@ -99,6 +99,7 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 }
 .reminder-line{font-size:12.5px;color:var(--ink);padding:3px 0;cursor:pointer;}
 .reminder-line.overdue{color:#C0392B;}
+.reminder-line.missing-today{color:#B5457A;}
 .reminder-hint{font-size:11px;color:var(--ink-soft);}
 
 .day-card{
@@ -1374,6 +1375,25 @@ function escapeHtml(s){
   return d.innerHTML;
 }
 
+function buildMissingTodayLines(){
+  const todayStrVal = todayStr();
+  const day = data[todayStrVal];
+  if(!day) return [];
+  const missing = [];
+  if(!latestEntry(day.mood)) missing.push({cat:'mood', label:'精神'});
+  if(!latestEntry(day.appetite)) missing.push({cat:'appetite', label:'食慾'});
+  if(!latestEntry(day.weight)) missing.push({cat:'weight', label:'體重'});
+  const waterEntries = day.water || [];
+  if(Math.max(0, 2 - waterEntries.length) > 0) missing.push({cat:'water', label:'飲水'});
+  const urineEntries = day.urine || [];
+  if(urineEntries.length===0) missing.push({cat:'urine', label:'排尿'});
+  customStatusSlots.forEach(cat=>{
+    if(!cat) return;
+    const {hasData} = renderGenericStatusValue(cat, day);
+    if(!hasData) missing.push({cat, label: CAT_LABELS[cat] || cat});
+  });
+  return missing.map(m=>`<div class="reminder-line missing-today" data-date="${todayStrVal}" data-cat="${m.cat}">📝 今天還沒記錄<b>${escapeHtml(m.label)}</b></div>`);
+}
 function buildRemindersBanner(){
   const todayStrVal = todayStr();
   const allDates = Object.keys(calEvents).sort();
@@ -1389,8 +1409,10 @@ function buildRemindersBanner(){
       calEvents[dateStr].forEach(ev=> overdue.push({dateStr, ev, diffDays}));
     }
   });
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0) return '';
+  const missingTodayLines = buildMissingTodayLines();
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0) return '';
   const lines = [];
+  missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev)}</div>`));
   overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
   upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev)}</div>`));
@@ -1434,7 +1456,13 @@ function render(){
   }).join('');
 
   main.querySelectorAll('.reminder-line').forEach(line=>{
-    line.addEventListener('click', ()=> openCalDayMenu(line.dataset.date));
+    line.addEventListener('click', ()=>{
+      if(line.classList.contains('missing-today')){
+        openQuickAdd(line.dataset.date, line.dataset.cat);
+      } else {
+        openCalDayMenu(line.dataset.date);
+      }
+    });
   });
   main.querySelectorAll('.del').forEach(btn=>{
     btn.addEventListener('click', ()=>{
