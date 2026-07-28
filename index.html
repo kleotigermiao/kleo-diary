@@ -597,6 +597,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="backupBtn">完整備份</button>
           <button type="button" class="more-menu-item" id="importBtn">匯入（從完整備份／從CSV）</button>
           <button type="button" class="more-menu-item" id="localHistoryMenuItem">還原</button>
+          <button type="button" class="more-menu-item" id="dedupeMenuItem">清除重複記錄</button>
           <button type="button" class="more-menu-item" id="clearPhotosMenuItem">清除舊照片</button>
         </div>
       </div>
@@ -4437,6 +4438,7 @@ function showClearPhotosModal(){
 document.getElementById('viewLogMenuItem').addEventListener('click', showSaveLogModal);
 document.getElementById('checkStorageMenuItem').addEventListener('click', showStorageModal);
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
+document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
 
@@ -4604,19 +4606,19 @@ function showConflictMergeNotice(){
   box.querySelector('.modal-close-btn').addEventListener('click', close);
 }
 const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite','noteEntries'];
+function entryIdentityKey(e){
+  // Photos are represented differently locally (short IndexedDB ref ids)
+  // vs on the cloud copy (hydrated base64 strings) for the exact same
+  // photo, so comparing the raw object (including photos) makes identical
+  // entries look "different" and creates duplicates. Compare everything
+  // except photos to determine if two entries are really the same record.
+  const clone = Object.assign({}, e);
+  delete clone.photos;
+  return JSON.stringify(clone);
+}
 function mergeDiaryData(localD, remoteD){
   const merged = {};
   const allDates = new Set([...Object.keys(localD||{}), ...Object.keys(remoteD||{})]);
-  function entryIdentityKey(e){
-    // Photos are represented differently locally (short IndexedDB ref ids)
-    // vs on the cloud copy (hydrated base64 strings) for the exact same
-    // photo, so comparing the raw object (including photos) makes identical
-    // entries look "different" and creates duplicates. Compare everything
-    // except photos to determine if two entries are really the same record.
-    const clone = Object.assign({}, e);
-    delete clone.photos;
-    return JSON.stringify(clone);
-  }
   allDates.forEach(dateStr=>{
     const l = (localD && localD[dateStr]) || null;
     const r = (remoteD && remoteD[dateStr]) || null;
@@ -4660,6 +4662,88 @@ function mergeDiaryData(localD, remoteD){
     merged[dateStr] = day;
   });
   return merged;
+}
+function dedupeAllEntries(){
+  let removedEntries = 0;
+  let removedPhotos = 0;
+  Object.keys(data).forEach(dateStr=>{
+    const day = data[dateStr];
+    ALL_DIARY_CATS.forEach(cat=>{
+      const entries = day[cat]||[];
+      if(entries.length===0) return;
+      const byKey = new Map();
+      entries.forEach(e=>{
+        const key = entryIdentityKey(e);
+        if(!byKey.has(key)){
+          byKey.set(key, Object.assign({}, e));
+        } else {
+          removedEntries++;
+          const existing = byKey.get(key);
+          const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
+          const newPhotos = Array.isArray(e.photos) ? e.photos : [];
+          const resolvedExisting = existingPhotos.map(p => isPhotoRef(p) ? (photoCache.get(p) || p) : p);
+          const trulyNewPhotos = newPhotos.filter(p=>{
+            const resolvedP = isPhotoRef(p) ? (photoCache.get(p) || p) : p;
+            return !resolvedExisting.includes(resolvedP);
+          });
+          if(trulyNewPhotos.length>0) existing.photos = [...existingPhotos, ...trulyNewPhotos];
+        }
+      });
+      // also de-duplicate photos WITHIN a single surviving entry (same bug,
+      // same root cause: a ref-id and its hydrated base64 counterpart look
+      // "different" even though they're the same photo)
+      byKey.forEach(entry=>{
+        if(!Array.isArray(entry.photos) || entry.photos.length<2) return;
+        const seenResolved = [];
+        const deduped = [];
+        entry.photos.forEach(p=>{
+          const resolved = isPhotoRef(p) ? (photoCache.get(p) || p) : p;
+          if(!seenResolved.includes(resolved)){
+            seenResolved.push(resolved);
+            deduped.push(p);
+          } else {
+            removedPhotos++;
+          }
+        });
+        entry.photos = deduped;
+      });
+      const deduped = Array.from(byKey.values());
+      deduped.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
+      day[cat] = deduped;
+    });
+  });
+  return {removedEntries, removedPhotos};
+}
+function showDedupeModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:380px;width:100%;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">清除重複記錄</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">會掃描所有天數，把內容完全相同的重複記錄、以及同一筆記錄裡重複的照片都清掉合併成一份（照片會保留，不會丟失）。清完之後記得按「同步」把清乾淨的版本推回雲端，不然下次同步舊的重複又會跑回來。</p>
+    <button type="button" id="runDedupeBtn" class="save-btn" style="background:none;border:1px solid var(--ink);color:var(--ink);width:100%;">開始掃描並清除</button>
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  document.getElementById('runDedupeBtn').addEventListener('click', ()=>{
+    saveLocalHistorySnapshot('清除重複記錄前的備份');
+    const {removedEntries, removedPhotos} = dedupeAllEntries();
+    if(removedEntries===0 && removedPhotos===0){
+      alert('沒有找到重複的記錄或照片。');
+      close();
+      return;
+    }
+    if(save()){
+      render();
+      alert(`已清除 ${removedEntries} 筆重複記錄、${removedPhotos} 張重複照片。麻煩接著按「同步」把結果推回雲端，避免下次同步又把舊的重複拉回來。`);
+      close();
+    }
+  });
 }
 async function syncFromDriveOnLogin(){
   if(isSyncing) return; // prevent overlapping sync calls from racing each other
