@@ -426,6 +426,7 @@ textarea{resize:vertical; min-height:64px;}
 .supply-title{font-family:'Archivo Narrow',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px;}
 .supply-stock{font-size:14px;color:var(--ink);margin-bottom:4px;}
 .supply-days{font-size:12.5px;color:var(--ink-soft);}
+.supply-days.warn-text{color:#C0392B;}
 .supply-buy{font-size:12.5px;color:var(--ink);margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);}
 .supply-add-input{flex:1;}
 .todo-item{
@@ -772,6 +773,7 @@ textarea{resize:vertical; min-height:64px;}
       <span>📌 有預定事項</span>
       <span>🩸/💉 試紙/針管預估用罄日</span>
       <span>🔴 今天該換採血針</span>
+      <span>📡/⏰ Libre感測器啟用/到期日</span>
     </div>
   </div>
 </div>
@@ -3318,14 +3320,16 @@ const SUPPLIES_DEFAULTS = {
   strips: {stock: 0},
   needles: {stock: 0},
   lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
-  countSkipAsNeedleUse: true
+  countSkipAsNeedleUse: true,
+  sensor: {activatedAt: null, durationDays: 14} // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
 };
 function normalizeSupplies(parsed){
   if(!parsed) return JSON.parse(JSON.stringify(SUPPLIES_DEFAULTS));
   return Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
     strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
-    lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets)
+    lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets),
+    sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor)
   });
 }
 function loadSupplies(){
@@ -3434,7 +3438,33 @@ function renderSupplies(){
   // Lancets aren't consumed per test — they're consumed per "changed" event.
   // Rate of lancet changes per day = (glucose tests per day) / (tests per change).
   const lancetChangeRate = (stripsRate>0 && supplies.lancets.changeThreshold>0) ? (stripsRate/supplies.lancets.changeThreshold) : 0;
+  let sensorStatusHtml;
+  if(supplies.sensor.activatedAt){
+    const activated = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    const expiry = new Date(activated); expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
+    const daysLeft = Math.ceil((expiry - new Date()) / 86400000);
+    const expiryStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+    const expired = daysLeft<0;
+    sensorStatusHtml = `<div class="supply-days${expired?' warn-text':''}">啟用日：${supplies.sensor.activatedAt}　到期日：${expiryStr}<br>${expired ? `⚠️已過期 ${Math.abs(daysLeft)} 天，該換感應器了` : `還剩 <b>${daysLeft}</b> 天`}</div>`;
+  } else {
+    sensorStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄啟用日期</div>`;
+  }
   el.innerHTML = `
+    <div class="supply-card${supplies.sensor.activatedAt && (new Date(supplies.sensor.activatedAt+'T00:00:00').getTime() + supplies.sensor.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
+      <div class="supply-title">📡 Libre 感測器</div>
+      ${sensorStatusHtml}
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button type="button" class="tag-add-btn" id="sensorActivateBtn">✅ 現在啟用新感測器</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">啟用日期：</label>
+        <input type="date" id="sensorActivatedInput" value="${supplies.sensor.activatedAt || ''}">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">使用天數：</label>
+        <input type="text" inputmode="numeric" id="sensorDurationInput" value="${supplies.sensor.durationDays}" style="width:70px;">
+      </div>
+    </div>
     ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft, stripsRate)}
     ${supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate)}
     <div class="supply-card${lancetWarn?' warn':''}">
@@ -3500,6 +3530,22 @@ function renderSupplies(){
   document.getElementById('countSkipToggle').addEventListener('change', (e)=>{
     supplies.countSkipAsNeedleUse = e.target.checked;
     saveSupplies();
+  });
+  document.getElementById('sensorActivateBtn').addEventListener('click', ()=>{
+    supplies.sensor.activatedAt = todayStr();
+    saveSupplies();
+    renderSupplies();
+    renderCalendar();
+  });
+  document.getElementById('sensorActivatedInput').addEventListener('change', (e)=>{
+    supplies.sensor.activatedAt = e.target.value || null;
+    saveSupplies();
+    renderSupplies();
+    renderCalendar();
+  });
+  document.getElementById('sensorDurationInput').addEventListener('change', (e)=>{
+    const n = parseInt(e.target.value);
+    if(n && n>0){ supplies.sensor.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
   });
 }
 document.getElementById('suppliesBtn').addEventListener('click', ()=>{
@@ -3574,6 +3620,13 @@ function renderCalendar(){
   const stripsRunOut = runOutDateStr('strips', 'glucose');
   const needlesRunOut = runOutDateStr('needles', 'insulin');
   const lancetDueNow = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
+  let sensorActivatedDateStr = null, sensorExpiryDateStr = null;
+  if(supplies.sensor && supplies.sensor.activatedAt){
+    sensorActivatedDateStr = supplies.sensor.activatedAt;
+    const expiry = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
+    sensorExpiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+  }
 
   let html = '';
   for(let i=0;i<startWeekday;i++){
@@ -3601,6 +3654,8 @@ function renderCalendar(){
     if(stripsRunOut===dateStr) supplyMarkers.push('🩸');
     if(needlesRunOut===dateStr) supplyMarkers.push('💉');
     if(isToday && lancetDueNow) supplyMarkers.push('🔴');
+    if(sensorActivatedDateStr===dateStr) supplyMarkers.push('📡');
+    if(sensorExpiryDateStr===dateStr) supplyMarkers.push('⏰');
     html += `<div class="cal-day${isToday?' today':''}" style="${bg}" data-date="${dateStr}">
       <span class="cal-daynum">${d}</span>
       ${hasEvents ? `<span class="cal-event-dot">📌</span>` : ''}
@@ -3641,6 +3696,13 @@ function openCalDayMenu(dateStr){
   }
   if(dateStr===todayStr() && supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold){
     supplyNotes.push('🔴 今天該換採血針了');
+  }
+  if(supplies.sensor && supplies.sensor.activatedAt){
+    if(supplies.sensor.activatedAt===dateStr) supplyNotes.push('📡 Libre 感測器這天啟用');
+    const expiry = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
+    const expiryStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+    if(expiryStr===dateStr) supplyNotes.push('⏰ Libre 感測器這天到期');
   }
   const supplyNoticeHtml = supplyNotes.length
     ? `<div style="background:#FCE4EC;border-radius:8px;padding:8px 10px;margin:0 16px 12px;font-size:12.5px;color:#C0392B;">${supplyNotes.join('<br>')}</div>`
@@ -4588,23 +4650,7 @@ async function findOrCreateDriveFile(){
 }
 
 const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
-function showConflictMergeNotice(){
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:220;display:flex;align-items:center;justify-content:center;padding:20px;';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:380px;width:100%;';
-  box.innerHTML = `
-    <h3 style="margin:0 0 8px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">⚠️ 偵測到多裝置同時異動</h3>
-    <p style="font-size:13px;color:var(--ink);margin:0 0 10px;">這台裝置跟另一台裝置，在還沒互相同步的情況下都各自新增了東西。系統已經<b>自動合併保留兩邊新增的內容</b>（不會刪掉任何一邊的資料），並存回雲端。</p>
-    <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px;">麻煩檢查一下最近幾天的記錄有沒有重複或不對的地方。如果合併結果有問題，可以到「系統」選單裡的「復原到匯入前」，復原成這次合併之前、這台裝置原本的樣子。</p>
-    <button type="button" class="modal-close-btn" style="margin-top:0;">知道了</button>
-  `;
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const close = ()=> overlay.remove();
-  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
-  box.querySelector('.modal-close-btn').addEventListener('click', close);
-}
+
 const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite','noteEntries'];
 function entryIdentityKey(e){
   // Photos are represented differently locally (short IndexedDB ref ids)
@@ -4808,8 +4854,7 @@ async function syncFromDriveOnLogin(){
         render();
         isSyncing = false;
         pushToDrive(true);
-        updateAuthUI(true, '偵測到多裝置同時異動，已自動合併');
-        showConflictMergeNotice();
+        updateAuthUI(true, '已自動合併多裝置的異動內容');
         return;
       } else if(remoteLastModified > localLastModified){
         // Cloud version is newer than this device's copy: replace local with cloud version.
