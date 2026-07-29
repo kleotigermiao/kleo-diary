@@ -3398,7 +3398,7 @@ function renderSupplies(){
   const needlesRate = estimateDailyUsage('insulin');
   const stripsDaysLeft = stripsRate>0 ? Math.floor(supplies.strips.stock/stripsRate) : null;
   const needlesDaysLeft = needlesRate>0 ? Math.floor(supplies.needles.stock/needlesRate) : null;
-  const warnThreshold = 60;
+  const WARN_THRESHOLD = {strips: 60, needles: 30, lancets: 60};
   const SIX_MONTHS_DAYS = 182;
   const PACKAGE_SIZE = {strips: 50, needles: 10, lancets: 50};
   const PACKAGE_UNIT = {strips: '罐', needles: '包', lancets: '盒'};
@@ -3418,7 +3418,7 @@ function renderSupplies(){
   }
   function supplyCard(key, label, icon, daysLeft, dailyRate){
     const s = supplies[key];
-    const warn = daysLeft!=null && daysLeft < warnThreshold;
+    const warn = daysLeft!=null && daysLeft < WARN_THRESHOLD[key];
     return `<div class="supply-card${warn?' warn':''}">
       <div class="supply-title">${icon} ${label}</div>
       <div class="supply-stock">庫存：<b>${s.stock}</b> 個</div>
@@ -3439,18 +3439,21 @@ function renderSupplies(){
   // Rate of lancet changes per day = (glucose tests per day) / (tests per change).
   const lancetChangeRate = (stripsRate>0 && supplies.lancets.changeThreshold>0) ? (stripsRate/supplies.lancets.changeThreshold) : 0;
   let sensorStatusHtml;
+  const sensorActivatedDate = supplies.sensor.activatedAt ? supplies.sensor.activatedAt.split('T')[0] : '';
+  const sensorActivatedTime = supplies.sensor.activatedAt && supplies.sensor.activatedAt.includes('T') ? supplies.sensor.activatedAt.split('T')[1] : '00:00';
   if(supplies.sensor.activatedAt){
-    const activated = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    const activated = new Date(supplies.sensor.activatedAt);
     const expiry = new Date(activated); expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
     const daysLeft = Math.ceil((expiry - new Date()) / 86400000);
-    const expiryStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+    const expiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+    const expiryTimeStr = String(expiry.getHours()).padStart(2,'0')+':'+String(expiry.getMinutes()).padStart(2,'0');
     const expired = daysLeft<0;
-    sensorStatusHtml = `<div class="supply-days${expired?' warn-text':''}">啟用日：${supplies.sensor.activatedAt}　到期日：${expiryStr}<br>${expired ? `⚠️已過期 ${Math.abs(daysLeft)} 天，該換感應器了` : `還剩 <b>${daysLeft}</b> 天`}</div>`;
+    sensorStatusHtml = `<div class="supply-days${expired?' warn-text':''}">啟用：${sensorActivatedDate} ${sensorActivatedTime}　到期：${expiryDateStr} ${expiryTimeStr}<br>${expired ? `⚠️已過期 ${Math.abs(daysLeft)} 天，該換感應器了` : `還剩 <b>${daysLeft}</b> 天`}</div>`;
   } else {
-    sensorStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄啟用日期</div>`;
+    sensorStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄啟用時間</div>`;
   }
   el.innerHTML = `
-    <div class="supply-card${supplies.sensor.activatedAt && (new Date(supplies.sensor.activatedAt+'T00:00:00').getTime() + supplies.sensor.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
+    <div class="supply-card${supplies.sensor.activatedAt && (new Date(supplies.sensor.activatedAt).getTime() + supplies.sensor.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
       <div class="supply-title">📡 Libre 感測器</div>
       ${sensorStatusHtml}
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
@@ -3458,7 +3461,11 @@ function renderSupplies(){
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
         <label style="margin:0;flex-shrink:0;">啟用日期：</label>
-        <input type="date" id="sensorActivatedInput" value="${supplies.sensor.activatedAt || ''}">
+        <input type="date" id="sensorActivatedDateInput" value="${sensorActivatedDate}">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">啟用時間：</label>
+        <input type="text" inputmode="numeric" id="sensorActivatedTimeInput" placeholder="HH:MM" value="${sensorActivatedDate ? sensorActivatedTime : ''}" style="width:90px;">
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
         <label style="margin:0;flex-shrink:0;">使用天數：</label>
@@ -3532,17 +3539,22 @@ function renderSupplies(){
     saveSupplies();
   });
   document.getElementById('sensorActivateBtn').addEventListener('click', ()=>{
-    supplies.sensor.activatedAt = todayStr();
+    supplies.sensor.activatedAt = todayStr()+'T'+nowTime();
     saveSupplies();
     renderSupplies();
     renderCalendar();
   });
-  document.getElementById('sensorActivatedInput').addEventListener('change', (e)=>{
-    supplies.sensor.activatedAt = e.target.value || null;
+  function updateSensorFromInputs(){
+    const dateVal = document.getElementById('sensorActivatedDateInput').value;
+    const timeVal = document.getElementById('sensorActivatedTimeInput').value.trim();
+    if(!dateVal){ supplies.sensor.activatedAt = null; }
+    else { supplies.sensor.activatedAt = dateVal+'T'+(timeVal || '00:00'); }
     saveSupplies();
     renderSupplies();
     renderCalendar();
-  });
+  }
+  document.getElementById('sensorActivatedDateInput').addEventListener('change', updateSensorFromInputs);
+  document.getElementById('sensorActivatedTimeInput').addEventListener('change', updateSensorFromInputs);
   document.getElementById('sensorDurationInput').addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
     if(n && n>0){ supplies.sensor.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
@@ -3622,8 +3634,8 @@ function renderCalendar(){
   const lancetDueNow = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
   let sensorActivatedDateStr = null, sensorExpiryDateStr = null;
   if(supplies.sensor && supplies.sensor.activatedAt){
-    sensorActivatedDateStr = supplies.sensor.activatedAt;
-    const expiry = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    sensorActivatedDateStr = supplies.sensor.activatedAt.split('T')[0];
+    const expiry = new Date(supplies.sensor.activatedAt);
     expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
     sensorExpiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
   }
@@ -3698,11 +3710,18 @@ function openCalDayMenu(dateStr){
     supplyNotes.push('🔴 今天該換採血針了');
   }
   if(supplies.sensor && supplies.sensor.activatedAt){
-    if(supplies.sensor.activatedAt===dateStr) supplyNotes.push('📡 Libre 感測器這天啟用');
-    const expiry = new Date(supplies.sensor.activatedAt+'T00:00:00');
+    const activatedDateOnly = supplies.sensor.activatedAt.split('T')[0];
+    if(activatedDateOnly===dateStr){
+      const timePart = supplies.sensor.activatedAt.split('T')[1] || '';
+      supplyNotes.push(`📡 Libre 感測器這天啟用${timePart ? '（'+timePart+'）' : ''}`);
+    }
+    const expiry = new Date(supplies.sensor.activatedAt);
     expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
     const expiryStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
-    if(expiryStr===dateStr) supplyNotes.push('⏰ Libre 感測器這天到期');
+    if(expiryStr===dateStr){
+      const expiryTime = String(expiry.getHours()).padStart(2,'0')+':'+String(expiry.getMinutes()).padStart(2,'0');
+      supplyNotes.push(`⏰ Libre 感測器這天到期（約${expiryTime}）`);
+    }
   }
   const supplyNoticeHtml = supplyNotes.length
     ? `<div style="background:#FCE4EC;border-radius:8px;padding:8px 10px;margin:0 16px 12px;font-size:12.5px;color:#C0392B;">${supplyNotes.join('<br>')}</div>`
