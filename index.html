@@ -184,6 +184,11 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   margin:10px 16px 0;padding:9px 12px;border-radius:8px;
   background:#00000005;font-size:12px;color:var(--ink);
 }
+.kcal-progress{
+  margin:8px 16px 0;padding:9px 12px;border-radius:8px;
+  background:#FFF6DE;font-size:12px;color:var(--ink);
+}
+.kcal-progress.over{background:#FCE4EC;}
 .cat-score-widget{
   padding:12px 14px;border-radius:10px;
   background:linear-gradient(135deg,#00000006,#00000002);border:1px solid var(--line);
@@ -628,6 +633,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="todoBtn">待辦</button>
           <button type="button" class="more-menu-item" id="calendarBtn">日曆</button>
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
+          <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
         </div>
       </div>
     </div>
@@ -1355,24 +1361,103 @@ function renderRowHtml(dateStr, cat, e, idx){
   </div>`;
 }
 
+function parseFoodEntryGroups(note){
+  const raw = note || '';
+  const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
+  const mainPart = m ? m[1] : raw;
+  const groups = mainPart.split('、').filter(Boolean);
+  return groups.map(group=>{
+    const gramsMatch = group.match(/\s+([\d.]+)g$/);
+    const grams = gramsMatch ? parseFloat(gramsMatch[1]) : null;
+    const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
+    const sepIdx = groupNoGrams.indexOf('：');
+    const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
+    const brandsStr = sepIdx>=0 ? groupNoGrams.slice(sepIdx+1) : '';
+    const brands = brandsStr ? brandsStr.split('+').filter(Boolean) : [];
+    return {type, brands, grams};
+  });
+}
 function computeFoodStats(day){
   const stats = {};
   (day.food || []).forEach(e=>{
-    const raw = e.note || '';
-    const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
-    const mainPart = m ? m[1] : raw;
-    const groups = mainPart.split('、').filter(Boolean);
-    groups.forEach(group=>{
-      const gramsMatch = group.match(/\s+([\d.]+)g$/);
-      if(!gramsMatch) return; // entries without a parseable gram amount aren't counted
-      const grams = parseFloat(gramsMatch[1]);
-      const groupNoGrams = group.slice(0, gramsMatch.index);
-      const sepIdx = groupNoGrams.indexOf('：');
-      const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
-      stats[type] = (stats[type]||0) + grams;
+    parseFoodEntryGroups(e.note).forEach(g=>{
+      if(g.grams==null) return; // entries without a parseable gram amount aren't counted
+      stats[g.type] = (stats[g.type]||0) + g.grams;
     });
   });
   return stats;
+}
+// ---- Food calorie tracking ----
+const FOOD_BRAND_KCAL_KEY = 'kleo-food-brand-kcal-v1';
+const DAILY_KCAL_TARGET_KEY = 'kleo-daily-kcal-target';
+function loadFoodBrandKcal(){
+  try{
+    const raw = localStorage.getItem(FOOD_BRAND_KCAL_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function saveFoodBrandKcal(map){
+  try{ localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(map)); }catch(e){}
+}
+function loadDailyKcalTarget(){
+  try{
+    const raw = localStorage.getItem(DAILY_KCAL_TARGET_KEY);
+    return raw ? parseFloat(raw) : null;
+  }catch(e){ return null; }
+}
+function saveDailyKcalTarget(v){
+  try{ localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v)); }catch(e){}
+}
+function typeAverageKcalPerGram(type){
+  const brandKcal = loadFoodBrandKcal();
+  const brands = loadFoodBrands(type);
+  const vals = brands.map(b=>brandKcal[type+'::'+b]).filter(v=>v!=null && !isNaN(v));
+  if(vals.length===0) return null;
+  return vals.reduce((a,b)=>a+b,0)/vals.length;
+}
+function computeFoodKcalSoFar(day){
+  const brandKcal = loadFoodBrandKcal();
+  let totalKcal = 0;
+  let anyKnown = false;
+  (day.food || []).forEach(e=>{
+    parseFoodEntryGroups(e.note).forEach(g=>{
+      if(g.grams==null) return;
+      const kcalValues = g.brands.map(b=> brandKcal[g.type+'::'+b]).filter(v=>v!=null && !isNaN(v));
+      if(kcalValues.length===0) return;
+      anyKnown = true;
+      const avgKcalPerG = kcalValues.reduce((a,b)=>a+b,0)/kcalValues.length;
+      totalKcal += g.grams * avgKcalPerG;
+    });
+  });
+  return {totalKcal, anyKnown};
+}
+function computeExpectedKcalSoFar(dailyTarget){
+  const now = new Date();
+  const minutesSinceMidnight = now.getHours()*60 + now.getMinutes();
+  return dailyTarget * (minutesSinceMidnight/1440);
+}
+function buildKcalProgressHtml(day){
+  const target = loadDailyKcalTarget();
+  if(!target || target<=0) return '';
+  const {totalKcal, anyKnown} = computeFoodKcalSoFar(day);
+  if(!anyKnown) return `<div class="kcal-progress">🔥 尚未設定任何品牌的熱量密度，無法估算熱量進度（可到「工具」→「熱量設定」填寫）</div>`;
+  const expected = computeExpectedKcalSoFar(target);
+  const diff = expected - totalKcal; // positive = under target, negative = over target
+  const allTypes = loadFoodTypes();
+  const gramSuggestions = allTypes.map(type=>{
+    const avgKcalPerG = typeAverageKcalPerGram(type);
+    if(avgKcalPerG==null || avgKcalPerG<=0) return null;
+    const grams = Math.abs(diff)/avgKcalPerG;
+    return `${escapeHtml(type)} ${grams.toFixed(0)}g`;
+  }).filter(Boolean);
+  const suggestionStr = gramSuggestions.length ? `（單獨用其中一種補：${gramSuggestions.join('　或　')}）` : '';
+  if(Math.abs(diff)<1){
+    return `<div class="kcal-progress">🔥 目前熱量進度：${totalKcal.toFixed(0)} kcal / 目標${target}kcal，剛好符合目前時段進度</div>`;
+  }
+  if(diff>0){
+    return `<div class="kcal-progress">🔥 目前熱量進度：${totalKcal.toFixed(0)} / ${target}kcal，目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr}</div>`;
+  }
+  return `<div class="kcal-progress over">🔥 目前熱量進度：${totalKcal.toFixed(0)} / ${target}kcal，目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>${suggestionStr}</div>`;
 }
 function renderDayRows(dateStr, day){
   const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med','noteEntries'];
@@ -1453,6 +1538,7 @@ function render(){
     const foodStatsHtml = foodStatsKeys.length>0
       ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}g`).join('　')}</div>`
       : '';
+    const kcalProgressHtml = dateStr===todayStr() ? buildKcalProgressHtml(day) : '';
     const notesHtml = `<div class="notes-row">
       <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
       <button class="note-edit-btn" data-date="${dateStr}">✎</button>
@@ -1468,6 +1554,7 @@ function render(){
         ${buildCustomStatusPanel(dateStr, day)}
       </div>
       ${foodStatsHtml}
+      ${kcalProgressHtml}
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
   }).join('');
@@ -4611,6 +4698,56 @@ function clearPhotosOlderThan(days){
   });
   return removed;
 }
+function showKcalSettingsModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:80vh;overflow-y:auto;';
+  const target = loadDailyKcalTarget();
+  const brandKcal = loadFoodBrandKcal();
+  const types = loadFoodTypes();
+  const brandRowsHtml = types.map(type=>{
+    const brands = loadFoodBrands(type);
+    if(brands.length===0) return '';
+    const rows = brands.map(b=>{
+      const key = type+'::'+b;
+      const val = brandKcal[key];
+      return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+        <span style="flex:1;font-size:13px;">${escapeHtml(type)}－${escapeHtml(b)}</span>
+        <input type="text" inputmode="decimal" class="brand-kcal-input" data-key="${escapeHtml(key)}" placeholder="kcal/g" value="${val!=null?val:''}" style="width:90px;">
+      </div>`;
+    }).join('');
+    return `<label style="margin-top:12px;">${escapeHtml(type)}</label>${rows}`;
+  }).join('');
+  box.innerHTML = `
+    <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">熱量設定</h3>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">設定每日目標熱量，跟每個品牌的熱量密度（每公克幾大卡），才能在首頁看到即時的熱量進度提示。</p>
+    <label style="margin-top:0;">每日目標熱量 (kcal)</label>
+    <input type="text" inputmode="decimal" id="dailyKcalTargetInput" value="${target!=null?target:''}" placeholder="例如 200">
+    <label style="margin-top:14px;">各品牌熱量密度 (kcal/g)</label>
+    ${brandRowsHtml || '<p style="font-size:12px;color:var(--ink-soft);">目前還沒有任何食物品牌，先去新增一筆飲食記錄建立品牌後再回來設定。</p>'}
+    <button type="button" id="saveKcalSettingsBtn" class="tag-add-btn" style="width:100%;margin-top:14px;">儲存設定</button>
+    <button type="button" class="modal-close-btn">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  document.getElementById('saveKcalSettingsBtn').addEventListener('click', ()=>{
+    const targetVal = parseFloat(document.getElementById('dailyKcalTargetInput').value);
+    if(targetVal && targetVal>0) saveDailyKcalTarget(targetVal);
+    const newBrandKcal = loadFoodBrandKcal();
+    box.querySelectorAll('.brand-kcal-input').forEach(input=>{
+      const v = parseFloat(input.value);
+      if(!isNaN(v) && v>=0) newBrandKcal[input.dataset.key] = v;
+      else delete newBrandKcal[input.dataset.key];
+    });
+    saveFoodBrandKcal(newBrandKcal);
+    render();
+    close();
+  });
+}
 function showClearPhotosModal(){
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
@@ -4650,6 +4787,7 @@ document.getElementById('viewLogMenuItem').addEventListener('click', showSaveLog
 document.getElementById('checkStorageMenuItem').addEventListener('click', showStorageModal);
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
+document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
 
