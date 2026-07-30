@@ -272,6 +272,16 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   display:flex; align-items:center; justify-content:center;
 }
 .fab:active{transform:scale(0.92);}
+.fab-secondary{
+  position:fixed; bottom:calc(20px + var(--safe-bottom)); left:20px; z-index:30;
+  height:40px; padding:0 16px; border-radius:20px;
+  background:var(--paper-raised); color:var(--ink);
+  border:1px solid var(--line); font-size:13px; cursor:pointer;
+  box-shadow:0 4px 12px rgba(0,0,0,0.12);
+  display:none; align-items:center; justify-content:center;
+  font-family:'IBM Plex Mono',monospace;
+}
+.fab-secondary:active{transform:scale(0.94);}
 
 .sheet-backdrop{
   position:fixed; inset:0; background:rgba(31,58,61,0.45);
@@ -632,6 +642,7 @@ textarea{resize:vertical; min-height:64px;}
 <main id="main"></main>
 
 <button class="fab" id="fabBtn" aria-label="新增記錄">+</button>
+<button class="fab-secondary" id="backToTodayBtn" aria-label="回到今天">↑ 今天</button>
 
 <div class="sheet-backdrop" id="backdrop"></div>
 <div class="sheet" id="sheet">
@@ -1607,6 +1618,14 @@ document.getElementById('lightbox').addEventListener('click', ()=>{
 const sheet = document.getElementById('sheet');
 const backdrop = document.getElementById('backdrop');
 const fabBtn = document.getElementById('fabBtn');
+const backToTodayBtn = document.getElementById('backToTodayBtn');
+backToTodayBtn.addEventListener('click', ()=>{
+  window.scrollTo({top:0, behavior:'smooth'});
+});
+window.addEventListener('scroll', ()=>{
+  const mainVisible = document.getElementById('main').style.display !== 'none';
+  backToTodayBtn.style.display = (mainVisible && window.scrollY > 400) ? 'flex' : 'none';
+});
 const closeSheetBtn = document.getElementById('closeSheet');
 const fDate = document.getElementById('fDate');
 const fTime = document.getElementById('fTime');
@@ -1626,20 +1645,21 @@ const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
 const fTimeNowBtn = document.getElementById('fTimeNowBtn');
 fTimeNowBtn.addEventListener('click', ()=>{ fTime.value = nowTime(); });
-fTime.addEventListener('focus', ()=>{ fTime.select(); });
-fTime.addEventListener('input', ()=>{
+function autoFormatTimeInput(inputEl){
   // Only auto-format when the user is actively typing plain digits (e.g. "0840" -> "08:40").
   // Anything containing non-digit characters (like "?", "約上午", "左耳2:05") is left untouched
   // so odd/unsure original time text can still be preserved and edited freely.
-  const raw = fTime.value;
+  const raw = inputEl.value;
   const digitsOnly = raw.replace(/[^0-9]/g,'');
   if(digitsOnly.length===0 || digitsOnly.length !== raw.length){ return; }
   let formatted = digitsOnly;
   if(digitsOnly.length>=3){
     formatted = digitsOnly.slice(0,2) + ':' + digitsOnly.slice(2,4);
   }
-  fTime.value = formatted;
-});
+  inputEl.value = formatted;
+}
+fTime.addEventListener('focus', ()=>{ fTime.select(); });
+fTime.addEventListener('input', ()=> autoFormatTimeInput(fTime));
 const fPhoto = document.getElementById('fPhoto');
 const photoPreviewWrap = document.getElementById('photoPreviewWrap');
 const photoPreviewGrid = document.getElementById('photoPreviewGrid');
@@ -3112,6 +3132,7 @@ function generateReport(){
   document.getElementById('main').style.display = 'none';
   document.querySelector('.topbar').style.display = 'none';
   fabBtn.style.display = 'none';
+  backToTodayBtn.style.display = 'none';
   reportView.style.display = 'block';
   reportConfigSheet.classList.remove('open');
   reportBackdrop.classList.remove('open');
@@ -3301,6 +3322,7 @@ galleryBtn.addEventListener('click', ()=>{
   document.getElementById('main').style.display = 'none';
   document.querySelector('.topbar').style.display = 'none';
   fabBtn.style.display = 'none';
+  backToTodayBtn.style.display = 'none';
   galleryView.style.display = 'block';
   renderGalleryFilters();
   renderGalleryGrid();
@@ -3323,14 +3345,24 @@ const SUPPLIES_DEFAULTS = {
   countSkipAsNeedleUse: true,
   sensor: {activatedAt: null, durationDays: 14} // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
 };
+function repairSensorActivatedAt(activatedAt){
+  if(!activatedAt) return activatedAt;
+  const [datePart, timePart] = activatedAt.split('T');
+  if(!datePart || !/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null; // unrecoverable, drop it
+  if(timePart && /^\d{2}:\d{2}$/.test(timePart)) return activatedAt; // already fine
+  if(timePart && /^\d{4}$/.test(timePart)) return datePart+'T'+timePart.slice(0,2)+':'+timePart.slice(2,4); // "0800" -> "08:00"
+  return datePart+'T00:00'; // anything else unrecognized: fall back to midnight rather than producing NaN
+}
 function normalizeSupplies(parsed){
   if(!parsed) return JSON.parse(JSON.stringify(SUPPLIES_DEFAULTS));
-  return Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
+  const normalized = Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
     strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
     lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets),
     sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor)
   });
+  normalized.sensor.activatedAt = repairSensorActivatedAt(normalized.sensor.activatedAt);
+  return normalized;
 }
 function loadSupplies(){
   try{
@@ -3349,6 +3381,17 @@ function saveSupplies(){
   if(typeof pushToDrive === 'function') pushToDrive();
 }
 let supplies = loadSupplies();
+(function persistSensorRepairIfNeeded(){
+  try{
+    const raw = localStorage.getItem(SUPPLIES_KEY);
+    const rawParsed = raw ? JSON.parse(raw) : null;
+    const rawActivatedAt = rawParsed && rawParsed.sensor ? rawParsed.sensor.activatedAt : undefined;
+    if(rawActivatedAt !== supplies.sensor.activatedAt){
+      // the load-time repair changed something (e.g. fixed "0800" -> "08:00"); save it back so it sticks and syncs
+      localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies));
+    }
+  }catch(e){}
+})();
 
 function consumeSupplyOnGlucose(){
   supplies.strips.stock = Math.max(0, (supplies.strips.stock||0) - 1);
@@ -3546,13 +3589,15 @@ function renderSupplies(){
   });
   function updateSensorFromInputs(){
     const dateVal = document.getElementById('sensorActivatedDateInput').value;
-    const timeVal = document.getElementById('sensorActivatedTimeInput').value.trim();
+    let timeVal = document.getElementById('sensorActivatedTimeInput').value.trim();
+    if(!/^\d{2}:\d{2}$/.test(timeVal)) timeVal = ''; // reject anything that isn't a clean HH:MM
     if(!dateVal){ supplies.sensor.activatedAt = null; }
     else { supplies.sensor.activatedAt = dateVal+'T'+(timeVal || '00:00'); }
     saveSupplies();
     renderSupplies();
     renderCalendar();
   }
+  document.getElementById('sensorActivatedTimeInput').addEventListener('input', (e)=> autoFormatTimeInput(e.target));
   document.getElementById('sensorActivatedDateInput').addEventListener('change', updateSensorFromInputs);
   document.getElementById('sensorActivatedTimeInput').addEventListener('change', updateSensorFromInputs);
   document.getElementById('sensorDurationInput').addEventListener('change', (e)=>{
@@ -3564,6 +3609,7 @@ document.getElementById('suppliesBtn').addEventListener('click', ()=>{
   document.getElementById('main').style.display = 'none';
   document.querySelector('.topbar').style.display = 'none';
   fabBtn.style.display = 'none';
+  backToTodayBtn.style.display = 'none';
   document.getElementById('suppliesView').style.display = 'block';
   renderSupplies();
   window.scrollTo(0,0);
@@ -3746,16 +3792,32 @@ function openCalDayMenu(dateStr){
       </div>
     </div>
     <hr style="border:none;border-top:1px solid var(--line);margin:16px 0;">
+    <div style="padding:0 16px 12px;"><button type="button" id="calJumpToMainBtn" class="tag-add-btn" style="width:100%;">前往主畫面編輯這天 →</button></div>
     ${day ? buildStatusSummary(dateStr, day, allDatesSorted, idx) : ''}
     ${day ? buildCatScoreWidget(dateStr, day, allDatesSorted, idx) : ''}
     <div class="section" style="pointer-events:none;opacity:0.92;">${rowsHtml}${notesHtml}</div>
-    <p style="text-align:center;font-size:11px;color:var(--ink-soft);padding:0 16px;">這是唯讀快速預覽，如果要編輯這天的記錄，請先關閉月曆回到主畫面。</p>
+    <p style="text-align:center;font-size:11px;color:var(--ink-soft);padding:0 16px;">下面是唯讀快速預覽，要編輯請點上面的按鈕前往主畫面。</p>
   `;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   const close = ()=>{ overlay.remove(); renderCalendar(); };
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
   document.getElementById('dayFloatCloseBtn').addEventListener('click', close);
+  document.getElementById('calJumpToMainBtn').addEventListener('click', ()=>{
+    overlay.remove();
+    if(!data[dateStr]){
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    }
+    document.getElementById('calendarView').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+    document.querySelector('.topbar').style.display = 'block';
+    fabBtn.style.display = 'flex';
+    render();
+    setTimeout(()=>{
+      const card = document.querySelector(`.day-card[data-date="${dateStr}"]`);
+      if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
+    }, 50);
+  });
   document.getElementById('calEventAddBtn').addEventListener('click', ()=>{
     const input = document.getElementById('calEventInput');
     const text = input.value.trim();
@@ -3791,6 +3853,7 @@ document.getElementById('calendarBtn').addEventListener('click', ()=>{
   document.getElementById('main').style.display = 'none';
   document.querySelector('.topbar').style.display = 'none';
   fabBtn.style.display = 'none';
+  backToTodayBtn.style.display = 'none';
   document.getElementById('calendarView').style.display = 'block';
   const now = new Date();
   calViewYear = now.getFullYear();
@@ -3896,6 +3959,7 @@ document.getElementById('todoBtn').addEventListener('click', ()=>{
   document.getElementById('main').style.display = 'none';
   document.querySelector('.topbar').style.display = 'none';
   fabBtn.style.display = 'none';
+  backToTodayBtn.style.display = 'none';
   document.getElementById('todoView').style.display = 'block';
   renderTodos();
   window.scrollTo(0,0);
