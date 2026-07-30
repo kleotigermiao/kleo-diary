@@ -1041,6 +1041,7 @@ function buildStrip(glucoseEntries){
 }
 
 const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',mood:'😺',appetite:'🍖',noteEntries:'📝'};
+const TREND_ARROWS = {up_fast:'↑', up:'↗', stable:'→', down:'↘', down_fast:'↓'};
 const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
@@ -1086,8 +1087,9 @@ function renderGenericStatusValue(cat, day){
     const latest = latestEntry(entries);
     if(!latest) return {hasData:false, html:'<span class="si-empty">點此記錄</span>'};
     const lvl = glucoseLevel(latest.value);
+    const trendArrow = TREND_ARROWS[latest.trend] || '';
     const suffix = entries.length>1 ? `（共${entries.length}筆）` : '';
-    return {hasData:true, html:`<span class="tag ${lvl}">${latest.value} mmol/L</span>${suffix}`};
+    return {hasData:true, html:`<span class="tag ${lvl}">${latest.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${suffix}`};
   }
   if(cat==='insulin'){
     const entries = day.insulin || [];
@@ -1313,8 +1315,9 @@ const FIXED_OPTIONS = {
 function renderRowHtml(dateStr, cat, e, idx){
   let valHtml = '';
   if(cat==='glucose'){
+    const trendArrow = TREND_ARROWS[e.trend] || '';
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L</span>${detail}`;
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -1862,6 +1865,14 @@ function openSheetForEdit(dateStr, cat, idx){
       valEl.value = entry.value;
       const detailEl = document.getElementById('fDetail');
       if(detailEl) detailEl.value = entry.note || '';
+      if(entry.trend){
+        const trendBtn = document.querySelector(`.glucose-trend-btn[data-trend="${entry.trend}"]`);
+        if(trendBtn){
+          trendBtn.classList.add('active');
+          const trendEl = document.getElementById('fGlucoseTrend');
+          if(trendEl) trendEl.value = entry.trend;
+        }
+      }
     }
     else if(cat==='urine'){
       const detailEl = document.getElementById('fDetail');
@@ -1931,13 +1942,45 @@ function saveTagsGeneric(key, tags){
 function renderTagButtons(tags){
   return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
 }
-function wireTagGroup(gridId, hiddenInputId){
+function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
   document.querySelectorAll('#'+gridId+' .option-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
       document.querySelectorAll('#'+gridId+' .option-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(hiddenInputId).value = btn.dataset.val;
     });
+    if(tagsArr && storageKey){
+      let pressTimer = null;
+      const startPress = ()=>{
+        btn.dataset.longPressed = '';
+        pressTimer = setTimeout(()=>{
+          btn.dataset.longPressed = '1';
+          if(confirm(`確定要刪除標籤「${btn.dataset.val}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)){
+            const idx = tagsArr.indexOf(btn.dataset.val);
+            if(idx>=0) tagsArr.splice(idx,1);
+            saveTagsGeneric(storageKey, tagsArr);
+            document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
+            wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
+          }
+        }, 550);
+      };
+      const cancelPress = ()=> clearTimeout(pressTimer);
+      btn.addEventListener('pointerdown', startPress);
+      btn.addEventListener('pointerup', cancelPress);
+      btn.addEventListener('pointerleave', cancelPress);
+      btn.addEventListener('pointercancel', cancelPress);
+      btn.addEventListener('contextmenu', (e)=>{
+        e.preventDefault();
+        if(confirm(`確定要刪除標籤「${btn.dataset.val}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)){
+          const idx = tagsArr.indexOf(btn.dataset.val);
+          if(idx>=0) tagsArr.splice(idx,1);
+          saveTagsGeneric(storageKey, tagsArr);
+          document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
+          wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
+        }
+      });
+    }
   });
 }
 function wireAddTag(inputId, btnId, gridId, tagsArr, storageKey, hiddenInputId){
@@ -1950,7 +1993,7 @@ function wireAddTag(inputId, btnId, gridId, tagsArr, storageKey, hiddenInputId){
       saveTagsGeneric(storageKey, tagsArr);
     }
     document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
-    wireTagGroup(gridId, hiddenInputId);
+    wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
     document.querySelectorAll('#'+gridId+' .option-btn').forEach(b=>{
       b.classList.toggle('active', b.dataset.val===name);
     });
@@ -2045,8 +2088,29 @@ function setCategory(cat){
     });
   } else if(cat==='glucose'){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
+      <label>趨勢箭頭（可選）</label>
+      <div class="option-grid" id="glucoseTrendGrid">
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="up_fast">↑</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="up">↗</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="stable">→</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="down">↘</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="down_fast">↓</button>
+      </div>
+      <input type="hidden" id="fGlucoseTrend">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如左耳、同滴血、餐前…" style="height:80px;"></textarea>`;
+    document.querySelectorAll('.glucose-trend-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const already = btn.classList.contains('active');
+        document.querySelectorAll('.glucose-trend-btn').forEach(b=>b.classList.remove('active'));
+        if(!already){
+          btn.classList.add('active');
+          document.getElementById('fGlucoseTrend').value = btn.dataset.trend;
+        } else {
+          document.getElementById('fGlucoseTrend').value = '';
+        }
+      });
+    });
   } else if(cat==='urine'){
     dynamicFields.innerHTML = `<label>尿量估計 (ml)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 150">
       <label>補充說明（可選）</label>
@@ -2083,9 +2147,9 @@ function setCategory(cat){
       <input type="hidden" id="fSite">
       <input type="hidden" id="fNeedle">
     `;
-    wireTagGroup('doseTagGrid','fVal');
-    wireTagGroup('siteTagGrid','fSite');
-    wireTagGroup('needleTagGrid','fNeedle');
+    wireTagGroup('doseTagGrid','fVal', doseTags, INSULIN_DOSE_KEY);
+    wireTagGroup('siteTagGrid','fSite', siteTags, INSULIN_SITE_KEY);
+    wireTagGroup('needleTagGrid','fNeedle', needleTags, INSULIN_NEEDLE_KEY);
     wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
     wireAddTag('newSiteInput','addSiteBtn','siteTagGrid', siteTags, INSULIN_SITE_KEY, 'fSite');
     wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
@@ -2515,7 +2579,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     let updated;
     if(cat==='glucose'){
-      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
+      const trendEl = document.getElementById('fGlucoseTrend');
+      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, photos: photosToSave};
     } else if(cat==='urine'){
       updated = {time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='mood' || cat==='appetite'){
@@ -2554,7 +2619,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr].appetite) data[dateStr].appetite = [];
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
-      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
+      const trendEl = document.getElementById('fGlucoseTrend');
+      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, photos: photosToSave});
       consumeSupplyOnGlucose();
     } else if(currentCat==='urine'){
       data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
@@ -2778,7 +2844,7 @@ function buildGlucoseChart(allEntries, allInsulin){
     const x = xFor(toTs(e)), y = yFor(e.value);
     const d = new Date(toTs(e));
     const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} → ${e.value} mmol/L</title></circle>`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} → ${e.value} mmol/L${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}</title></circle>`;
   });
 
   svg += `</svg>`;
@@ -2913,7 +2979,7 @@ function reportCellLines(day, catKey){
     return entries.map(e=>`${e.time} ${e.needle}`);
   }
   const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
-  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}`);
+  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}`);
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='insulin') return entries.map(e=>`${e.time} ${e.dose}`);
   if(catKey==='water'){
