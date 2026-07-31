@@ -185,10 +185,32 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   background:#00000005;font-size:12px;color:var(--ink);
 }
 .kcal-progress{
-  margin:8px 16px 0;padding:9px 12px;border-radius:8px;
+  margin:8px 16px 0;padding:10px 12px;border-radius:8px;
   background:#FFF6DE;font-size:12px;color:var(--ink);
 }
 .kcal-progress.over{background:#FCE4EC;}
+.kcal-bar-label{font-weight:600;margin-bottom:8px;}
+.kcal-bar-track{
+  position:relative;height:10px;border-radius:5px;background:#00000012;
+  overflow:visible;margin-bottom:4px;
+}
+.kcal-bar-fill{
+  position:absolute;top:0;left:0;height:100%;border-radius:5px;
+  background:#D9A441;transition:width .3s ease;
+}
+.kcal-bar-fill.over{background:#C0392B;}
+.kcal-bar-marker{
+  position:absolute;top:-3px;width:2px;height:16px;background:var(--ink);
+  transform:translateX(-1px);
+}
+.kcal-bar-target{
+  position:absolute;top:-3px;width:0;height:16px;
+  border-left:2px dotted var(--ink-soft);
+}
+.kcal-bar-legend{
+  display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);margin-bottom:6px;
+}
+.kcal-bar-caption{font-size:12px;}
 .cat-score-widget{
   padding:12px 14px;border-radius:10px;
   background:linear-gradient(135deg,#00000006,#00000002);border:1px solid var(--line);
@@ -1397,7 +1419,11 @@ function loadFoodBrandKcal(){
   }catch(e){ return {}; }
 }
 function saveFoodBrandKcal(map){
-  try{ localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(map)); }catch(e){}
+  try{
+    localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(map));
+    localStorage.setItem('kleo-last-modified', String(Date.now()));
+  }catch(e){}
+  if(typeof pushToDrive === 'function') pushToDrive();
 }
 function loadDailyKcalTarget(){
   try{
@@ -1406,7 +1432,11 @@ function loadDailyKcalTarget(){
   }catch(e){ return null; }
 }
 function saveDailyKcalTarget(v){
-  try{ localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v)); }catch(e){}
+  try{
+    localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v));
+    localStorage.setItem('kleo-last-modified', String(Date.now()));
+  }catch(e){}
+  if(typeof pushToDrive === 'function') pushToDrive();
 }
 function typeAverageKcalPerGram(type){
   const brandKcal = loadFoodBrandKcal();
@@ -1450,14 +1480,27 @@ function buildKcalProgressHtml(day){
     const grams = Math.abs(diff)/avgKcalPerG;
     return `${escapeHtml(type)} ${grams.toFixed(0)}g`;
   }).filter(Boolean);
-  const suggestionStr = gramSuggestions.length ? `（單獨用其中一種補：${gramSuggestions.join('　或　')}）` : '';
-  if(Math.abs(diff)<1){
-    return `<div class="kcal-progress">🔥 目前熱量進度：${totalKcal.toFixed(0)} kcal / 目標${target}kcal，剛好符合目前時段進度</div>`;
-  }
-  if(diff>0){
-    return `<div class="kcal-progress">🔥 目前熱量進度：${totalKcal.toFixed(0)} / ${target}kcal，目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr}</div>`;
-  }
-  return `<div class="kcal-progress over">🔥 目前熱量進度：${totalKcal.toFixed(0)} / ${target}kcal，目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>${suggestionStr}</div>`;
+  const suggestionStr = gramSuggestions.length ? `單獨用其中一種補：${gramSuggestions.join('　或　')}` : '';
+  const isOver = diff<-1;
+  const onTrack = Math.abs(diff)<=1;
+  const scaleMax = Math.max(target, totalKcal, expected) * 1.08;
+  const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
+  const markerPct = Math.min(100, (expected/scaleMax)*100);
+  const targetPct = Math.min(100, (target/scaleMax)*100);
+  let captionHtml;
+  if(onTrack) captionHtml = `剛好符合目前時段進度`;
+  else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
+  else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
+  return `<div class="kcal-progress${isOver?' over':''}">
+    <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target} kcal</div>
+    <div class="kcal-bar-track">
+      <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
+      <div class="kcal-bar-marker" style="left:${markerPct}%;" title="目前時段應達到的進度"></div>
+      <div class="kcal-bar-target" style="left:${targetPct}%;" title="今日總目標"></div>
+    </div>
+    <div class="kcal-bar-legend"><span>● 目前進度線</span><span>┊ 今日總目標</span></div>
+    <div class="kcal-bar-caption">${captionHtml}</div>
+  </div>`;
 }
 function renderDayRows(dateStr, day){
   const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med','noteEntries'];
@@ -5138,6 +5181,13 @@ async function syncFromDriveOnLogin(){
           calEvents = mergedEvents;
           saveCalEvents();
         }
+        if(remoteEnvelope.foodBrandKcal){
+          const mergedKcal = Object.assign({}, remoteEnvelope.foodBrandKcal, loadFoodBrandKcal());
+          saveFoodBrandKcal(mergedKcal);
+        }
+        if(remoteEnvelope.dailyKcalTarget!=null && loadDailyKcalTarget()==null){
+          saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
+        }
         render();
         isSyncing = false;
         pushToDrive(true);
@@ -5165,6 +5215,12 @@ async function syncFromDriveOnLogin(){
           });
           calEvents = normalized;
           saveCalEvents();
+        }
+        if(remoteEnvelope.foodBrandKcal){
+          saveFoodBrandKcal(remoteEnvelope.foodBrandKcal);
+        }
+        if(remoteEnvelope.dailyKcalTarget!=null){
+          saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
         }
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
@@ -5216,7 +5272,7 @@ function pushToDrive(immediate){
           });
         });
       });
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents };
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), foodBrandKcal: loadFoodBrandKcal() };
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
