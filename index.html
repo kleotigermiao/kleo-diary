@@ -988,6 +988,16 @@ function logSaveActivity(success, errorMsg, extra){
     localStorage.setItem(SAVE_LOG_KEY, JSON.stringify(log));
   }catch(e){ /* logging itself must never throw or block saving */ }
 }
+// Any local setting that should travel between devices (supplies, calendar
+// events, food calorie config, etc) MUST call this after writing to
+// localStorage. This is now the ONLY place that marks a change as
+// sync-worthy and triggers a push — centralized on purpose, after this exact
+// bug (a setting's save function quietly skipping this step, so it never
+// looked "new enough" to survive a sync) recurred multiple times.
+function markLocalChangeAndSync(){
+  try{ localStorage.setItem('kleo-last-modified', String(Date.now())); }catch(e){}
+  if(typeof pushToDrive === 'function') pushToDrive();
+}
 function save(extraContext){
   try{
     const payload = JSON.stringify(data);
@@ -1106,6 +1116,7 @@ function loadCustomSlots(){
 }
 function saveCustomSlots(slots){
   try{ localStorage.setItem(CUSTOM_SLOTS_KEY, JSON.stringify(slots)); }catch(e){}
+  markLocalChangeAndSync();
 }
 let customStatusSlots = loadCustomSlots();
 
@@ -1419,11 +1430,8 @@ function loadFoodBrandKcal(){
   }catch(e){ return {}; }
 }
 function saveFoodBrandKcal(map){
-  try{
-    localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(map));
-    localStorage.setItem('kleo-last-modified', String(Date.now()));
-  }catch(e){}
-  if(typeof pushToDrive === 'function') pushToDrive();
+  try{ localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(map)); }catch(e){}
+  markLocalChangeAndSync();
 }
 function loadDailyKcalTarget(){
   try{
@@ -1432,11 +1440,8 @@ function loadDailyKcalTarget(){
   }catch(e){ return null; }
 }
 function saveDailyKcalTarget(v){
-  try{
-    localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v));
-    localStorage.setItem('kleo-last-modified', String(Date.now()));
-  }catch(e){}
-  if(typeof pushToDrive === 'function') pushToDrive();
+  try{ localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v)); }catch(e){}
+  markLocalChangeAndSync();
 }
 function typeAverageKcalPerGram(type){
   const brandKcal = loadFoodBrandKcal();
@@ -2058,6 +2063,7 @@ function loadWaterBase(){
 }
 function saveWaterBase(v){
   try{ localStorage.setItem(WATER_BASE_KEY, String(v)); }catch(e){}
+  markLocalChangeAndSync();
 }
 
 function loadTagsGeneric(key, defaults){
@@ -2068,6 +2074,28 @@ function loadTagsGeneric(key, defaults){
 }
 function saveTagsGeneric(key, tags){
   try{ localStorage.setItem(key, JSON.stringify(tags)); }catch(e){}
+  markLocalChangeAndSync();
+}
+// Generic sync for ALL tag-group storage (insulin dose/site/needle, food
+// types, food brands per type — an open-ended, dynamically-named set of
+// localStorage keys). Matched by prefix so any NEW tag group added later is
+// automatically covered without needing individual sync wiring each time.
+const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags'];
+function collectSyncableTagStorage(){
+  const bucket = {};
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i);
+    if(SYNCED_TAG_KEY_PREFIXES.some(p => k.startsWith(p))){
+      bucket[k] = localStorage.getItem(k);
+    }
+  }
+  return bucket;
+}
+function restoreSyncableTagStorage(bucket){
+  if(!bucket) return;
+  Object.keys(bucket).forEach(k=>{
+    try{ localStorage.setItem(k, bucket[k]); }catch(e){}
+  });
 }
 function renderTagButtons(tags){
   return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
@@ -2145,6 +2173,7 @@ function loadMedTags(){
 }
 function saveMedTags(tags){
   try{ localStorage.setItem(MED_TAGS_KEY, JSON.stringify(tags)); }catch(e){}
+  markLocalChangeAndSync();
 }
 let medTags = loadMedTags();
 function renderMedTagButtons(){
@@ -3570,11 +3599,8 @@ function loadSuppliesFromRemote(remote){
   return normalizeSupplies(remote);
 }
 function saveSupplies(){
-  try{
-    localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies));
-    localStorage.setItem('kleo-last-modified', String(Date.now()));
-  }catch(e){}
-  if(typeof pushToDrive === 'function') pushToDrive();
+  try{ localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies)); }catch(e){}
+  markLocalChangeAndSync();
 }
 let supplies = loadSupplies();
 (function persistSensorRepairIfNeeded(){
@@ -3835,11 +3861,8 @@ function loadCalEvents(){
   }catch(e){ return {}; }
 }
 function saveCalEvents(){
-  try{
-    localStorage.setItem(CAL_EVENTS_KEY, JSON.stringify(calEvents));
-    localStorage.setItem('kleo-last-modified', String(Date.now()));
-  }catch(e){}
-  if(typeof pushToDrive === 'function') pushToDrive();
+  try{ localStorage.setItem(CAL_EVENTS_KEY, JSON.stringify(calEvents)); }catch(e){}
+  markLocalChangeAndSync();
 }
 let calEvents = loadCalEvents();
 let calViewYear, calViewMonth; // calViewMonth is 0-indexed
@@ -4084,6 +4107,7 @@ function loadTodos(){
 }
 function saveTodos(todos){
   try{ localStorage.setItem(TODO_KEY, JSON.stringify(todos)); }catch(e){}
+  markLocalChangeAndSync();
 }
 let todos = loadTodos();
 function renderTodos(){
@@ -5188,6 +5212,19 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.dailyKcalTarget!=null && loadDailyKcalTarget()==null){
           saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
         }
+        if(remoteEnvelope.todos){
+          const byId = new Map();
+          (todos||[]).forEach(t=> byId.set(t.id, t));
+          remoteEnvelope.todos.forEach(t=>{
+            if(!byId.has(t.id)) byId.set(t.id, t);
+            else { const existing = byId.get(t.id); existing.done = existing.done || t.done; } // keep completed if either side completed it
+          });
+          todos = Array.from(byId.values());
+          localStorage.setItem(TODO_KEY, JSON.stringify(todos));
+        }
+        if(remoteEnvelope.tagStorage){
+          restoreSyncableTagStorage(remoteEnvelope.tagStorage);
+        }
         render();
         isSyncing = false;
         pushToDrive(true);
@@ -5221,6 +5258,13 @@ async function syncFromDriveOnLogin(){
         }
         if(remoteEnvelope.dailyKcalTarget!=null){
           saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
+        }
+        if(remoteEnvelope.todos){
+          todos = remoteEnvelope.todos;
+          localStorage.setItem(TODO_KEY, JSON.stringify(todos));
+        }
+        if(remoteEnvelope.tagStorage){
+          restoreSyncableTagStorage(remoteEnvelope.tagStorage);
         }
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
@@ -5272,7 +5316,15 @@ function pushToDrive(immediate){
           });
         });
       });
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), foodBrandKcal: loadFoodBrandKcal() };
+      // CHECKLIST for adding any new syncable local setting (do all 3, every time):
+      //   1. Its save*() function must end by calling markLocalChangeAndSync()
+      //   2. Add it to this envelope
+      //   3. Add its restore logic in BOTH branches of syncFromDriveOnLogin
+      //      (the plain "cloud is newer" pull, and the conflict-merge branch)
+      //   (tag groups like insulin dose/site/needle and food types/brands are
+      //   the exception — they're covered generically via tagStorage/
+      //   collectSyncableTagStorage, no per-tag-group wiring needed)
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
