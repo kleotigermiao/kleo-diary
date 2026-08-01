@@ -1471,11 +1471,36 @@ function computeExpectedKcalSoFar(dailyTarget){
   const minutesSinceMidnight = now.getHours()*60 + now.getMinutes();
   return dailyTarget * (minutesSinceMidnight/1440);
 }
-function buildKcalProgressHtml(day){
+function buildKcalProgressHtml(day, dateStr){
   const target = loadDailyKcalTarget();
   if(!target || target<=0) return '';
+  if(!day.food || day.food.length===0) return ''; // nothing logged that day — nothing to report
   const {totalKcal, anyKnown} = computeFoodKcalSoFar(day);
   if(!anyKnown) return `<div class="kcal-progress">🔥 尚未設定任何品牌的熱量密度，無法估算熱量進度（可到「工具」→「熱量設定」填寫）</div>`;
+  const isToday = !dateStr || dateStr===todayStr();
+  if(!isToday){
+    // Past, complete day: just compare the day's total against the daily
+    // target — there's no "expected so far" concept once the day is over.
+    const diff = totalKcal - target; // positive = went over that day, negative = under
+    const isOver = diff>1;
+    const onTarget = Math.abs(diff)<=1;
+    const scaleMax = Math.max(target, totalKcal) * 1.08;
+    const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
+    const targetPct = Math.min(100, (target/scaleMax)*100);
+    let captionHtml;
+    if(onTarget) captionHtml = `剛好符合當天目標`;
+    else if(isOver) captionHtml = `當天總共超吃 <b>${diff.toFixed(0)} kcal</b>`;
+    else captionHtml = `當天總共少吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
+    return `<div class="kcal-progress${isOver?' over':''}">
+      <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(0)} / ${target} kcal</div>
+      <div class="kcal-bar-track">
+        <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
+        <div class="kcal-bar-target" style="left:${targetPct}%;" title="當日目標"></div>
+      </div>
+      <div class="kcal-bar-legend"><span></span><span>┊ 當日目標</span></div>
+      <div class="kcal-bar-caption">${captionHtml}</div>
+    </div>`;
+  }
   const expected = computeExpectedKcalSoFar(target);
   const diff = expected - totalKcal; // positive = under target, negative = over target
   const allTypes = loadFoodTypes();
@@ -1586,7 +1611,7 @@ function render(){
     const foodStatsHtml = foodStatsKeys.length>0
       ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}g`).join('　')}</div>`
       : '';
-    const kcalProgressHtml = dateStr===todayStr() ? buildKcalProgressHtml(day) : '';
+    const kcalProgressHtml = buildKcalProgressHtml(day, dateStr);
     const notesHtml = `<div class="notes-row">
       <div class="notes-text">${day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '<span class="notes-placeholder">尚無備註</span>'}</div>
       <button class="note-edit-btn" data-date="${dateStr}">✎</button>
