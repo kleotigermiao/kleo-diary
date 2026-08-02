@@ -813,6 +813,7 @@ textarea{resize:vertical; min-height:64px;}
       <span>🩸/💉 試紙/針管預估用罄日</span>
       <span>🔴 今天該換採血針</span>
       <span>📡/⏰ Libre感測器啟用/到期日</span>
+      <span>🧪/⌛ 胰島素開瓶/到期日</span>
     </div>
   </div>
 </div>
@@ -3631,9 +3632,10 @@ const SUPPLIES_DEFAULTS = {
   needles: {stock: 0},
   lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
   countSkipAsNeedleUse: true,
-  sensor: {activatedAt: null, durationDays: 14} // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
+  sensor: {activatedAt: null, durationDays: 14}, // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
+  insulinVial: {openedAt: null, durationDays: 28} // insulin vial/pen: openedAt is when this vial was started
 };
-function repairSensorActivatedAt(activatedAt){
+function repairDateTimeField(activatedAt){
   if(!activatedAt) return activatedAt;
   const [datePart, timePart] = activatedAt.split('T');
   if(!datePart || !/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null; // unrecoverable, drop it
@@ -3647,9 +3649,11 @@ function normalizeSupplies(parsed){
     strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
     lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets),
-    sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor)
+    sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor),
+    insulinVial: Object.assign({}, SUPPLIES_DEFAULTS.insulinVial, parsed.insulinVial)
   });
-  normalized.sensor.activatedAt = repairSensorActivatedAt(normalized.sensor.activatedAt);
+  normalized.sensor.activatedAt = repairDateTimeField(normalized.sensor.activatedAt);
+  normalized.insulinVial.openedAt = repairDateTimeField(normalized.insulinVial.openedAt);
   return normalized;
 }
 function loadSupplies(){
@@ -3780,12 +3784,27 @@ function renderSupplies(){
   } else {
     sensorStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄啟用時間</div>`;
   }
+  let vialStatusHtml;
+  const vialOpenedDate = supplies.insulinVial.openedAt ? supplies.insulinVial.openedAt.split('T')[0] : '';
+  const vialOpenedTime = supplies.insulinVial.openedAt && supplies.insulinVial.openedAt.includes('T') ? supplies.insulinVial.openedAt.split('T')[1] : '00:00';
+  if(supplies.insulinVial.openedAt){
+    const opened = new Date(supplies.insulinVial.openedAt);
+    const expiry = new Date(opened); expiry.setDate(expiry.getDate()+supplies.insulinVial.durationDays);
+    const daysLeft = Math.ceil((expiry - new Date()) / 86400000);
+    const expiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+    const expiryTimeStr = String(expiry.getHours()).padStart(2,'0')+':'+String(expiry.getMinutes()).padStart(2,'0');
+    const expired = daysLeft<0;
+    vialStatusHtml = `<div class="supply-days${expired?' warn-text':''}">開瓶：${vialOpenedDate} ${vialOpenedTime}　到期：${expiryDateStr} ${expiryTimeStr}<br>${expired ? `⚠️已過期 ${Math.abs(daysLeft)} 天，該換新的胰島素了` : `還剩 <b>${daysLeft}</b> 天`}</div>`;
+  } else {
+    vialStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄開瓶時間</div>`;
+  }
   el.innerHTML = `
     <div class="supply-card${supplies.sensor.activatedAt && (new Date(supplies.sensor.activatedAt).getTime() + supplies.sensor.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
       <div class="supply-title">📡 Libre 感測器</div>
       ${sensorStatusHtml}
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
         <button type="button" class="tag-add-btn" id="sensorActivateBtn">✅ 現在啟用新感測器</button>
+        ${supplies.sensor.activatedAt ? `<button type="button" class="tag-add-btn" id="sensorCancelBtn" style="background:none;border:1px solid #B23A48;color:#B23A48;">✕ 取消感測器</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
         <label style="margin:0;flex-shrink:0;">啟用日期：</label>
@@ -3798,6 +3817,26 @@ function renderSupplies(){
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
         <label style="margin:0;flex-shrink:0;">使用天數：</label>
         <input type="text" inputmode="numeric" id="sensorDurationInput" value="${supplies.sensor.durationDays}" style="width:70px;">
+      </div>
+    </div>
+    <div class="supply-card${supplies.insulinVial.openedAt && (new Date(supplies.insulinVial.openedAt).getTime() + supplies.insulinVial.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
+      <div class="supply-title">💉 胰島素到期日</div>
+      ${vialStatusHtml}
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button type="button" class="tag-add-btn" id="vialOpenBtn">✅ 現在開新的胰島素</button>
+        ${supplies.insulinVial.openedAt ? `<button type="button" class="tag-add-btn" id="vialCancelBtn" style="background:none;border:1px solid #B23A48;color:#B23A48;">✕ 取消</button>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">開瓶日期：</label>
+        <input type="date" id="vialOpenedDateInput" value="${vialOpenedDate}">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">開瓶時間：</label>
+        <input type="text" inputmode="numeric" id="vialOpenedTimeInput" placeholder="HH:MM" value="${vialOpenedDate ? vialOpenedTime : ''}" style="width:90px;">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <label style="margin:0;flex-shrink:0;">使用天數：</label>
+        <input type="text" inputmode="numeric" id="vialDurationInput" value="${supplies.insulinVial.durationDays}" style="width:70px;">
       </div>
     </div>
     ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft, stripsRate)}
@@ -3872,6 +3911,16 @@ function renderSupplies(){
     renderSupplies();
     renderCalendar();
   });
+  const sensorCancelBtn = document.getElementById('sensorCancelBtn');
+  if(sensorCancelBtn){
+    sensorCancelBtn.addEventListener('click', ()=>{
+      if(!confirm('確定要取消目前的感測器記錄嗎？')) return;
+      supplies.sensor.activatedAt = null;
+      saveSupplies();
+      renderSupplies();
+      renderCalendar();
+    });
+  }
   function updateSensorFromInputs(){
     const dateVal = document.getElementById('sensorActivatedDateInput').value;
     let timeVal = document.getElementById('sensorActivatedTimeInput').value.trim();
@@ -3888,6 +3937,39 @@ function renderSupplies(){
   document.getElementById('sensorDurationInput').addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
     if(n && n>0){ supplies.sensor.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
+  });
+  document.getElementById('vialOpenBtn').addEventListener('click', ()=>{
+    supplies.insulinVial.openedAt = todayStr()+'T'+nowTime();
+    saveSupplies();
+    renderSupplies();
+    renderCalendar();
+  });
+  const vialCancelBtn = document.getElementById('vialCancelBtn');
+  if(vialCancelBtn){
+    vialCancelBtn.addEventListener('click', ()=>{
+      if(!confirm('確定要取消目前的胰島素開瓶記錄嗎？')) return;
+      supplies.insulinVial.openedAt = null;
+      saveSupplies();
+      renderSupplies();
+      renderCalendar();
+    });
+  }
+  function updateVialFromInputs(){
+    const dateVal = document.getElementById('vialOpenedDateInput').value;
+    let timeVal = document.getElementById('vialOpenedTimeInput').value.trim();
+    if(!/^\d{2}:\d{2}$/.test(timeVal)) timeVal = '';
+    if(!dateVal){ supplies.insulinVial.openedAt = null; }
+    else { supplies.insulinVial.openedAt = dateVal+'T'+(timeVal || '00:00'); }
+    saveSupplies();
+    renderSupplies();
+    renderCalendar();
+  }
+  document.getElementById('vialOpenedTimeInput').addEventListener('input', (e)=> autoFormatTimeInput(e.target));
+  document.getElementById('vialOpenedDateInput').addEventListener('change', updateVialFromInputs);
+  document.getElementById('vialOpenedTimeInput').addEventListener('change', updateVialFromInputs);
+  document.getElementById('vialDurationInput').addEventListener('change', (e)=>{
+    const n = parseInt(e.target.value);
+    if(n && n>0){ supplies.insulinVial.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
   });
 }
 document.getElementById('suppliesBtn').addEventListener('click', ()=>{
@@ -3967,6 +4049,13 @@ function renderCalendar(){
     expiry.setDate(expiry.getDate()+supplies.sensor.durationDays);
     sensorExpiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
   }
+  let vialOpenedDateStr = null, vialExpiryDateStr = null;
+  if(supplies.insulinVial && supplies.insulinVial.openedAt){
+    vialOpenedDateStr = supplies.insulinVial.openedAt.split('T')[0];
+    const expiry = new Date(supplies.insulinVial.openedAt);
+    expiry.setDate(expiry.getDate()+supplies.insulinVial.durationDays);
+    vialExpiryDateStr = expiry.getFullYear()+'-'+String(expiry.getMonth()+1).padStart(2,'0')+'-'+String(expiry.getDate()).padStart(2,'0');
+  }
 
   let html = '';
   for(let i=0;i<startWeekday;i++){
@@ -3996,6 +4085,8 @@ function renderCalendar(){
     if(isToday && lancetDueNow) supplyMarkers.push('🔴');
     if(sensorActivatedDateStr===dateStr) supplyMarkers.push('📡');
     if(sensorExpiryDateStr===dateStr) supplyMarkers.push('⏰');
+    if(vialOpenedDateStr===dateStr) supplyMarkers.push('🧪');
+    if(vialExpiryDateStr===dateStr) supplyMarkers.push('⌛');
     html += `<div class="cal-day${isToday?' today':''}" style="${bg}" data-date="${dateStr}">
       <span class="cal-daynum">${d}</span>
       ${hasEvents ? `<span class="cal-event-dot">📌</span>` : ''}
@@ -4049,6 +4140,20 @@ function openCalDayMenu(dateStr){
     if(expiryStr===dateStr){
       const expiryTime = String(expiry.getHours()).padStart(2,'0')+':'+String(expiry.getMinutes()).padStart(2,'0');
       supplyNotes.push(`⏰ Libre 感測器這天到期（約${expiryTime}）`);
+    }
+  }
+  if(supplies.insulinVial && supplies.insulinVial.openedAt){
+    const openedDateOnly = supplies.insulinVial.openedAt.split('T')[0];
+    if(openedDateOnly===dateStr){
+      const timePart = supplies.insulinVial.openedAt.split('T')[1] || '';
+      supplyNotes.push(`🧪 胰島素這天開瓶${timePart ? '（'+timePart+'）' : ''}`);
+    }
+    const vExpiry = new Date(supplies.insulinVial.openedAt);
+    vExpiry.setDate(vExpiry.getDate()+supplies.insulinVial.durationDays);
+    const vExpiryStr = vExpiry.getFullYear()+'-'+String(vExpiry.getMonth()+1).padStart(2,'0')+'-'+String(vExpiry.getDate()).padStart(2,'0');
+    if(vExpiryStr===dateStr){
+      const vExpiryTime = String(vExpiry.getHours()).padStart(2,'0')+':'+String(vExpiry.getMinutes()).padStart(2,'0');
+      supplyNotes.push(`⌛ 胰島素這天到期（約${vExpiryTime}）`);
     }
   }
   const supplyNoticeHtml = supplyNotes.length
@@ -5248,6 +5353,14 @@ async function syncFromDriveOnLogin(){
           // Take the more conservative (lower) stock number from either side,
           // since assuming less remaining stock is safer than assuming more.
           const remoteSupplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          function preferMoreRecent(localField, remoteField){
+            // For "when did this get started" timestamps: if they differ, the
+            // one with the later real-world time is more likely to be the
+            // genuinely newer event (e.g. a sensor/vial actually just changed).
+            if(!localField) return remoteField;
+            if(!remoteField) return localField;
+            return new Date(localField) >= new Date(remoteField) ? localField : remoteField;
+          }
           supplies = normalizeSupplies({
             strips: {stock: Math.min(supplies.strips.stock, remoteSupplies.strips.stock)},
             needles: {stock: Math.min(supplies.needles.stock, remoteSupplies.needles.stock)},
@@ -5257,7 +5370,8 @@ async function syncFromDriveOnLogin(){
               changeThreshold: supplies.lancets.changeThreshold
             },
             countSkipAsNeedleUse: supplies.countSkipAsNeedleUse,
-            sensor: supplies.sensor
+            sensor: Object.assign({}, supplies.sensor, {activatedAt: preferMoreRecent(supplies.sensor.activatedAt, remoteSupplies.sensor.activatedAt)}),
+            insulinVial: Object.assign({}, supplies.insulinVial, {openedAt: preferMoreRecent(supplies.insulinVial.openedAt, remoteSupplies.insulinVial.openedAt)})
           });
           saveSupplies();
         }
