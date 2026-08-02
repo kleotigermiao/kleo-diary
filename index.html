@@ -1346,6 +1346,21 @@ function loadFoodTypes(){ return loadTagsGeneric(FOOD_TYPES_KEY, Object.keys(FOO
 function saveFoodTypes(types){ saveTagsGeneric(FOOD_TYPES_KEY, types); }
 function loadFoodBrands(type){ return loadTagsGeneric('kleo-food-brands-'+type, FOOD_OPTIONS[type] || []); }
 function saveFoodBrands(type, brands){ saveTagsGeneric('kleo-food-brands-'+type, brands); }
+const FOOD_TYPE_UNITS_KEY = 'kleo-food-type-units-v1';
+function loadFoodTypeUnits(){
+  try{
+    const raw = localStorage.getItem(FOOD_TYPE_UNITS_KEY);
+    return raw ? JSON.parse(raw) : {'零食':'顆'}; // treats default to pieces — too light to weigh accurately
+  }catch(e){ return {'零食':'顆'}; }
+}
+function saveFoodTypeUnits(map){
+  try{ localStorage.setItem(FOOD_TYPE_UNITS_KEY, JSON.stringify(map)); }catch(e){}
+  markLocalChangeAndSync();
+}
+function foodTypeUnit(type){
+  const units = loadFoodTypeUnits();
+  return units[type] || 'g';
+}
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
   stool: ['正常','軟便','拉稀']
@@ -1400,14 +1415,15 @@ function parseFoodEntryGroups(note){
   const mainPart = m ? m[1] : raw;
   const groups = mainPart.split('、').filter(Boolean);
   return groups.map(group=>{
-    const gramsMatch = group.match(/\s+([\d.]+)g$/);
+    const gramsMatch = group.match(/\s+([\d.]+)(g|顆)$/);
     const grams = gramsMatch ? parseFloat(gramsMatch[1]) : null;
+    const unit = gramsMatch ? gramsMatch[2] : 'g';
     const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
     const sepIdx = groupNoGrams.indexOf('：');
     const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
     const brandsStr = sepIdx>=0 ? groupNoGrams.slice(sepIdx+1) : '';
     const brands = brandsStr ? brandsStr.split('+').filter(Boolean) : [];
-    return {type, brands, grams};
+    return {type, brands, grams, unit};
   });
 }
 function computeFoodStats(day){
@@ -1508,7 +1524,7 @@ function buildKcalProgressHtml(day, dateStr){
     const avgKcalPerG = typeAverageKcalPerGram(type);
     if(avgKcalPerG==null || avgKcalPerG<=0) return null;
     const grams = Math.abs(diff)/avgKcalPerG;
-    return `${escapeHtml(type)} ${grams.toFixed(0)}g`;
+    return `${escapeHtml(type)} ${grams.toFixed(grams<1?1:0)}${foodTypeUnit(type)}`;
   }).filter(Boolean);
   const suggestionStr = gramSuggestions.length ? `單獨用其中一種補：${gramSuggestions.join('　或　')}` : '';
   const isOver = diff<-1;
@@ -1609,7 +1625,7 @@ function render(){
     const foodStats = computeFoodStats(day);
     const foodStatsKeys = Object.keys(foodStats);
     const foodStatsHtml = foodStatsKeys.length>0
-      ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}g`).join('　')}</div>`
+      ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}${foodTypeUnit(k)}`).join('　')}</div>`
       : '';
     const kcalProgressHtml = buildKcalProgressHtml(day, dateStr);
     const notesHtml = `<div class="notes-row">
@@ -1973,7 +1989,7 @@ function openSheetForEdit(dateStr, cat, idx){
     const groups = mainPart.split('、').filter(Boolean);
     groups.forEach(group=>{
       // each group looks like "TYPE：BRAND1+BRAND2 12g" or just "TYPE 12g" or "TYPE"
-      const gramsMatch = group.match(/\s+([\d.]+)g$/);
+      const gramsMatch = group.match(/\s+([\d.]+)(g|顆)$/);
       const grams = gramsMatch ? gramsMatch[1] : '';
       const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
       const sepIdx = groupNoGrams.indexOf('：');
@@ -2105,7 +2121,7 @@ function saveTagsGeneric(key, tags){
 // types, food brands per type — an open-ended, dynamically-named set of
 // localStorage keys). Matched by prefix so any NEW tag group added later is
 // automatically covered without needing individual sync wiring each time.
-const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags'];
+const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags', 'kleo-food-type-units'];
 function collectSyncableTagStorage(){
   const bucket = {};
   for(let i=0;i<localStorage.length;i++){
@@ -2473,16 +2489,17 @@ function setCategory(cat){
         const type = btn.dataset.type;
         const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
         const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
-        const grams = gramsInput ? gramsInput.value.trim() : '';
+        const amount = gramsInput ? gramsInput.value.trim() : '';
         const brandStr = brands.length ? brands.join('+') : '';
         let part = brandStr ? `${type}：${brandStr}` : type;
-        if(grams) part += ` ${grams}g`;
+        if(amount) part += ` ${amount}${foodTypeUnit(type)}`;
         parts.push(part);
       });
       document.getElementById('fVal').value = parts.join('、');
     }
     function renderBrandSection(type){
       const brands = loadFoodBrands(type);
+      const unit = foodTypeUnit(type);
       const section = document.createElement('div');
       section.className = 'food-brand-section';
       section.dataset.type = type;
@@ -2495,11 +2512,32 @@ function setCategory(cat){
           <input type="text" class="new-food-brand-input" placeholder="新增${escapeHtml(type)}品項…" style="flex:1;">
           <button type="button" class="tag-add-btn add-food-brand-btn">新增</button>
         </div>
-        <label style="margin-top:10px;">${escapeHtml(type)} 份量 (g)</label>
-        <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 5">
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <label style="margin:0;flex-shrink:0;">${escapeHtml(type)} 份量 (${unit})</label>
+          <button type="button" class="unit-toggle-btn" data-type="${escapeHtml(type)}" style="margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--ink-soft);cursor:pointer;">單位：${unit}（點擊切換）</button>
+        </div>
+        <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 ${unit==='顆' ? '2' : '5'}">
       `;
       document.getElementById('foodBrandSections').appendChild(section);
       section.querySelector('.food-type-grams').addEventListener('input', composeFoodValue);
+      section.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
+        const units = loadFoodTypeUnits();
+        units[type] = units[type]==='顆' ? 'g' : '顆';
+        saveFoodTypeUnits(units);
+        // re-render this section fresh so labels/placeholder reflect the new unit
+        const amountVal = section.querySelector('.food-type-grams').value;
+        section.remove();
+        renderBrandSection(type);
+        const newSection = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"]`);
+        if(newSection){
+          newSection.querySelector('.food-type-grams').value = amountVal;
+          (selectedBrands[type]||new Set()).forEach(b=>{
+            const btn = newSection.querySelector(`.food-brand-btn[data-brand="${CSS.escape(b)}"]`);
+            if(btn) btn.classList.add('active');
+          });
+        }
+        composeFoodValue();
+      });
       section.querySelectorAll('.food-brand-btn').forEach(bbtn=>{
         bbtn.addEventListener('click', ()=>{
           bbtn.classList.toggle('active');
@@ -4801,15 +4839,16 @@ function showKcalSettingsModal(){
   const brandRowsHtml = types.map(type=>{
     const brands = loadFoodBrands(type);
     if(brands.length===0) return '';
+    const unit = foodTypeUnit(type);
     const rows = brands.map(b=>{
       const key = type+'::'+b;
       const val = brandKcal[key];
       return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
         <span style="flex:1;font-size:13px;">${escapeHtml(type)}－${escapeHtml(b)}</span>
-        <input type="text" inputmode="decimal" class="brand-kcal-input" data-key="${escapeHtml(key)}" placeholder="kcal/g" value="${val!=null?val:''}" style="width:90px;">
+        <input type="text" inputmode="decimal" class="brand-kcal-input" data-key="${escapeHtml(key)}" placeholder="kcal/${unit}" value="${val!=null?val:''}" style="width:90px;">
       </div>`;
     }).join('');
-    return `<label style="margin-top:12px;">${escapeHtml(type)}</label>${rows}`;
+    return `<label style="margin-top:12px;">${escapeHtml(type)}（單位：${unit}）</label>${rows}`;
   }).join('');
   box.innerHTML = `
     <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">熱量設定</h3>
@@ -5201,7 +5240,25 @@ async function syncFromDriveOnLogin(){
         localStorage.setItem('kleo-last-modified', String(newTs));
         localStorage.setItem(LAST_SYNCED_KEY, String(newTs));
         if(remoteEnvelope.supplies){
-          supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          // Stock counts are decrementing counters, not directly mergeable like
+          // diary entries. A blind "take remote's copy" here was the actual bug:
+          // the diary merge correctly combines both devices' new entries, but
+          // this replaced supplies with only ONE side's deductions, leaving the
+          // stock count out of sync with the (correctly merged) entry count.
+          // Take the more conservative (lower) stock number from either side,
+          // since assuming less remaining stock is safer than assuming more.
+          const remoteSupplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          supplies = normalizeSupplies({
+            strips: {stock: Math.min(supplies.strips.stock, remoteSupplies.strips.stock)},
+            needles: {stock: Math.min(supplies.needles.stock, remoteSupplies.needles.stock)},
+            lancets: {
+              stock: Math.min(supplies.lancets.stock, remoteSupplies.lancets.stock),
+              testsSinceChange: Math.max(supplies.lancets.testsSinceChange, remoteSupplies.lancets.testsSinceChange),
+              changeThreshold: supplies.lancets.changeThreshold
+            },
+            countSkipAsNeedleUse: supplies.countSkipAsNeedleUse,
+            sensor: supplies.sensor
+          });
           saveSupplies();
         }
         if(remoteEnvelope.calEvents){
