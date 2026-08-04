@@ -777,9 +777,9 @@ textarea{resize:vertical; min-height:64px;}
   <div id="reportContent"></div>
   <div id="weeklySummaryView" style="display:none;">
     <div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:14px 16px 6px;">
-      <button class="sync-btn" id="weekPrevBtn">‹ 上週</button>
+      <button class="sync-btn" id="weekPrevBtn">‹ 更早7天</button>
       <span id="weekRangeLabel" style="font-family:'Archivo Narrow',sans-serif;font-size:14px;font-weight:700;"></span>
-      <button class="sync-btn" id="weekNextBtn">下週 ›</button>
+      <button class="sync-btn" id="weekNextBtn">更近7天 ›</button>
     </div>
     <div id="weeklySummaryContent" style="padding:8px 16px 24px;"></div>
   </div>
@@ -2967,8 +2967,7 @@ document.getElementById('weekPrevBtn').addEventListener('click', ()=>{
   renderWeeklySummary();
 });
 document.getElementById('weekNextBtn').addEventListener('click', ()=>{
-  weekOffset++;
-  renderWeeklySummary();
+  if(weekOffset<0){ weekOffset++; renderWeeklySummary(); }
 });
 document.getElementById('filterColsBtn').addEventListener('click', ()=>{
   // Open the same config sheet without resetting the already-generated report's date range
@@ -3380,15 +3379,12 @@ function computeDayReportStats(dateStr, day, allDatesSorted, idx){
 }
 let weekOffset = 0; // 0 = this week, -1 = last week, +1 = next week
 function getWeekDates(offset){
-  const today = new Date();
-  const dow = today.getDay(); // 0=Sun
-  const mondayOffset = (dow===0) ? -6 : 1-dow; // shift back to this week's Monday
-  const monday = new Date(today);
-  monday.setDate(monday.getDate() + mondayOffset + offset*7);
+  const endDate = new Date();
+  endDate.setDate(endDate.getDate() + offset*7); // offset=0 → today; each step shifts the whole 7-day window by a week
   const dates = [];
-  for(let i=0;i<7;i++){
-    const d = new Date(monday);
-    d.setDate(d.getDate()+i);
+  for(let i=6;i>=0;i--){
+    const d = new Date(endDate);
+    d.setDate(d.getDate()-i);
     dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
   }
   return dates;
