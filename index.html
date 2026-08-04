@@ -661,7 +661,6 @@ textarea{resize:vertical; min-height:64px;}
       <div class="nav-dropdown-wrap">
         <button class="sync-btn nav-dropdown-btn" data-menu="dataMenu">資料</button>
         <div class="nav-dropdown" id="dataMenu">
-          <button type="button" class="more-menu-item" id="refreshBtn2">重新整理</button>
           <button type="button" class="more-menu-item" id="galleryBtn">圖庫</button>
           <button type="button" class="more-menu-item" id="reportBtn">報表</button>
         </div>
@@ -1774,9 +1773,6 @@ document.querySelectorAll('.nav-dropdown .more-menu-item').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.nav-dropdown').forEach(dd=>{ dd.style.display = 'none'; });
   });
-});
-document.getElementById('refreshBtn2').addEventListener('click', ()=>{
-  window.location.reload();
 });
 
 document.getElementById('refreshBtn').addEventListener('click', ()=>{
