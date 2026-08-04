@@ -65,6 +65,24 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .more-menu-item:last-child{border-bottom:none;}
 .more-menu-item:active{background:var(--line);}
 .nav-dropdown-wrap{position:relative;}
+.report-tab-btn.active{background:var(--ink);color:var(--paper-raised);}
+.week-day-row{
+  display:flex;gap:14px;padding:14px;margin-bottom:12px;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
+  flex-wrap:wrap;
+}
+.week-day-chart{flex:1 1 280px;min-width:220px;}
+.week-day-chart .wd-label{font-family:'Archivo Narrow',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;}
+.week-day-stats{
+  flex:0 0 auto;display:grid;grid-template-columns:repeat(3,minmax(70px,1fr));gap:8px;
+  align-content:start;min-width:220px;
+}
+.wd-stat-box{
+  background:#00000006;border-radius:8px;padding:8px 6px;text-align:center;
+}
+.wd-stat-box .wd-val{font-size:16px;font-weight:700;color:var(--ink);}
+.wd-stat-box .wd-unit{font-size:9px;color:var(--ink-soft);}
+.wd-stat-box .wd-label{font-size:9px;color:var(--ink-soft);margin-top:2px;}
 .nav-dropdown{
   display:none;position:absolute;top:calc(100% + 6px);right:0;
   background:var(--paper);border:1px solid var(--line);border-radius:10px;
@@ -752,7 +770,19 @@ textarea{resize:vertical; min-height:64px;}
       <button class="sync-btn" id="printReportBtn">列印 / 存成PDF</button>
     </div>
   </div>
+  <div style="display:flex;gap:8px;padding:12px 16px 0;">
+    <button class="sync-btn report-tab-btn active" id="reportTabTable" data-tab="table">資料表</button>
+    <button class="sync-btn report-tab-btn" id="reportTabWeekly" data-tab="weekly">每週摘要</button>
+  </div>
   <div id="reportContent"></div>
+  <div id="weeklySummaryView" style="display:none;">
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:14px 16px 6px;">
+      <button class="sync-btn" id="weekPrevBtn">‹ 上週</button>
+      <span id="weekRangeLabel" style="font-family:'Archivo Narrow',sans-serif;font-size:14px;font-weight:700;"></span>
+      <button class="sync-btn" id="weekNextBtn">下週 ›</button>
+    </div>
+    <div id="weeklySummaryContent" style="padding:8px 16px 24px;"></div>
+  </div>
 </div>
 
 <div id="galleryView" style="display:none;">
@@ -2904,6 +2934,10 @@ let userPickedLayout = false;
 let lastReportRange = null;
 
 reportBtn.addEventListener('click', ()=>{
+  weekOffset = 0;
+  document.querySelectorAll('.report-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab==='table'));
+  document.getElementById('reportContent').style.display = 'block';
+  document.getElementById('weeklySummaryView').style.display = 'none';
   const today = todayStr();
   rangeEnd.value = today;
   const d = new Date();
@@ -2917,6 +2951,24 @@ reportBtn.addEventListener('click', ()=>{
   }
   reportConfigSheet.classList.add('open');
   reportBackdrop.classList.add('open');
+});
+document.querySelectorAll('.report-tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.report-tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const isWeekly = btn.dataset.tab==='weekly';
+    document.getElementById('reportContent').style.display = isWeekly ? 'none' : 'block';
+    document.getElementById('weeklySummaryView').style.display = isWeekly ? 'block' : 'none';
+    if(isWeekly) renderWeeklySummary();
+  });
+});
+document.getElementById('weekPrevBtn').addEventListener('click', ()=>{
+  weekOffset--;
+  renderWeeklySummary();
+});
+document.getElementById('weekNextBtn').addEventListener('click', ()=>{
+  weekOffset++;
+  renderWeeklySummary();
 });
 document.getElementById('filterColsBtn').addEventListener('click', ()=>{
   // Open the same config sheet without resetting the already-generated report's date range
@@ -3278,6 +3330,99 @@ function wireColCheckDrag(grid){
 }
 renderColCheckGrid();
 
+// ---- Weekly summary report ----
+function buildMiniDayChart(day){
+  const entries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
+  if(entries.length===0) return '<p class="no-data-msg" style="font-size:12px;margin:0;">沒有血糖記錄</p>';
+  const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
+  const toMinutes = t => { const [h,m]=t.split(':').map(Number); return h*60+m; };
+  const vals = sorted.map(e=>e.value);
+  const yMin = Math.floor(Math.min(Math.min(...vals),4)/2)*2;
+  const yMax = Math.ceil(Math.max(Math.max(...vals),20)/2)*2;
+  const yRange = yMax-yMin || 1;
+  const W=520, H=150, padL=32, padR=8, padT=8, padB=8;
+  const chartW = W-padL-padR, chartH = H-padT-padB;
+  const xFor = t => padL + (toMinutes(t)/1440)*chartW;
+  const yFor = v => padT + chartH - ((v-yMin)/yRange)*chartH;
+  const colors = {low:'#3B6E8F', normal:'#3F7A5C', high:'#D6622C'};
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">`;
+  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D6622C" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(3.9)}" x2="${W-padR}" y2="${yFor(3.9)}" stroke="#3B6E8F" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<text x="${padL-4}" y="${yFor(10)+3}" font-size="9" fill="#D6622C" text-anchor="end">10</text>`;
+  svg += `<text x="${padL-4}" y="${yFor(3.9)+3}" font-size="9" fill="#3B6E8F" text-anchor="end">3.9</text>`;
+  (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).forEach(e=>{
+    const x = xFor(e.time);
+    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-padB}" stroke="#C0392B" stroke-width="1" opacity="0.4"/>`;
+  });
+  const pathD = sorted.map((e,i)=> `${i===0?'M':'L'} ${xFor(e.time).toFixed(1)} ${yFor(e.value).toFixed(1)}`).join(' ');
+  svg += `<path d="${pathD}" fill="none" stroke="#7A9B8E" stroke-width="1.5"/>`;
+  sorted.forEach(e=>{
+    svg += `<circle cx="${xFor(e.time).toFixed(1)}" cy="${yFor(e.value).toFixed(1)}" r="2.5" fill="${colors[glucoseLevel(e.value)]}"><title>${e.time} → ${e.value} mmol/L</title></circle>`;
+  });
+  svg += `</svg>`;
+  return svg;
+}
+function computeDayReportStats(dateStr, day, allDatesSorted, idx){
+  const glucoseEntries = (day.glucose||[]).filter(e=>typeof e.value==='number');
+  const avgGlucose = glucoseEntries.length ? (glucoseEntries.reduce((a,e)=>a+e.value,0)/glucoseEntries.length) : null;
+  const glucoseCount = glucoseEntries.length;
+  const insulinTotal = (day.insulin||[]).reduce((sum,e)=>{
+    const m = (e.dose||'').match(/([\d.]+)/);
+    return sum + (m?parseFloat(m[1]):0);
+  },0);
+  const lowCount = glucoseEntries.filter(e=>e.value<3.9).length;
+  const highCount = glucoseEntries.filter(e=>e.value>13.9).length;
+  const {totalKcal} = computeFoodKcalSoFar(day);
+  const waterTotal = (day.water||[]).reduce((sum,e)=>sum+(e.ml||0),0);
+  const vomitCount = (day.vomit||[]).length;
+  const catScore = computeCatScore(dateStr, day, allDatesSorted, idx);
+  return {avgGlucose, glucoseCount, insulinTotal, lowCount, highCount, totalKcal, waterTotal, vomitCount, catScore};
+}
+let weekOffset = 0; // 0 = this week, -1 = last week, +1 = next week
+function getWeekDates(offset){
+  const today = new Date();
+  const dow = today.getDay(); // 0=Sun
+  const mondayOffset = (dow===0) ? -6 : 1-dow; // shift back to this week's Monday
+  const monday = new Date(today);
+  monday.setDate(monday.getDate() + mondayOffset + offset*7);
+  const dates = [];
+  for(let i=0;i<7;i++){
+    const d = new Date(monday);
+    d.setDate(d.getDate()+i);
+    dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
+  }
+  return dates;
+}
+function renderWeeklySummary(){
+  const weekDates = getWeekDates(weekOffset);
+  document.getElementById('weekRangeLabel').textContent = `${weekDates[0]} ~ ${weekDates[6]}`;
+  const allDatesSorted = Object.keys(data).sort().reverse();
+  const content = document.getElementById('weeklySummaryContent');
+  content.innerHTML = weekDates.map(dateStr=>{
+    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const idx = allDatesSorted.indexOf(dateStr);
+    const stats = computeDayReportStats(dateStr, day, allDatesSorted, idx);
+    const chartHtml = buildMiniDayChart(day);
+    const statBox = (val, unit, label) => `<div class="wd-stat-box"><div class="wd-val">${val}</div><div class="wd-unit">${unit}</div><div class="wd-label">${label}</div></div>`;
+    return `<div class="week-day-row">
+      <div class="week-day-chart">
+        <div class="wd-label">${formatDateLabel(dateStr)}　${weekdayName(dateStr)}</div>
+        ${chartHtml}
+      </div>
+      <div class="week-day-stats">
+        ${statBox(stats.avgGlucose!=null?stats.avgGlucose.toFixed(1):'--', 'mmol/L', '平均血糖')}
+        ${statBox(stats.glucoseCount, '次', '血糖讀數')}
+        ${statBox(stats.insulinTotal>0?stats.insulinTotal.toFixed(1):'0', '單位', '胰島素總量')}
+        ${statBox(stats.lowCount, '次', '低血糖(<3.9)')}
+        ${statBox(stats.highCount, '次', '高血糖(>13.9)')}
+        ${statBox(stats.totalKcal>0?stats.totalKcal.toFixed(0):'--', 'kcal', '飲食熱量')}
+        ${statBox(stats.waterTotal>0?stats.waterTotal:'--', 'ml', '飲水總量')}
+        ${statBox(stats.vomitCount, '次', '嘔吐次數')}
+        ${statBox(stats.catScore!=null?stats.catScore:'--', '分', '貓貓狀態')}
+      </div>
+    </div>`;
+  }).join('');
+}
 function generateReport(){
   const {start, end} = getRangeDates();
   if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
