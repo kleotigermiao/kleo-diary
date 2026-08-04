@@ -3339,20 +3339,52 @@ function buildMiniDayChart(day){
   const yMin = Math.floor(Math.min(Math.min(...vals),4)/2)*2;
   const yMax = Math.ceil(Math.max(Math.max(...vals),20)/2)*2;
   const yRange = yMax-yMin || 1;
-  const W=520, H=150, padL=32, padR=8, padT=8, padB=8;
+  const W=520, H=230, padL=32, padR=8, padT=42, padB=22;
   const chartW = W-padL-padR, chartH = H-padT-padB;
   const xFor = t => padL + (toMinutes(t)/1440)*chartW;
   const yFor = v => padT + chartH - ((v-yMin)/yRange)*chartH;
   const colors = {low:'#3B6E8F', normal:'#3F7A5C', high:'#D6622C'};
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">`;
-  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D6622C" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
-  svg += `<line x1="${padL}" y1="${yFor(3.9)}" x2="${W-padR}" y2="${yFor(3.9)}" stroke="#3B6E8F" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
-  svg += `<text x="${padL-4}" y="${yFor(10)+3}" font-size="9" fill="#D6622C" text-anchor="end">10</text>`;
-  svg += `<text x="${padL-4}" y="${yFor(3.9)+3}" font-size="9" fill="#3B6E8F" text-anchor="end">3.9</text>`;
-  (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).forEach(e=>{
-    const x = xFor(e.time);
-    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-padB}" stroke="#C0392B" stroke-width="1" opacity="0.4"/>`;
+
+  // x-axis time gridlines + labels: 00:00, 06:00, 12:00, 18:00, 00:00
+  [0,6,12,18,24].forEach(hr=>{
+    const x = padL + (Math.min(hr,24)*60/1440)*chartW;
+    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-padB}" stroke="#C8D3C9" stroke-width="1" opacity="0.5"/>`;
+    svg += `<text x="${x.toFixed(1)}" y="${H-padB+13}" font-size="8.5" fill="#5A6E6E" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`;
   });
+  svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#C0392B" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D9A441" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>`;
+  svg += `<line x1="${padL}" y1="${yFor(3.9)}" x2="${W-padR}" y2="${yFor(3.9)}" stroke="#3B6E8F" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<text x="${padL-4}" y="${yFor(15)+3}" font-size="9" fill="#C0392B" text-anchor="end">15</text>`;
+  svg += `<text x="${padL-4}" y="${yFor(10)+3}" font-size="9" fill="#D9A441" text-anchor="end">10</text>`;
+  svg += `<text x="${padL-4}" y="${yFor(3.9)+3}" font-size="9" fill="#3B6E8F" text-anchor="end">3.9</text>`;
+
+  // Track label rows so markers don't all stack on the exact same line —
+  // alternate between two label bands based on order of appearance.
+  const markers = [];
+  (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).forEach(e=>{
+    const doseText = (e.dose||'').trim();
+    const isSkip = doseText.toLowerCase()==='skip';
+    markers.push({time:e.time, color:'#C0392B', label: isSkip ? '跳過' : (doseText||'注射'), kind:'insulin'});
+  });
+  (day.food||[]).forEach(e=>{
+    if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+    const groups = parseFoodEntryGroups(e.note);
+    const amountStr = groups.filter(g=>g.grams!=null).map(g=>`${g.grams}${g.unit||'g'}`).join('+');
+    markers.push({time:e.time, color:'#D9A441', label: amountStr || '進食', kind:'food'});
+  });
+  markers.sort((a,b)=>a.time.localeCompare(b.time));
+  markers.forEach((m,i)=>{
+    const x = xFor(m.time);
+    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-padB}" stroke="${m.color}" stroke-width="1" opacity="0.35"/>`;
+    const row = i%2; // alternate two rows to reduce label overlap
+    const boxY = padT - 34 + row*17;
+    const label = `${m.time} ${m.label}`;
+    const boxW = Math.max(28, label.length*5.2);
+    svg += `<rect x="${(x-boxW/2).toFixed(1)}" y="${boxY}" width="${boxW.toFixed(1)}" height="14" rx="3" fill="${m.color}" opacity="0.85"/>`;
+    svg += `<text x="${x.toFixed(1)}" y="${boxY+10}" font-size="8" fill="#fff" text-anchor="middle">${escapeHtml(label)}</text>`;
+  });
+
   const pathD = sorted.map((e,i)=> `${i===0?'M':'L'} ${xFor(e.time).toFixed(1)} ${yFor(e.value).toFixed(1)}`).join(' ');
   svg += `<path d="${pathD}" fill="none" stroke="#7A9B8E" stroke-width="1.5"/>`;
   sorted.forEach(e=>{
