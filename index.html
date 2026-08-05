@@ -3354,44 +3354,48 @@ function buildMiniDayChart(day){
   const yMin = Math.floor(Math.min(Math.min(...vals),4)/2)*2;
   const yMax = Math.ceil(Math.max(Math.max(...vals),20)/2)*2;
   const yRange = yMax-yMin || 1;
-  const W=520, padL=32, padR=8, padT=14;
+  const W=520, padL=32, padR=8;
   const chartW = W-padL-padR;
   const xForFixed = t => padL + (toMinutes(t)/1440)*chartW; // x doesn't depend on padB, safe to compute early
 
-  // Build the marker list first (insulin doses + food amounts) and figure out
-  // how many label rows are actually needed, based on real horizontal overlap
-  // — not just alternating by index — so labels never sit on top of each other.
-  // These now live in a band near the bottom time-axis, stacked upward from
-  // there, rather than at the top of the chart.
-  const markers = [];
+  // Build insulin dose markers (go above the chart) and food markers (stay
+  // near the bottom time-axis) separately, each with their own row-collision
+  // handling, based on real horizontal overlap so labels never stack.
+  const insulinMarkers = [];
   (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).forEach(e=>{
     const doseText = (e.dose||'').trim();
     const isSkip = doseText.toLowerCase()==='skip';
-    markers.push({time:e.time, color:'#C0392B', label: isSkip ? '跳過' : (doseText||'注射')});
+    insulinMarkers.push({time:e.time, color:'#C0392B', label: isSkip ? '跳過' : (doseText||'注射')});
   });
+  const foodMarkers = [];
   (day.food||[]).forEach(e=>{
     if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
     const groups = parseFoodEntryGroups(e.note);
     const amountStr = groups.filter(g=>g.grams!=null).map(g=>`${g.grams}${g.unit||'g'}`).join('+');
-    markers.push({time:e.time, color:'#D9A441', label: amountStr || '進食'});
+    foodMarkers.push({time:e.time, color:'#D9A441', label: amountStr || '進食'});
   });
-  markers.sort((a,b)=>a.time.localeCompare(b.time));
-  const rowEnds = []; // rightmost occupied x per row so far
-  const GAP = 3;
-  markers.forEach(m=>{
-    const x = xForFixed(m.time);
-    const label = `${m.time} ${m.label}`;
-    const boxW = Math.max(28, label.length*5.2);
-    const left = x - boxW/2, right = x + boxW/2;
-    let row = 0;
-    while(rowEnds[row]!=null && left < rowEnds[row]+GAP) row++;
-    rowEnds[row] = right;
-    m.row = row; m.boxW = boxW; m.label = label; m.x = x;
-  });
-  const maxRows = rowEnds.length || 0;
+  function assignRows(list){
+    list.sort((a,b)=>a.time.localeCompare(b.time));
+    const rowEnds = [];
+    const GAP = 3;
+    list.forEach(m=>{
+      const x = xForFixed(m.time);
+      const label = `${m.time} ${m.label}`;
+      const boxW = Math.max(28, label.length*5.2);
+      const left = x - boxW/2, right = x + boxW/2;
+      let row = 0;
+      while(rowEnds[row]!=null && left < rowEnds[row]+GAP) row++;
+      rowEnds[row] = right;
+      m.row = row; m.boxW = boxW; m.label = label; m.x = x;
+    });
+    return rowEnds.length || 0;
+  }
+  const insulinRows = assignRows(insulinMarkers);
+  const foodRows = assignRows(foodMarkers);
   const rowHeight = 15;
   const timeAxisH = 16; // space for the 00:00/06:00/... labels themselves
-  const padB = timeAxisH + Math.max(1,maxRows)*rowHeight + 6;
+  const padT = 6 + Math.max(1,insulinRows)*rowHeight;
+  const padB = timeAxisH + Math.max(1,foodRows)*rowHeight + 6;
   const H = padT + 130 + padB;
   const chartH = H - padT - padB;
   const xFor = xForFixed;
@@ -3413,11 +3417,18 @@ function buildMiniDayChart(day){
   svg += `<text x="${padL-4}" y="${yFor(10)+3}" font-size="9" fill="#D9A441" text-anchor="end">10</text>`;
   svg += `<text x="${padL-4}" y="${yFor(3.9)+3}" font-size="9" fill="#3B6E8F" text-anchor="end">3.9</text>`;
 
-  // Marker label rows stack upward starting just above the time-axis band
-  const markerBandTop = H - timeAxisH - Math.max(1,maxRows)*rowHeight;
-  markers.forEach(m=>{
+  // Insulin dose labels stack downward from the very top of the chart
+  insulinMarkers.forEach(m=>{
     svg += `<line x1="${m.x.toFixed(1)}" y1="${padT}" x2="${m.x.toFixed(1)}" y2="${H-timeAxisH}" stroke="${m.color}" stroke-width="1" opacity="0.3"/>`;
-    const boxY = markerBandTop + m.row*rowHeight;
+    const boxY = 4 + m.row*rowHeight;
+    svg += `<rect x="${(m.x-m.boxW/2).toFixed(1)}" y="${boxY.toFixed(1)}" width="${m.boxW.toFixed(1)}" height="13" rx="3" fill="${m.color}" opacity="0.85"/>`;
+    svg += `<text x="${m.x.toFixed(1)}" y="${(boxY+9.5).toFixed(1)}" font-size="8" fill="#fff" text-anchor="middle">${escapeHtml(m.label)}</text>`;
+  });
+  // Food labels stack upward starting just above the time-axis band
+  const foodBandTop = H - timeAxisH - Math.max(1,foodRows)*rowHeight;
+  foodMarkers.forEach(m=>{
+    svg += `<line x1="${m.x.toFixed(1)}" y1="${padT}" x2="${m.x.toFixed(1)}" y2="${H-timeAxisH}" stroke="${m.color}" stroke-width="1" opacity="0.3"/>`;
+    const boxY = foodBandTop + m.row*rowHeight;
     svg += `<rect x="${(m.x-m.boxW/2).toFixed(1)}" y="${boxY.toFixed(1)}" width="${m.boxW.toFixed(1)}" height="13" rx="3" fill="${m.color}" opacity="0.85"/>`;
     svg += `<text x="${m.x.toFixed(1)}" y="${(boxY+9.5).toFixed(1)}" font-size="8" fill="#fff" text-anchor="middle">${escapeHtml(m.label)}</text>`;
   });
