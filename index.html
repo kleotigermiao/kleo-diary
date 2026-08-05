@@ -3436,14 +3436,14 @@ function buildMiniDayChart(day){
   const pathD = sorted.map((e,i)=> `${i===0?'M':'L'} ${xFor(e.time).toFixed(1)} ${yFor(e.value).toFixed(1)}`).join(' ');
   svg += `<path d="${pathD}" fill="none" stroke="#7A9B8E" stroke-width="1.5"/>`;
   let lastLabelX = -Infinity;
-  const MIN_LABEL_GAP = 30;
+  const MIN_LABEL_GAP = 46;
   sorted.forEach(e=>{
     const x = xFor(e.time), y = yFor(e.value);
     const dotColor = colors[glucoseLevel(e.value)];
     svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${dotColor}"><title>${e.time} → ${e.value} mmol/L</title></circle>`;
     if(x - lastLabelX >= MIN_LABEL_GAP){
-      const label = String(e.value);
-      const boxW = Math.max(22, label.length*6.2);
+      const label = `${e.time} ${e.value}`;
+      const boxW = Math.max(28, label.length*5.4);
       const boxX = x + 4; // to the right of the point, same height
       const boxY = y - 6.5;
       svg += `<rect x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="13" rx="3" fill="${dotColor}" opacity="0.9"/>`;
