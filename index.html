@@ -263,6 +263,10 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
 }
 .row:last-child{border-bottom:none;}
 .row .icon{width:18px;text-align:center;flex-shrink:0;opacity:0.85;}
+.merge-flag-btn{
+  background:none;border:none;cursor:pointer;font-size:13px;flex-shrink:0;
+  padding:0 2px;line-height:1;
+}
 .row .time{
   font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft);
   flex-shrink:0; width:42px;
@@ -1429,9 +1433,11 @@ function renderRowHtml(dateStr, cat, e, idx){
   }
   const thumbHtml = getEntryPhotos(e).map(p=>`<img class="thumb" src="${p}" data-photo="${p}">`).join('');
   const timeHtml = (cat==='mood' || cat==='appetite' || (cat==='noteEntries' && e.showTime===false)) ? '' : `<span class="time">${e.time}</span>`;
+  const mergeFlagHtml = e._mergeFlag ? `<button class="merge-flag-btn" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}" title="這筆是多裝置合併時新出現的，點擊確認無誤後可以清除這個標記">⚠️</button>` : '';
   return `<div class="row">
     <span class="icon">${ICONS[cat]}</span>
     ${timeHtml}
+    ${mergeFlagHtml}
     <span class="val">${valHtml}</span>
     ${thumbHtml}
     <button class="edit" data-date="${dateStr}" data-cat="${cat}" data-idx="${idx}">✎</button>
@@ -1549,23 +1555,27 @@ function buildKcalProgressHtml(day, dateStr){
   }
   const expected = computeExpectedKcalSoFar(target);
   const diff = expected - totalKcal; // positive = under target, negative = over target
-  const allTypes = loadFoodTypes();
-  const gramSuggestions = allTypes.map(type=>{
-    const avgKcalPerG = typeAverageKcalPerGram(type);
-    if(avgKcalPerG==null || avgKcalPerG<=0) return null;
-    const grams = Math.abs(diff)/avgKcalPerG;
-    return `${escapeHtml(type)} ${grams.toFixed(grams<1?1:0)}${foodTypeUnit(type)}`;
-  }).filter(Boolean);
-  const suggestionStr = gramSuggestions.length ? `單獨用其中一種補：${gramSuggestions.join('　或　')}` : '';
   const isOver = diff<-1;
   const onTrack = Math.abs(diff)<=1;
+  let suggestionStr = '';
+  if(!isOver && !onTrack){
+    // Only makes sense to suggest "feed this much more" when genuinely under target.
+    const allTypes = loadFoodTypes();
+    const gramSuggestions = allTypes.map(type=>{
+      const avgKcalPerG = typeAverageKcalPerGram(type);
+      if(avgKcalPerG==null || avgKcalPerG<=0) return null;
+      const grams = Math.abs(diff)/avgKcalPerG;
+      return `${escapeHtml(type)} ${grams.toFixed(grams<1?1:0)}${foodTypeUnit(type)}`;
+    }).filter(Boolean);
+    suggestionStr = gramSuggestions.length ? `單獨用其中一種補：${gramSuggestions.join('　或　')}` : '';
+  }
   const scaleMax = Math.max(target, totalKcal, expected) * 1.08;
   const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
   const markerPct = Math.min(100, (expected/scaleMax)*100);
   const targetPct = Math.min(100, (target/scaleMax)*100);
   let captionHtml;
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
-  else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
+  else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
   else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
   return `<div class="kcal-progress${isOver?' over':''}">
     <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target} kcal</div>
@@ -1685,6 +1695,15 @@ function render(){
       } else {
         openCalDayMenu(line.dataset.date);
       }
+    });
+  });
+  main.querySelectorAll('.merge-flag-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const {date, cat, idx} = btn.dataset;
+      const entry = data[date] && data[date][cat] && data[date][cat][idx];
+      if(!entry) return;
+      delete entry._mergeFlag;
+      if(save()) render();
     });
   });
   main.querySelectorAll('.del').forEach(btn=>{
@@ -3335,13 +3354,15 @@ function buildMiniDayChart(day){
   const yMin = Math.floor(Math.min(Math.min(...vals),4)/2)*2;
   const yMax = Math.ceil(Math.max(Math.max(...vals),20)/2)*2;
   const yRange = yMax-yMin || 1;
-  const W=520, padL=32, padR=8, padB=22;
+  const W=520, padL=32, padR=8, padT=14;
   const chartW = W-padL-padR;
-  const xForFixed = t => padL + (toMinutes(t)/1440)*chartW; // x doesn't depend on padT, safe to compute early
+  const xForFixed = t => padL + (toMinutes(t)/1440)*chartW; // x doesn't depend on padB, safe to compute early
 
   // Build the marker list first (insulin doses + food amounts) and figure out
   // how many label rows are actually needed, based on real horizontal overlap
   // — not just alternating by index — so labels never sit on top of each other.
+  // These now live in a band near the bottom time-axis, stacked upward from
+  // there, rather than at the top of the chart.
   const markers = [];
   (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).forEach(e=>{
     const doseText = (e.dose||'').trim();
@@ -3369,7 +3390,8 @@ function buildMiniDayChart(day){
   });
   const maxRows = rowEnds.length || 0;
   const rowHeight = 15;
-  const padT = 10 + Math.max(1,maxRows)*rowHeight; // enough headroom for however many label rows are actually needed
+  const timeAxisH = 16; // space for the 00:00/06:00/... labels themselves
+  const padB = timeAxisH + Math.max(1,maxRows)*rowHeight + 6;
   const H = padT + 130 + padB;
   const chartH = H - padT - padB;
   const xFor = xForFixed;
@@ -3378,10 +3400,11 @@ function buildMiniDayChart(day){
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">`;
 
   // x-axis time gridlines + labels: 00:00, 06:00, 12:00, 18:00, 00:00
+  const axisLabelY = H - timeAxisH + 11;
   [0,6,12,18,24].forEach(hr=>{
     const x = padL + (Math.min(hr,24)*60/1440)*chartW;
-    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-padB}" stroke="#C8D3C9" stroke-width="1" opacity="0.5"/>`;
-    svg += `<text x="${x.toFixed(1)}" y="${H-padB+13}" font-size="8.5" fill="#5A6E6E" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`;
+    svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${H-timeAxisH}" stroke="#C8D3C9" stroke-width="1" opacity="0.5"/>`;
+    svg += `<text x="${x.toFixed(1)}" y="${axisLabelY}" font-size="8.5" fill="#5A6E6E" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`;
   });
   svg += `<line x1="${padL}" y1="${yFor(15)}" x2="${W-padR}" y2="${yFor(15)}" stroke="#C0392B" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
   svg += `<line x1="${padL}" y1="${yFor(10)}" x2="${W-padR}" y2="${yFor(10)}" stroke="#D9A441" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>`;
@@ -3390,17 +3413,19 @@ function buildMiniDayChart(day){
   svg += `<text x="${padL-4}" y="${yFor(10)+3}" font-size="9" fill="#D9A441" text-anchor="end">10</text>`;
   svg += `<text x="${padL-4}" y="${yFor(3.9)+3}" font-size="9" fill="#3B6E8F" text-anchor="end">3.9</text>`;
 
+  // Marker label rows stack upward starting just above the time-axis band
+  const markerBandTop = H - timeAxisH - Math.max(1,maxRows)*rowHeight;
   markers.forEach(m=>{
-    svg += `<line x1="${m.x.toFixed(1)}" y1="${padT}" x2="${m.x.toFixed(1)}" y2="${H-padB}" stroke="${m.color}" stroke-width="1" opacity="0.35"/>`;
-    const boxY = 4 + m.row*rowHeight;
-    svg += `<rect x="${(m.x-m.boxW/2).toFixed(1)}" y="${boxY}" width="${m.boxW.toFixed(1)}" height="13" rx="3" fill="${m.color}" opacity="0.85"/>`;
-    svg += `<text x="${m.x.toFixed(1)}" y="${boxY+9.5}" font-size="8" fill="#fff" text-anchor="middle">${escapeHtml(m.label)}</text>`;
+    svg += `<line x1="${m.x.toFixed(1)}" y1="${padT}" x2="${m.x.toFixed(1)}" y2="${H-timeAxisH}" stroke="${m.color}" stroke-width="1" opacity="0.3"/>`;
+    const boxY = markerBandTop + m.row*rowHeight;
+    svg += `<rect x="${(m.x-m.boxW/2).toFixed(1)}" y="${boxY.toFixed(1)}" width="${m.boxW.toFixed(1)}" height="13" rx="3" fill="${m.color}" opacity="0.85"/>`;
+    svg += `<text x="${m.x.toFixed(1)}" y="${(boxY+9.5).toFixed(1)}" font-size="8" fill="#fff" text-anchor="middle">${escapeHtml(m.label)}</text>`;
   });
 
   const pathD = sorted.map((e,i)=> `${i===0?'M':'L'} ${xFor(e.time).toFixed(1)} ${yFor(e.value).toFixed(1)}`).join(' ');
   svg += `<path d="${pathD}" fill="none" stroke="#7A9B8E" stroke-width="1.5"/>`;
   let lastLabelX = -Infinity;
-  const MIN_LABEL_GAP = 26;
+  const MIN_LABEL_GAP = 30;
   sorted.forEach(e=>{
     const x = xFor(e.time), y = yFor(e.value);
     const dotColor = colors[glucoseLevel(e.value)];
@@ -3408,10 +3433,11 @@ function buildMiniDayChart(day){
     if(x - lastLabelX >= MIN_LABEL_GAP){
       const label = String(e.value);
       const boxW = Math.max(22, label.length*6.2);
-      const boxY = y - 20;
-      svg += `<rect x="${(x-boxW/2).toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="13" rx="3" fill="${dotColor}" opacity="0.9"/>`;
-      svg += `<text x="${x.toFixed(1)}" y="${(boxY+9.5).toFixed(1)}" font-size="8" fill="#fff" text-anchor="middle">${label}</text>`;
-      lastLabelX = x;
+      const boxX = x + 4; // to the right of the point, same height
+      const boxY = y - 6.5;
+      svg += `<rect x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="13" rx="3" fill="${dotColor}" opacity="0.9"/>`;
+      svg += `<text x="${(boxX+boxW/2).toFixed(1)}" y="${(boxY+9.5).toFixed(1)}" font-size="8" fill="#fff" text-anchor="middle">${label}</text>`;
+      lastLabelX = boxX + boxW;
     }
   });
   svg += `</svg>`;
@@ -5377,9 +5403,12 @@ function entryIdentityKey(e){
   // vs on the cloud copy (hydrated base64 strings) for the exact same
   // photo, so comparing the raw object (including photos) makes identical
   // entries look "different" and creates duplicates. Compare everything
-  // except photos to determine if two entries are really the same record.
+  // except photos (and the merge-review flag, which is metadata about the
+  // entry, not part of the entry itself) to determine if two entries are
+  // really the same record.
   const clone = Object.assign({}, e);
   delete clone.photos;
+  delete clone._mergeFlag;
   return JSON.stringify(clone);
 }
 function mergeDiaryData(localD, remoteD){
@@ -5389,15 +5418,30 @@ function mergeDiaryData(localD, remoteD){
     const l = (localD && localD[dateStr]) || null;
     const r = (remoteD && remoteD[dateStr]) || null;
     if(l && !r){ merged[dateStr] = l; return; }
-    if(r && !l){ merged[dateStr] = r; return; }
+    if(r && !l){
+      // this whole day only existed on the other device — flag every entry so
+      // it's easy to spot what showed up purely because of the merge.
+      const flaggedDay = {};
+      ALL_DIARY_CATS.forEach(cat=>{
+        flaggedDay[cat] = (r[cat]||[]).map(e=> Object.assign({}, e, {_mergeFlag:true}));
+      });
+      flaggedDay.notes = r.notes || '';
+      merged[dateStr] = flaggedDay;
+      return;
+    }
     // both sides have this date: union each category's entries, de-duping by identity (ignoring photos)
     const day = {};
     ALL_DIARY_CATS.forEach(cat=>{
       const byKey = new Map(); // identityKey -> entry (photos merged in from any duplicate found)
-      [...(l[cat]||[]), ...(r[cat]||[])].forEach(e=>{
+      (l[cat]||[]).forEach(e=>{
+        const key = entryIdentityKey(e);
+        byKey.set(key, Object.assign({}, e));
+      });
+      (r[cat]||[]).forEach(e=>{
         const key = entryIdentityKey(e);
         if(!byKey.has(key)){
-          byKey.set(key, Object.assign({}, e));
+          // genuinely new from the other device's side — flag it for review
+          byKey.set(key, Object.assign({}, e, {_mergeFlag:true}));
         } else {
           // same underlying entry found on both sides: merge their photo lists instead of duplicating the row.
           // A photo can appear as a short IndexedDB ref-id locally but as raw
