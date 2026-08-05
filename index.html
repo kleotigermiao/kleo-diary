@@ -2844,6 +2844,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   } else if(editContext){
     // Editing existing entry in place
     const { date: oldDate, cat, idx } = editContext;
+    const origEntry = (data[oldDate] && data[oldDate][cat] && data[oldDate][cat][idx]) || null;
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     let updated;
     if(cat==='glucose'){
@@ -2863,11 +2864,17 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
       const periodEl = document.getElementById('fWaterPeriod');
-      const origEntry = (data[oldDate] && data[oldDate].water && data[oldDate].water[idx]) || null;
-      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntry && origEntry.period) || undefined};
+      const origEntryWater = (data[oldDate] && data[oldDate].water && data[oldDate].water[idx]) || null;
+      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntryWater && origEntryWater.period) || undefined};
     } else {
       updated = {time, note: rawVal, photos: photosToSave};
     }
+    // Give this entry a stable identity across edits: keep its existing _id if
+    // it has one (assign one now if it's an older entry that predates this),
+    // and bump _updatedAt so a future multi-device merge can tell which edit
+    // is newer instead of treating the edited content as a brand-new record.
+    updated._id = (origEntry && origEntry._id) || (Date.now()+'-'+Math.random().toString(36).slice(2,7));
+    updated._updatedAt = Date.now();
     if(dateStr !== oldDate){
       // moved to a different day
       data[oldDate][cat].splice(idx,1);
@@ -2912,6 +2919,20 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       data[dateStr].noteEntries.push({time, note: rawVal, photos: photosToSave, showTime: wantTimestamp});
     } else {
       data[dateStr][currentCat].push({time, note: rawVal, photos: photosToSave});
+    }
+  }
+  // Give every newly-created entry a stable _id + _updatedAt so future
+  // multi-device merges can recognize "this is the same record, just edited"
+  // instead of treating an edit as a brand-new entry. (Edits already set
+  // these directly above, on `updated`, before this point.)
+  if(!editContext){
+    const targetArr = currentCat==='note' ? data[dateStr].noteEntries : data[dateStr][currentCat];
+    if(targetArr && targetArr.length>0){
+      const newEntry = targetArr[targetArr.length-1];
+      if(newEntry && !newEntry._id){
+        newEntry._id = Date.now()+'-'+Math.random().toString(36).slice(2,7);
+        newEntry._updatedAt = Date.now();
+      }
     }
   }
 
@@ -5420,6 +5441,8 @@ function entryIdentityKey(e){
   const clone = Object.assign({}, e);
   delete clone.photos;
   delete clone._mergeFlag;
+  delete clone._id;
+  delete clone._updatedAt;
   return JSON.stringify(clone);
 }
 function mergeDiaryData(localD, remoteD){
@@ -5440,37 +5463,67 @@ function mergeDiaryData(localD, remoteD){
       merged[dateStr] = flaggedDay;
       return;
     }
-    // both sides have this date: union each category's entries, de-duping by identity (ignoring photos)
+    // both sides have this date: union each category's entries, preferring
+    // stable _id matching (so an edited entry is recognized as "the same
+    // record" rather than looking like a brand-new one) and falling back to
+    // content-based identity matching for older entries that predate _id.
     const day = {};
     ALL_DIARY_CATS.forEach(cat=>{
-      const byKey = new Map(); // identityKey -> entry (photos merged in from any duplicate found)
-      (l[cat]||[]).forEach(e=>{
-        const key = entryIdentityKey(e);
-        byKey.set(key, Object.assign({}, e));
-      });
-      (r[cat]||[]).forEach(e=>{
-        const key = entryIdentityKey(e);
-        if(!byKey.has(key)){
-          // genuinely new from the other device's side — flag it for review
-          byKey.set(key, Object.assign({}, e, {_mergeFlag:true}));
+      const byId = new Map();
+      const byContentKey = new Map();
+      function mergePhotosOnto(target, extraPhotos){
+        const existingPhotos = Array.isArray(target.photos) ? target.photos : [];
+        const newPhotos = Array.isArray(extraPhotos) ? extraPhotos : [];
+        const resolvedExisting = existingPhotos.map(p => isPhotoRef(p) ? (photoCache.get(p) || p) : p);
+        const trulyNewPhotos = newPhotos.filter(p=>{
+          const resolvedP = isPhotoRef(p) ? (photoCache.get(p) || p) : p;
+          return !resolvedExisting.includes(resolvedP);
+        });
+        const combined = [...existingPhotos, ...trulyNewPhotos];
+        if(combined.length>0) target.photos = combined;
+      }
+      function addEntry(e, fromRemote){
+        if(e._id){
+          if(byId.has(e._id)){
+            const existing = byId.get(e._id);
+            // Same logical record appears on both sides — if the content
+            // actually differs, this is an edit conflict (e.g. someone
+            // corrected a typo on one device before syncing). Keep whichever
+            // side edited it more recently, but flag the survivor since
+            // content was silently chosen over another valid edit.
+            const existingContent = entryIdentityKey(existing);
+            const newContent = entryIdentityKey(e);
+            let winner;
+            if(existingContent === newContent){
+              winner = existing; // identical content, no real conflict
+            } else if((e._updatedAt||0) > (existing._updatedAt||0)){
+              winner = Object.assign({}, e);
+              winner._mergeFlag = true;
+            } else {
+              winner = existing;
+              winner._mergeFlag = true;
+            }
+            mergePhotosOnto(winner, e.photos);
+            byId.set(e._id, winner);
+          } else {
+            const entry = Object.assign({}, e);
+            if(fromRemote) entry._mergeFlag = true;
+            byId.set(e._id, entry);
+          }
         } else {
-          // same underlying entry found on both sides: merge their photo lists instead of duplicating the row.
-          // A photo can appear as a short IndexedDB ref-id locally but as raw
-          // base64 when it comes from the cloud copy — resolve refs before
-          // comparing, or the same photo gets counted as "different" and duplicated.
-          const existing = byKey.get(key);
-          const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
-          const newPhotos = Array.isArray(e.photos) ? e.photos : [];
-          const resolvedExisting = existingPhotos.map(p => isPhotoRef(p) ? (photoCache.get(p) || p) : p);
-          const trulyNewPhotos = newPhotos.filter(p=>{
-            const resolvedP = isPhotoRef(p) ? (photoCache.get(p) || p) : p;
-            return !resolvedExisting.includes(resolvedP);
-          });
-          const combinedPhotos = [...existingPhotos, ...trulyNewPhotos];
-          if(combinedPhotos.length>0) existing.photos = combinedPhotos;
+          const key = entryIdentityKey(e);
+          if(!byContentKey.has(key)){
+            const entry = Object.assign({}, e);
+            if(fromRemote) entry._mergeFlag = true;
+            byContentKey.set(key, entry);
+          } else {
+            mergePhotosOnto(byContentKey.get(key), e.photos);
+          }
         }
-      });
-      const combined = Array.from(byKey.values());
+      }
+      (l[cat]||[]).forEach(e=> addEntry(e, false));
+      (r[cat]||[]).forEach(e=> addEntry(e, true));
+      const combined = [...byId.values(), ...byContentKey.values()];
       combined.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       day[cat] = combined;
     });
