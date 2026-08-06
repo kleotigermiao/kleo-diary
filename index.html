@@ -1734,6 +1734,7 @@ function render(){
       const entry = data[date] && data[date][cat] && data[date][cat][idx];
       if(!entry) return;
       delete entry._mergeFlag;
+      entry._reviewed = true; // permanent: once confirmed on any device, no other device should re-flag this same entry
       if(save()) render();
     });
   });
@@ -5473,6 +5474,7 @@ function entryIdentityKey(e){
   const clone = Object.assign({}, e);
   delete clone.photos;
   delete clone._mergeFlag;
+  delete clone._reviewed;
   delete clone._id;
   delete clone._updatedAt;
   return JSON.stringify(clone);
@@ -5489,7 +5491,7 @@ function mergeDiaryData(localD, remoteD){
       // it's easy to spot what showed up purely because of the merge.
       const flaggedDay = {};
       ALL_DIARY_CATS.forEach(cat=>{
-        flaggedDay[cat] = (r[cat]||[]).map(e=> Object.assign({}, e, {_mergeFlag:true}));
+        flaggedDay[cat] = (r[cat]||[]).map(e=> e._reviewed ? Object.assign({}, e) : Object.assign({}, e, {_mergeFlag:true}));
       });
       flaggedDay.notes = r.notes || '';
       merged[dateStr] = flaggedDay;
@@ -5522,34 +5524,43 @@ function mergeDiaryData(localD, remoteD){
             // actually differs, this is an edit conflict (e.g. someone
             // corrected a typo on one device before syncing). Keep whichever
             // side edited it more recently, but flag the survivor since
-            // content was silently chosen over another valid edit.
+            // content was silently chosen over another valid edit — unless
+            // that exact content was already reviewed and confirmed before.
             const existingContent = entryIdentityKey(existing);
             const newContent = entryIdentityKey(e);
             let winner;
             if(existingContent === newContent){
-              winner = existing; // identical content, no real conflict
+              // identical content, no real conflict — carry the reviewed
+              // status forward if either side already had it
+              winner = existing;
+              if(e._reviewed) winner._reviewed = true;
             } else if((e._updatedAt||0) > (existing._updatedAt||0)){
               winner = Object.assign({}, e);
-              winner._mergeFlag = true;
+              if(!winner._reviewed) winner._mergeFlag = true;
             } else {
               winner = existing;
-              winner._mergeFlag = true;
+              if(!winner._reviewed) winner._mergeFlag = true;
             }
             mergePhotosOnto(winner, e.photos);
             byId.set(e._id, winner);
           } else {
             const entry = Object.assign({}, e);
-            if(fromRemote) entry._mergeFlag = true;
+            // Only flag for review if this device hasn't already confirmed
+            // this exact entry before (reviewed status travels permanently
+            // with the entry, regardless of which device dismissed it).
+            if(fromRemote && !entry._reviewed) entry._mergeFlag = true;
             byId.set(e._id, entry);
           }
         } else {
           const key = entryIdentityKey(e);
           if(!byContentKey.has(key)){
             const entry = Object.assign({}, e);
-            if(fromRemote) entry._mergeFlag = true;
+            if(fromRemote && !entry._reviewed) entry._mergeFlag = true;
             byContentKey.set(key, entry);
           } else {
-            mergePhotosOnto(byContentKey.get(key), e.photos);
+            const existing = byContentKey.get(key);
+            if(e._reviewed) existing._reviewed = true;
+            mergePhotosOnto(existing, e.photos);
           }
         }
       }
