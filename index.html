@@ -1400,12 +1400,43 @@ const FIXED_OPTIONS = {
   stool: ['正常','軟便','拉稀']
 };
 
+function hoursSinceLastInsulin(dateStr, time){
+  // Search backward from this glucose reading's moment: same day earlier, then
+  // previous days, for the most recent insulin entry with a valid time.
+  const targetTs = new Date(dateStr+'T'+time+':00').getTime();
+  let bestTs = null;
+  const sameDayInsulin = (data[dateStr] && data[dateStr].insulin) || [];
+  sameDayInsulin.forEach(ie=>{
+    if(!/^\d{1,2}:\d{2}$/.test(ie.time||'')) return;
+    const ts = new Date(dateStr+'T'+ie.time+':00').getTime();
+    if(ts<=targetTs && (bestTs===null || ts>bestTs)) bestTs = ts;
+  });
+  if(bestTs===null){
+    // fall back to scanning previous days (most recent first), stop once found
+    const priorDates = Object.keys(data).filter(d=>d<dateStr).sort().reverse();
+    for(const d of priorDates){
+      const list = (data[d] && data[d].insulin) || [];
+      let dayBest = null;
+      list.forEach(ie=>{
+        if(!/^\d{1,2}:\d{2}$/.test(ie.time||'')) return;
+        const ts = new Date(d+'T'+ie.time+':00').getTime();
+        if(dayBest===null || ts>dayBest) dayBest = ts;
+      });
+      if(dayBest!==null){ bestTs = dayBest; break; }
+    }
+  }
+  if(bestTs===null) return null;
+  const hours = (targetTs - bestTs) / 3600000;
+  return hours>=0 ? hours : null;
+}
 function renderRowHtml(dateStr, cat, e, idx){
   let valHtml = '';
   if(cat==='glucose'){
     const trendArrow = TREND_ARROWS[e.trend] || '';
+    const hoursSince = hoursSinceLastInsulin(dateStr, e.time);
+    const hoursHtml = hoursSince!=null ? ` <span style="font-size:11px;color:var(--ink-soft);">(打針後+${hoursSince.toFixed(1)}h)</span>` : '';
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${detail}`;
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${hoursHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -3885,7 +3916,7 @@ const SUPPLIES_KEY = 'kleo-supplies-v1';
 const SUPPLIES_DEFAULTS = {
   strips: {stock: 0},
   needles: {stock: 0},
-  lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5},
+  lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5, lastChangedAt: null},
   countSkipAsNeedleUse: true,
   sensor: {activatedAt: null, durationDays: 14}, // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
   insulinVial: {openedAt: null, durationDays: 28} // insulin vial/pen: openedAt is when this vial was started
@@ -4149,6 +4180,7 @@ function renderSupplies(){
   document.getElementById('lancetChangedBtn').addEventListener('click', ()=>{
     supplies.lancets.stock = Math.max(0, (supplies.lancets.stock||0) - 1);
     supplies.lancets.testsSinceChange = 0;
+    supplies.lancets.lastChangedAt = Date.now();
     saveSupplies();
     renderSupplies();
   });
@@ -5666,12 +5698,37 @@ async function syncFromDriveOnLogin(){
             if(!remoteField) return localField;
             return new Date(localField) >= new Date(remoteField) ? localField : remoteField;
           }
+          const localLancetChangedAt = supplies.lancets.lastChangedAt;
+          const remoteLancetChangedAt = remoteSupplies.lancets.lastChangedAt;
+          let mergedTestsSinceChange, mergedLastChangedAt;
+          if(localLancetChangedAt && remoteLancetChangedAt){
+            // Whichever side changed the lancet more recently is the more
+            // authoritative "starting point" — taking the max here would
+            // silently undo a real reset with a stale, un-synced higher count.
+            if(new Date(localLancetChangedAt) >= new Date(remoteLancetChangedAt)){
+              mergedTestsSinceChange = supplies.lancets.testsSinceChange;
+              mergedLastChangedAt = localLancetChangedAt;
+            } else {
+              mergedTestsSinceChange = remoteSupplies.lancets.testsSinceChange;
+              mergedLastChangedAt = remoteLancetChangedAt;
+            }
+          } else if(localLancetChangedAt || remoteLancetChangedAt){
+            // only one side has ever recorded a change — trust that side's count
+            const useLocal = !!localLancetChangedAt;
+            mergedTestsSinceChange = useLocal ? supplies.lancets.testsSinceChange : remoteSupplies.lancets.testsSinceChange;
+            mergedLastChangedAt = useLocal ? localLancetChangedAt : remoteLancetChangedAt;
+          } else {
+            // neither side has ever explicitly reset it — safe to take the higher count
+            mergedTestsSinceChange = Math.max(supplies.lancets.testsSinceChange, remoteSupplies.lancets.testsSinceChange);
+            mergedLastChangedAt = null;
+          }
           supplies = normalizeSupplies({
             strips: {stock: Math.min(supplies.strips.stock, remoteSupplies.strips.stock)},
             needles: {stock: Math.min(supplies.needles.stock, remoteSupplies.needles.stock)},
             lancets: {
               stock: Math.min(supplies.lancets.stock, remoteSupplies.lancets.stock),
-              testsSinceChange: Math.max(supplies.lancets.testsSinceChange, remoteSupplies.lancets.testsSinceChange),
+              testsSinceChange: mergedTestsSinceChange,
+              lastChangedAt: mergedLastChangedAt,
               changeThreshold: supplies.lancets.changeThreshold
             },
             countSkipAsNeedleUse: supplies.countSkipAsNeedleUse,
