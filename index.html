@@ -1434,7 +1434,7 @@ function renderRowHtml(dateStr, cat, e, idx){
   if(cat==='glucose'){
     const trendArrow = TREND_ARROWS[e.trend] || '';
     const hoursSince = hoursSinceLastInsulin(dateStr, e.time);
-    const hoursHtml = hoursSince!=null ? ` <span style="font-size:11px;color:var(--ink-soft);">(打針後+${hoursSince.toFixed(1)}h)</span>` : '';
+    const hoursHtml = hoursSince!=null ? ` <span style="font-size:11px;color:var(--ink-soft);">(+${hoursSince.toFixed(1)}h)</span>` : '';
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${hoursHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
@@ -3919,8 +3919,8 @@ const SUPPLIES_DEFAULTS = {
   needles: {stock: 0},
   lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5, lastChangedAt: null},
   countSkipAsNeedleUse: true,
-  sensor: {activatedAt: null, durationDays: 14}, // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
-  insulinVial: {openedAt: null, durationDays: 28} // insulin vial/pen: openedAt is when this vial was started
+  sensor: {activatedAt: null, durationDays: 14, lastModifiedAt: null}, // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
+  insulinVial: {openedAt: null, durationDays: 28, lastModifiedAt: null} // insulin vial/pen: openedAt is when this vial was started
 };
 function repairDateTimeField(activatedAt){
   if(!activatedAt) return activatedAt;
@@ -4195,6 +4195,7 @@ function renderSupplies(){
   });
   document.getElementById('sensorActivateBtn').addEventListener('click', ()=>{
     supplies.sensor.activatedAt = todayStr()+'T'+nowTime();
+    supplies.sensor.lastModifiedAt = Date.now();
     saveSupplies();
     renderSupplies();
     renderCalendar();
@@ -4204,6 +4205,7 @@ function renderSupplies(){
     sensorCancelBtn.addEventListener('click', ()=>{
       if(!confirm('確定要取消目前的感測器記錄嗎？')) return;
       supplies.sensor.activatedAt = null;
+      supplies.sensor.lastModifiedAt = Date.now();
       saveSupplies();
       renderSupplies();
       renderCalendar();
@@ -4215,6 +4217,7 @@ function renderSupplies(){
     if(!/^\d{2}:\d{2}$/.test(timeVal)) timeVal = ''; // reject anything that isn't a clean HH:MM
     if(!dateVal){ supplies.sensor.activatedAt = null; }
     else { supplies.sensor.activatedAt = dateVal+'T'+(timeVal || '00:00'); }
+    supplies.sensor.lastModifiedAt = Date.now();
     saveSupplies();
     renderSupplies();
     renderCalendar();
@@ -4224,10 +4227,11 @@ function renderSupplies(){
   document.getElementById('sensorActivatedTimeInput').addEventListener('change', updateSensorFromInputs);
   document.getElementById('sensorDurationInput').addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
-    if(n && n>0){ supplies.sensor.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
+    if(n && n>0){ supplies.sensor.durationDays = n; supplies.sensor.lastModifiedAt = Date.now(); saveSupplies(); renderSupplies(); renderCalendar(); }
   });
   document.getElementById('vialOpenBtn').addEventListener('click', ()=>{
     supplies.insulinVial.openedAt = todayStr()+'T'+nowTime();
+    supplies.insulinVial.lastModifiedAt = Date.now();
     saveSupplies();
     renderSupplies();
     renderCalendar();
@@ -4237,6 +4241,7 @@ function renderSupplies(){
     vialCancelBtn.addEventListener('click', ()=>{
       if(!confirm('確定要取消目前的胰島素開瓶記錄嗎？')) return;
       supplies.insulinVial.openedAt = null;
+      supplies.insulinVial.lastModifiedAt = Date.now();
       saveSupplies();
       renderSupplies();
       renderCalendar();
@@ -4248,6 +4253,7 @@ function renderSupplies(){
     if(!/^\d{2}:\d{2}$/.test(timeVal)) timeVal = '';
     if(!dateVal){ supplies.insulinVial.openedAt = null; }
     else { supplies.insulinVial.openedAt = dateVal+'T'+(timeVal || '00:00'); }
+    supplies.insulinVial.lastModifiedAt = Date.now();
     saveSupplies();
     renderSupplies();
     renderCalendar();
@@ -4257,7 +4263,7 @@ function renderSupplies(){
   document.getElementById('vialOpenedTimeInput').addEventListener('change', updateVialFromInputs);
   document.getElementById('vialDurationInput').addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
-    if(n && n>0){ supplies.insulinVial.durationDays = n; saveSupplies(); renderSupplies(); renderCalendar(); }
+    if(n && n>0){ supplies.insulinVial.durationDays = n; supplies.insulinVial.lastModifiedAt = Date.now(); saveSupplies(); renderSupplies(); renderCalendar(); }
   });
 }
 document.getElementById('suppliesBtn').addEventListener('click', ()=>{
@@ -5701,13 +5707,16 @@ async function syncFromDriveOnLogin(){
           // Take the more conservative (lower) stock number from either side,
           // since assuming less remaining stock is safer than assuming more.
           const remoteSupplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
-          function preferMoreRecent(localField, remoteField){
-            // For "when did this get started" timestamps: if they differ, the
-            // one with the later real-world time is more likely to be the
-            // genuinely newer event (e.g. a sensor/vial actually just changed).
-            if(!localField) return remoteField;
-            if(!remoteField) return localField;
-            return new Date(localField) >= new Date(remoteField) ? localField : remoteField;
+          function pickMoreRecentlyModified(localObj, remoteObj){
+            // Whole-object comparison based on an explicit lastModifiedAt
+            // stamp — this correctly handles cancellations (activatedAt set
+            // back to null), which the previous per-field "if empty, defer to
+            // the other side" logic got wrong: it always deferred whenever
+            // the local value was null, silently undoing real cancellations
+            // with a stale still-active value from the other device.
+            const localTs = localObj.lastModifiedAt || 0;
+            const remoteTs = remoteObj.lastModifiedAt || 0;
+            return remoteTs > localTs ? remoteObj : localObj;
           }
           const localLancetChangedAt = supplies.lancets.lastChangedAt;
           const remoteLancetChangedAt = remoteSupplies.lancets.lastChangedAt;
@@ -5743,8 +5752,8 @@ async function syncFromDriveOnLogin(){
               changeThreshold: supplies.lancets.changeThreshold
             },
             countSkipAsNeedleUse: supplies.countSkipAsNeedleUse,
-            sensor: Object.assign({}, supplies.sensor, {activatedAt: preferMoreRecent(supplies.sensor.activatedAt, remoteSupplies.sensor.activatedAt)}),
-            insulinVial: Object.assign({}, supplies.insulinVial, {openedAt: preferMoreRecent(supplies.insulinVial.openedAt, remoteSupplies.insulinVial.openedAt)})
+            sensor: pickMoreRecentlyModified(supplies.sensor, remoteSupplies.sensor),
+            insulinVial: pickMoreRecentlyModified(supplies.insulinVial, remoteSupplies.insulinVial)
           });
           saveSupplies();
         }
