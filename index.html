@@ -225,6 +225,10 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   position:absolute;top:-3px;width:0;height:16px;
   border-left:2px dotted var(--ink-soft);
 }
+.kcal-bar-period{
+  position:absolute;top:0;width:0;height:10px;
+  border-left:1.5px dashed rgba(0,0,0,0.35);
+}
 .kcal-bar-legend{
   display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);margin-bottom:6px;
 }
@@ -1433,6 +1437,24 @@ const FIXED_OPTIONS = {
   stool: ['正常','軟便','拉稀']
 };
 
+function gramsEatenInPastHours(dateStr, time, hoursBack){
+  const targetTs = new Date(dateStr+'T'+time+':00').getTime();
+  const cutoffTs = targetTs - hoursBack*3600000;
+  let totalGrams = 0;
+  const prevDate = new Date(dateStr+'T00:00:00');
+  prevDate.setDate(prevDate.getDate()-1);
+  const prevDateStr = prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0')+'-'+String(prevDate.getDate()).padStart(2,'0');
+  [prevDateStr, dateStr].forEach(d=>{
+    (data[d] && data[d].food || []).forEach(e=>{
+      if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+      const ts = new Date(d+'T'+e.time+':00').getTime();
+      if(ts>=cutoffTs && ts<=targetTs){
+        parseFoodEntryGroups(e.note).forEach(g=>{ if(g.grams!=null) totalGrams += g.grams; });
+      }
+    });
+  });
+  return totalGrams;
+}
 function hoursSinceLastInsulin(dateStr, time){
   // Search backward from this glucose reading's moment: same day earlier, then
   // previous days, for the most recent insulin entry with a valid time.
@@ -1559,6 +1581,17 @@ function saveDailyKcalTarget(v){
   try{ localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(v)); }catch(e){}
   markLocalChangeAndSync();
 }
+const DAILY_TREATS_COUNT_KEY = 'kleo-daily-treats-count';
+function loadDailyTreatsCount(){
+  try{
+    const raw = localStorage.getItem(DAILY_TREATS_COUNT_KEY);
+    return raw ? parseFloat(raw) : null;
+  }catch(e){ return null; }
+}
+function saveDailyTreatsCount(v){
+  try{ localStorage.setItem(DAILY_TREATS_COUNT_KEY, String(v)); }catch(e){}
+  markLocalChangeAndSync();
+}
 function typeAverageKcalPerGram(type){
   const brandKcal = loadFoodBrandKcal();
   const brands = loadFoodBrands(type);
@@ -1570,17 +1603,25 @@ function computeFoodKcalSoFar(day){
   const brandKcal = loadFoodBrandKcal();
   let totalKcal = 0;
   let anyKnown = false;
+  const missingBrands = new Set();
   (day.food || []).forEach(e=>{
     parseFoodEntryGroups(e.note).forEach(g=>{
       if(g.grams==null) return;
       const kcalValues = g.brands.map(b=> brandKcal[g.type+'::'+b]).filter(v=>v!=null && !isNaN(v));
-      if(kcalValues.length===0) return;
+      if(kcalValues.length===0){
+        g.brands.forEach(b=> missingBrands.add(`${g.type}－${b}`));
+        return;
+      }
+      if(kcalValues.length < g.brands.length){
+        // some but not all brands in this mixed entry have a density set
+        g.brands.forEach(b=>{ if(brandKcal[g.type+'::'+b]==null) missingBrands.add(`${g.type}－${b}`); });
+      }
       anyKnown = true;
       const avgKcalPerG = kcalValues.reduce((a,b)=>a+b,0)/kcalValues.length;
       totalKcal += g.grams * avgKcalPerG;
     });
   });
-  return {totalKcal, anyKnown};
+  return {totalKcal, anyKnown, missingBrands: Array.from(missingBrands)};
 }
 function computeExpectedKcalSoFar(dailyTarget){
   const now = new Date();
@@ -1591,8 +1632,11 @@ function buildKcalProgressHtml(day, dateStr){
   const target = loadDailyKcalTarget();
   if(!target || target<=0) return '';
   if(!day.food || day.food.length===0) return ''; // nothing logged that day — nothing to report
-  const {totalKcal, anyKnown} = computeFoodKcalSoFar(day);
+  const {totalKcal, anyKnown, missingBrands} = computeFoodKcalSoFar(day);
   if(!anyKnown) return `<div class="kcal-progress">🔥 尚未設定任何品牌的熱量密度，無法估算熱量進度（可到「工具」→「熱量設定」填寫）</div>`;
+  const missingWarningHtml = missingBrands.length>0
+    ? `<div style="font-size:11px;color:#B23A48;margin-bottom:6px;">⚠️ ${missingBrands.map(escapeHtml).join('、')} 還沒設定熱量密度，這部分吃的量沒有算進下面的總量，實際吃的可能比顯示的更多</div>`
+    : '';
   const isToday = !dateStr || dateStr===todayStr();
   if(!isToday){
     // Past, complete day: just compare the day's total against the daily
@@ -1608,6 +1652,7 @@ function buildKcalProgressHtml(day, dateStr){
     else if(isOver) captionHtml = `當天總共超吃 <b>${diff.toFixed(0)} kcal</b>`;
     else captionHtml = `當天總共少吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
     return `<div class="kcal-progress${isOver?' over':''}">
+      ${missingWarningHtml}
       <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(0)} / ${target} kcal</div>
       <div class="kcal-bar-track">
         <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
@@ -1637,18 +1682,23 @@ function buildKcalProgressHtml(day, dateStr){
   const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
   const markerPct = Math.min(100, (expected/scaleMax)*100);
   const targetPct = Math.min(100, (target/scaleMax)*100);
+  const period1Pct = Math.min(100, (target/3/scaleMax)*100);
+  const period2Pct = Math.min(100, (target*2/3/scaleMax)*100);
   let captionHtml;
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
   else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
   else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
   return `<div class="kcal-progress${isOver?' over':''}">
+    ${missingWarningHtml}
     <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target} kcal</div>
     <div class="kcal-bar-track">
       <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
+      <div class="kcal-bar-period" style="left:${period1Pct}%;" title="00:00-08:00 分界"></div>
+      <div class="kcal-bar-period" style="left:${period2Pct}%;" title="08:00-16:00 分界"></div>
       <div class="kcal-bar-marker" style="left:${markerPct}%;" title="目前時段應達到的進度"></div>
       <div class="kcal-bar-target" style="left:${targetPct}%;" title="今日總目標"></div>
     </div>
-    <div class="kcal-bar-legend"><span>● 目前進度線</span><span>┊ 今日總目標</span></div>
+    <div class="kcal-bar-legend"><span>● 目前進度線</span><span>┆ 三段時間分界</span><span>┊ 今日總目標</span></div>
     <div class="kcal-bar-caption">${captionHtml}</div>
   </div>`;
 }
@@ -2524,7 +2574,12 @@ function setCategory(cat){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
     const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
     const needleTags = loadTagsGeneric(INSULIN_NEEDLE_KEY, []);
+    const gramsRecently = gramsEatenInPastHours(fDate.value || todayStr(), nowTime(), 4);
+    const recentFoodOk = gramsRecently >= 5;
     dynamicFields.innerHTML = `
+      <div style="background:${recentFoodOk?'#E3F2E9':'#FCE4EC'};border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:12px;color:${recentFoodOk?'#2E6B4F':'#B23A48'};">
+        ${recentFoodOk?'✅':'⚠️'} 過去4小時內吃了約 <b>${gramsRecently.toFixed(1)}g</b>${recentFoodOk?'（達到5g參考線）':'（還沒到5g參考線，供打針前參考）'}
+      </div>
       <label>劑量</label>
       <div class="option-grid" id="doseTagGrid">${renderTagButtons(doseTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -5410,6 +5465,7 @@ function showKcalSettingsModal(){
   const box = document.createElement('div');
   box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:80vh;overflow-y:auto;';
   const target = loadDailyKcalTarget();
+  const treatsCount = loadDailyTreatsCount();
   const brandKcal = loadFoodBrandKcal();
   const types = loadFoodTypes();
   const brandRowsHtml = types.map(type=>{
@@ -5426,13 +5482,38 @@ function showKcalSettingsModal(){
     }).join('');
     return `<label style="margin-top:12px;">${escapeHtml(type)}（單位：${unit}）</label>${rows}`;
   }).join('');
+  function buildDailyPortionHtml(){
+    if(!target || target<=0) return '<p style="font-size:12px;color:var(--ink-soft);">先填好每日目標熱量才能計算建議份量。</p>';
+    const treatsAvgKcal = typeAverageKcalPerGram('零食'); // kcal per 顆 (or per g if unit is g)
+    const treatsKcal = (treatsCount && treatsAvgKcal!=null) ? treatsCount*treatsAvgKcal : 0;
+    const remaining = target - treatsKcal;
+    const dryKcalPerG = typeAverageKcalPerGram('乾糧');
+    const canKcalPerG = typeAverageKcalPerGram('罐頭');
+    const lines = [];
+    if(treatsCount && treatsAvgKcal!=null){
+      lines.push(`零食 ${treatsCount}顆 ≈ ${treatsKcal.toFixed(0)} kcal`);
+    } else if(treatsCount){
+      lines.push(`零食熱量密度還沒設定，這部分沒算進下面的建議`);
+    }
+    lines.push(`扣掉零食，剩下約 ${remaining.toFixed(0)} kcal 要靠主食補`);
+    const options = [];
+    if(dryKcalPerG) options.push(`全部用乾糧：${(remaining/dryKcalPerG).toFixed(0)}g`);
+    if(canKcalPerG) options.push(`全部用罐頭：${(remaining/canKcalPerG).toFixed(0)}g`);
+    if(dryKcalPerG && canKcalPerG) options.push(`各一半：乾糧${(remaining/2/dryKcalPerG).toFixed(0)}g + 罐頭${(remaining/2/canKcalPerG).toFixed(0)}g`);
+    return `<p style="font-size:12.5px;color:var(--ink);margin:4px 0;">${lines.join('<br>')}</p>
+      ${options.length ? `<p style="font-size:12.5px;color:var(--ink);margin:4px 0;">${options.join('<br>')}</p>` : '<p style="font-size:12px;color:var(--ink-soft);">乾糧/罐頭還沒設定熱量密度，暫時無法算建議克數。</p>'}`;
+  }
   box.innerHTML = `
     <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">熱量設定</h3>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">設定每日目標熱量，跟每個品牌的熱量密度（每公克幾大卡），才能在首頁看到即時的熱量進度提示。</p>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0 0 12px;">設定每日目標熱量，跟每個品牌的熱量密度（每公克/每顆幾大卡），才能在首頁看到即時的熱量進度提示。</p>
     <label style="margin-top:0;">每日目標熱量 (kcal)</label>
     <input type="text" inputmode="decimal" id="dailyKcalTargetInput" value="${target!=null?target:''}" placeholder="例如 200">
-    <label style="margin-top:14px;">各品牌熱量密度 (kcal/g)</label>
+    <label style="margin-top:14px;">每日固定零食顆數（可選）</label>
+    <input type="text" inputmode="decimal" id="dailyTreatsCountInput" value="${treatsCount!=null?treatsCount:''}" placeholder="例如 9">
+    <label style="margin-top:14px;">各品牌熱量密度 (kcal/g 或 kcal/顆)</label>
     ${brandRowsHtml || '<p style="font-size:12px;color:var(--ink-soft);">目前還沒有任何食物品牌，先去新增一筆飲食記錄建立品牌後再回來設定。</p>'}
+    <label style="margin-top:14px;">📐 建議每日份量</label>
+    <div id="dailyPortionCalc">${buildDailyPortionHtml()}</div>
     <button type="button" id="saveKcalSettingsBtn" class="tag-add-btn" style="width:100%;margin-top:14px;">儲存設定</button>
     <button type="button" class="modal-close-btn">關閉</button>
   `;
@@ -5444,6 +5525,8 @@ function showKcalSettingsModal(){
   document.getElementById('saveKcalSettingsBtn').addEventListener('click', ()=>{
     const targetVal = parseFloat(document.getElementById('dailyKcalTargetInput').value);
     if(targetVal && targetVal>0) saveDailyKcalTarget(targetVal);
+    const treatsVal = parseFloat(document.getElementById('dailyTreatsCountInput').value);
+    if(!isNaN(treatsVal) && treatsVal>=0) saveDailyTreatsCount(treatsVal);
     const newBrandKcal = loadFoodBrandKcal();
     box.querySelectorAll('.brand-kcal-input').forEach(input=>{
       const v = parseFloat(input.value);
@@ -5967,6 +6050,9 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.dailyKcalTarget!=null && loadDailyKcalTarget()==null){
           saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
         }
+        if(remoteEnvelope.dailyTreatsCount!=null && loadDailyTreatsCount()==null){
+          saveDailyTreatsCount(remoteEnvelope.dailyTreatsCount);
+        }
         if(remoteEnvelope.todos){
           const byId = new Map();
           (todos||[]).forEach(t=> byId.set(t.id, t));
@@ -6013,6 +6099,9 @@ async function syncFromDriveOnLogin(){
         }
         if(remoteEnvelope.dailyKcalTarget!=null){
           saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
+        }
+        if(remoteEnvelope.dailyTreatsCount!=null){
+          saveDailyTreatsCount(remoteEnvelope.dailyTreatsCount);
         }
         if(remoteEnvelope.todos){
           todos = remoteEnvelope.todos;
@@ -6079,7 +6168,7 @@ function pushToDrive(immediate){
       //   (tag groups like insulin dose/site/needle and food types/brands are
       //   the exception — they're covered generically via tagStorage/
       //   collectSyncableTagStorage, no per-tag-group wiring needed)
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
+      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
