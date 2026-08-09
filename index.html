@@ -1395,6 +1395,39 @@ function foodTypeUnit(type){
   const units = loadFoodTypeUnits();
   return units[type] || 'g';
 }
+function renameFoodType(oldName, newName){
+  // Renaming a type means its brand list, unit setting, and every brand's
+  // calorie density are all keyed by the old name — migrate them all so
+  // nothing gets silently orphaned.
+  const types = loadFoodTypes();
+  const idx = types.indexOf(oldName);
+  if(idx>=0) types[idx] = newName;
+  saveFoodTypes(types);
+  const brands = loadTagsGeneric('kleo-food-brands-'+oldName, []);
+  saveTagsGeneric('kleo-food-brands-'+newName, brands);
+  localStorage.removeItem('kleo-food-brands-'+oldName);
+  const units = loadFoodTypeUnits();
+  if(units[oldName]!=null){ units[newName] = units[oldName]; delete units[oldName]; saveFoodTypeUnits(units); }
+  const kcalMap = loadFoodBrandKcal();
+  let kcalChanged = false;
+  Object.keys(kcalMap).forEach(key=>{
+    if(key.startsWith(oldName+'::')){
+      kcalMap[newName+'::'+key.slice(oldName.length+2)] = kcalMap[key];
+      delete kcalMap[key];
+      kcalChanged = true;
+    }
+  });
+  if(kcalChanged) saveFoodBrandKcal(kcalMap);
+}
+function renameFoodBrand(type, oldName, newName){
+  const brands = loadFoodBrands(type);
+  const idx = brands.indexOf(oldName);
+  if(idx>=0) brands[idx] = newName;
+  saveFoodBrands(type, brands);
+  const kcalMap = loadFoodBrandKcal();
+  const oldKey = type+'::'+oldName, newKey = type+'::'+newName;
+  if(kcalMap[oldKey]!=null){ kcalMap[newKey] = kcalMap[oldKey]; delete kcalMap[oldKey]; saveFoodBrandKcal(kcalMap); }
+}
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
   stool: ['正常','軟便','拉稀']
@@ -2216,8 +2249,64 @@ function restoreSyncableTagStorage(bucket){
     try{ localStorage.setItem(k, bucket[k]); }catch(e){}
   });
 }
+function mergeSyncableTagStorage(remoteBucket){
+  // Used specifically during a genuine multi-device conflict: union tag lists
+  // (and merge settings maps) from both sides instead of blindly overwriting
+  // local with remote, which could otherwise silently discard a tag someone
+  // just added/renamed on this device before the other device's copy synced.
+  if(!remoteBucket) return;
+  const localBucket = collectSyncableTagStorage();
+  const allKeys = new Set([...Object.keys(localBucket), ...Object.keys(remoteBucket)]);
+  allKeys.forEach(k=>{
+    const lRaw = localBucket[k], rRaw = remoteBucket[k];
+    if(lRaw==null){ if(rRaw!=null) localStorage.setItem(k, rRaw); return; }
+    if(rRaw==null) return; // local already has it, remote doesn't — keep local
+    if(lRaw===rRaw) return; // identical, nothing to do
+    try{
+      const lVal = JSON.parse(lRaw), rVal = JSON.parse(rRaw);
+      if(Array.isArray(lVal) && Array.isArray(rVal)){
+        const combined = [...lVal];
+        rVal.forEach(item=>{ if(!combined.includes(item)) combined.push(item); });
+        localStorage.setItem(k, JSON.stringify(combined));
+      } else if(lVal && rVal && typeof lVal==='object' && typeof rVal==='object' && !Array.isArray(lVal)){
+        localStorage.setItem(k, JSON.stringify(Object.assign({}, lVal, rVal)));
+      } else {
+        localStorage.setItem(k, lRaw); // unrecognized shape: keep local rather than guess
+      }
+    }catch(e){ /* malformed JSON on either side: leave local untouched */ }
+  });
+}
 function renderTagButtons(tags){
   return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+}
+function showTagManageModal(currentName, onRename, onDelete){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:320px;width:100%;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">管理標籤</h3>
+    <input type="text" id="tagRenameInput" value="${escapeHtml(currentName)}" style="margin-bottom:10px;">
+    <button type="button" id="tagRenameConfirmBtn" class="tag-add-btn" style="width:100%;margin-bottom:8px;">重新命名</button>
+    <button type="button" id="tagDeleteConfirmBtn" style="display:block;width:100%;text-align:center;padding:10px 12px;border:1px solid #B23A48;border-radius:8px;background:none;color:#B23A48;cursor:pointer;font-size:13px;margin-bottom:8px;">刪除這個標籤</button>
+    <button type="button" class="modal-close-btn">取消</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  box.querySelector('#tagRenameConfirmBtn').addEventListener('click', ()=>{
+    const newName = document.getElementById('tagRenameInput').value.trim();
+    if(!newName || newName===currentName){ close(); return; }
+    onRename(newName);
+    close();
+  });
+  box.querySelector('#tagDeleteConfirmBtn').addEventListener('click', ()=>{
+    if(!confirm(`確定要刪除標籤「${currentName}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)) return;
+    onDelete();
+    close();
+  });
 }
 function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
   document.querySelectorAll('#'+gridId+' .option-btn').forEach(btn=>{
@@ -2229,17 +2318,29 @@ function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
     });
     if(tagsArr && storageKey){
       let pressTimer = null;
-      const startPress = ()=>{
-        btn.dataset.longPressed = '';
-        pressTimer = setTimeout(()=>{
-          btn.dataset.longPressed = '1';
-          if(confirm(`確定要刪除標籤「${btn.dataset.val}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)){
+      const openManage = ()=>{
+        showTagManageModal(btn.dataset.val,
+          (newName)=>{
+            const idx = tagsArr.indexOf(btn.dataset.val);
+            if(idx>=0) tagsArr[idx] = newName;
+            saveTagsGeneric(storageKey, tagsArr);
+            document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
+            wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
+          },
+          ()=>{
             const idx = tagsArr.indexOf(btn.dataset.val);
             if(idx>=0) tagsArr.splice(idx,1);
             saveTagsGeneric(storageKey, tagsArr);
             document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
             wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
           }
+        );
+      };
+      const startPress = ()=>{
+        btn.dataset.longPressed = '';
+        pressTimer = setTimeout(()=>{
+          btn.dataset.longPressed = '1';
+          openManage();
         }, 550);
       };
       const cancelPress = ()=> clearTimeout(pressTimer);
@@ -2249,13 +2350,7 @@ function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
       btn.addEventListener('pointercancel', cancelPress);
       btn.addEventListener('contextmenu', (e)=>{
         e.preventDefault();
-        if(confirm(`確定要刪除標籤「${btn.dataset.val}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)){
-          const idx = tagsArr.indexOf(btn.dataset.val);
-          if(idx>=0) tagsArr.splice(idx,1);
-          saveTagsGeneric(storageKey, tagsArr);
-          document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
-          wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
-        }
+        openManage();
       });
     }
   });
@@ -2301,10 +2396,40 @@ function renderMedTagButtons(){
 function wireMedTagButtons(){
   document.querySelectorAll('#medTagGrid .option-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
       document.querySelectorAll('#medTagGrid .option-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('fVal').value = btn.dataset.opt;
     });
+    let pressTimer = null;
+    const openManage = ()=>{
+      showTagManageModal(btn.dataset.opt,
+        (newName)=>{
+          const idx = medTags.indexOf(btn.dataset.opt);
+          if(idx>=0) medTags[idx] = newName;
+          saveMedTags(medTags);
+          document.getElementById('medTagGrid').innerHTML = renderMedTagButtons();
+          wireMedTagButtons();
+        },
+        ()=>{
+          const idx = medTags.indexOf(btn.dataset.opt);
+          if(idx>=0) medTags.splice(idx,1);
+          saveMedTags(medTags);
+          document.getElementById('medTagGrid').innerHTML = renderMedTagButtons();
+          wireMedTagButtons();
+        }
+      );
+    };
+    const startPress = ()=>{
+      btn.dataset.longPressed = '';
+      pressTimer = setTimeout(()=>{ btn.dataset.longPressed = '1'; openManage(); }, 550);
+    };
+    const cancelPress = ()=> clearTimeout(pressTimer);
+    btn.addEventListener('pointerdown', startPress);
+    btn.addEventListener('pointerup', cancelPress);
+    btn.addEventListener('pointerleave', cancelPress);
+    btn.addEventListener('pointercancel', cancelPress);
+    btn.addEventListener('contextmenu', (e)=>{ e.preventDefault(); openManage(); });
   });
 }
 
@@ -2560,6 +2685,50 @@ function setCategory(cat){
       <label>備註（可選，例如吃一半、換餐具…）</label>
       <textarea id="fDetail" placeholder="例如吃一半、換餐具…" style="height:44px;"></textarea>
     `;
+    function attachFoodTypeLongPress(btn){
+      let pressTimer = null;
+      const openManage = ()=>{
+        showTagManageModal(btn.dataset.type,
+          (newName)=>{ renameFoodType(btn.dataset.type, newName); closeSheetFn(); },
+          ()=>{
+            const list = loadFoodTypes();
+            const idx = list.indexOf(btn.dataset.type);
+            if(idx>=0) list.splice(idx,1);
+            saveFoodTypes(list);
+            closeSheetFn();
+          }
+        );
+      };
+      const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
+      const cancelPress = ()=> clearTimeout(pressTimer);
+      btn.addEventListener('pointerdown', startPress);
+      btn.addEventListener('pointerup', cancelPress);
+      btn.addEventListener('pointerleave', cancelPress);
+      btn.addEventListener('pointercancel', cancelPress);
+      btn.addEventListener('contextmenu', (e)=>{ e.preventDefault(); openManage(); });
+    }
+    function attachFoodBrandLongPress(btn, type){
+      let pressTimer = null;
+      const openManage = ()=>{
+        showTagManageModal(btn.dataset.brand,
+          (newName)=>{ renameFoodBrand(type, btn.dataset.brand, newName); closeSheetFn(); },
+          ()=>{
+            const list = loadFoodBrands(type);
+            const idx = list.indexOf(btn.dataset.brand);
+            if(idx>=0) list.splice(idx,1);
+            saveFoodBrands(type, list);
+            closeSheetFn();
+          }
+        );
+      };
+      const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
+      const cancelPress = ()=> clearTimeout(pressTimer);
+      btn.addEventListener('pointerdown', startPress);
+      btn.addEventListener('pointerup', cancelPress);
+      btn.addEventListener('pointerleave', cancelPress);
+      btn.addEventListener('pointercancel', cancelPress);
+      btn.addEventListener('contextmenu', (e)=>{ e.preventDefault(); openManage(); });
+    }
     const selectedBrands = {}; // type -> Set of selected brand names
     function composeFoodValue(){
       const parts = [];
@@ -2617,7 +2786,9 @@ function setCategory(cat){
         composeFoodValue();
       });
       section.querySelectorAll('.food-brand-btn').forEach(bbtn=>{
+        attachFoodBrandLongPress(bbtn, type);
         bbtn.addEventListener('click', ()=>{
+          if(bbtn.dataset.longPressed==='1'){ bbtn.dataset.longPressed=''; return; }
           bbtn.classList.toggle('active');
           if(!selectedBrands[type]) selectedBrands[type] = new Set();
           if(bbtn.classList.contains('active')) selectedBrands[type].add(bbtn.dataset.brand);
@@ -2634,7 +2805,9 @@ function setCategory(cat){
         input.value = '';
         section.querySelector('.food-brand-grid').insertAdjacentHTML('beforeend', `<button type="button" class="option-btn food-brand-btn active" data-brand="${escapeHtml(name)}">${escapeHtml(name)}</button>`);
         const newBtn = section.querySelector(`.food-brand-btn[data-brand="${CSS.escape(name)}"]`);
+        attachFoodBrandLongPress(newBtn, type);
         newBtn.addEventListener('click', ()=>{
+          if(newBtn.dataset.longPressed==='1'){ newBtn.dataset.longPressed=''; return; }
           newBtn.classList.toggle('active');
           if(!selectedBrands[type]) selectedBrands[type] = new Set();
           if(newBtn.classList.contains('active')) selectedBrands[type].add(name);
@@ -2647,7 +2820,9 @@ function setCategory(cat){
       });
     }
     document.querySelectorAll('.food-type-btn').forEach(btn=>{
+      attachFoodTypeLongPress(btn);
       btn.addEventListener('click', ()=>{
+        if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
         const type = btn.dataset.type;
         btn.classList.toggle('active');
         if(btn.classList.contains('active')){
@@ -2669,7 +2844,9 @@ function setCategory(cat){
       input.value = '';
       document.getElementById('foodTypeGrid').insertAdjacentHTML('beforeend', `<button type="button" class="option-btn food-type-btn active" data-type="${escapeHtml(name)}">${escapeHtml(name)}</button>`);
       const newBtn = document.querySelector(`.food-type-btn[data-type="${CSS.escape(name)}"]:last-child`);
+      attachFoodTypeLongPress(newBtn);
       newBtn.addEventListener('click', ()=>{
+        if(newBtn.dataset.longPressed==='1'){ newBtn.dataset.longPressed=''; return; }
         newBtn.classList.toggle('active');
         if(newBtn.classList.contains('active')) renderBrandSection(name);
         else {
@@ -5801,7 +5978,7 @@ async function syncFromDriveOnLogin(){
           localStorage.setItem(TODO_KEY, JSON.stringify(todos));
         }
         if(remoteEnvelope.tagStorage){
-          restoreSyncableTagStorage(remoteEnvelope.tagStorage);
+          mergeSyncableTagStorage(remoteEnvelope.tagStorage);
         }
         render();
         isSyncing = false;
