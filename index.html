@@ -226,8 +226,8 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   border-left:2px dotted var(--ink-soft);
 }
 .kcal-bar-period{
-  position:absolute;top:0;width:0;height:10px;
-  border-left:1.5px dashed rgba(0,0,0,0.35);
+  position:absolute;top:-3px;width:0;height:16px;
+  border-left:2px dashed rgba(0,0,0,0.5);
 }
 .kcal-bar-legend{
   display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);margin-bottom:6px;
@@ -777,9 +777,10 @@ textarea{resize:vertical; min-height:64px;}
       <button class="sync-btn" id="printReportBtn">列印 / 存成PDF</button>
     </div>
   </div>
-  <div style="display:flex;gap:8px;padding:12px 16px 0;">
+  <div style="display:flex;gap:8px;padding:12px 16px 0;flex-wrap:wrap;">
     <button class="sync-btn report-tab-btn active" id="reportTabTable" data-tab="table">資料表</button>
     <button class="sync-btn report-tab-btn" id="reportTabWeekly" data-tab="weekly">每週摘要</button>
+    <button class="sync-btn report-tab-btn" id="reportTabPattern" data-tab="pattern">進食模式</button>
   </div>
   <div id="reportContent"></div>
   <div id="weeklySummaryView" style="display:none;">
@@ -790,6 +791,7 @@ textarea{resize:vertical; min-height:64px;}
     </div>
     <div id="weeklySummaryContent" style="padding:8px 16px 24px;"></div>
   </div>
+  <div id="foodPatternView" style="display:none;padding:8px 16px 24px;"></div>
 </div>
 
 <div id="galleryView" style="display:none;">
@@ -1730,10 +1732,10 @@ function buildKcalProgressHtml(day, dateStr){
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
   else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
   else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
-  const gramsRecently = gramsEatenInPastHours(dateStr || todayStr(), nowTime(), 4);
-  const recentFoodOk = gramsRecently >= 5;
+  const gramsRecently = gramsEatenInPastHours(dateStr || todayStr(), nowTime(), 6);
+  const recentFoodOk = gramsRecently >= 10;
   const preInjectionHtml = `<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:${recentFoodOk?'#E3F2E9':'#FCE4EC'};font-size:11.5px;color:${recentFoodOk?'#2E6B4F':'#B23A48'};">
-    ${recentFoodOk?'✅':'⚠️'} 過去4小時內吃了約 <b>${gramsRecently.toFixed(1)}g</b>${recentFoodOk?'（達到5g參考線）':'（還沒到5g參考線）'}　<span style="opacity:0.75;">打針前參考</span>
+    ${recentFoodOk?'✅':'⚠️'} 過去6小時內吃了約 <b>${gramsRecently.toFixed(1)}g</b>${recentFoodOk?'（達到10g參考線）':'（還沒到10g參考線）'}　<span style="opacity:0.75;">打針前參考</span>
   </div>`;
   return `<div class="kcal-progress${isOver?' over':''}">
     ${missingWarningHtml}
@@ -3281,6 +3283,7 @@ reportBtn.addEventListener('click', ()=>{
   document.querySelectorAll('.report-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab==='table'));
   document.getElementById('reportContent').style.display = 'block';
   document.getElementById('weeklySummaryView').style.display = 'none';
+  document.getElementById('foodPatternView').style.display = 'none';
   const today = todayStr();
   rangeEnd.value = today;
   const d = new Date();
@@ -3299,10 +3302,12 @@ document.querySelectorAll('.report-tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.report-tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    const isWeekly = btn.dataset.tab==='weekly';
-    document.getElementById('reportContent').style.display = isWeekly ? 'none' : 'block';
-    document.getElementById('weeklySummaryView').style.display = isWeekly ? 'block' : 'none';
-    if(isWeekly) renderWeeklySummary();
+    const tab = btn.dataset.tab;
+    document.getElementById('reportContent').style.display = tab==='table' ? 'block' : 'none';
+    document.getElementById('weeklySummaryView').style.display = tab==='weekly' ? 'block' : 'none';
+    document.getElementById('foodPatternView').style.display = tab==='pattern' ? 'block' : 'none';
+    if(tab==='weekly') renderWeeklySummary();
+    if(tab==='pattern') renderFoodPatternView();
   });
 });
 document.getElementById('weekPrevBtn').addEventListener('click', ()=>{
@@ -3799,6 +3804,15 @@ function computeDayReportStats(dateStr, day, allDatesSorted, idx){
   return {avgGlucose, glucoseCount, insulinTotal, lowCount, highCount, totalKcal, waterTotal, vomitCount, catScore};
 }
 let weekOffset = 0; // 0 = this week, -1 = last week, +1 = next week
+function getLastNDates(n){
+  const dates = [];
+  for(let i=n-1;i>=0;i--){
+    const d = new Date();
+    d.setDate(d.getDate()-i);
+    dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
+  }
+  return dates;
+}
 function getWeekDates(offset){
   const endDate = new Date();
   endDate.setDate(endDate.getDate() + offset*7); // offset=0 → today; each step shifts the whole 7-day window by a week
@@ -3809,6 +3823,96 @@ function getWeekDates(offset){
     dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
   }
   return dates;
+}
+// ---- Food pattern analysis ----
+function clusterFeedingTimes(allTimes){
+  if(allTimes.length===0) return [];
+  const minutes = allTimes.map(t=>{ const [h,m]=t.split(':').map(Number); return h*60+m; }).sort((a,b)=>a-b);
+  const clusters = [];
+  const GAP = 75; // minutes: times within this gap of each other are considered "the same feeding slot"
+  let current = [minutes[0]];
+  for(let i=1;i<minutes.length;i++){
+    if(minutes[i]-current[current.length-1]<=GAP) current.push(minutes[i]);
+    else { clusters.push(current); current = [minutes[i]]; }
+  }
+  clusters.push(current);
+  return clusters.map(c=>{
+    const avg = c.reduce((a,b)=>a+b,0)/c.length;
+    const h = Math.floor(avg/60), m = Math.round(avg%60);
+    return { avgTime: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`, count: c.length };
+  }).sort((a,b)=> b.count-a.count);
+}
+function renderFoodPatternView(){
+  const el = document.getElementById('foodPatternView');
+  const PATTERN_DAYS = 14;
+  const weekDates = getLastNDates(PATTERN_DAYS);
+  let allTimes = [];
+  let totalGrams = 0, totalPortions = 0;
+  const perDayStats = [];
+  weekDates.forEach(dateStr=>{
+    const day = data[dateStr] || {};
+    const foodEntries = (day.food||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
+    let dayGrams = 0;
+    foodEntries.forEach(e=>{
+      allTimes.push(e.time);
+      parseFoodEntryGroups(e.note).forEach(g=>{
+        if(g.grams!=null){ dayGrams += g.grams; totalGrams += g.grams; totalPortions++; }
+      });
+    });
+    const glucoseEntries = (day.glucose||[]).filter(x=>typeof x.value==='number');
+    const avgGlucose = glucoseEntries.length ? glucoseEntries.reduce((a,x)=>a+x.value,0)/glucoseEntries.length : null;
+    perDayStats.push({dateStr, feedCount: foodEntries.length, dayGrams, avgGlucose});
+  });
+  const clusters = clusterFeedingTimes(allTimes);
+  const avgFeedCount = perDayStats.reduce((a,d)=>a+d.feedCount,0)/perDayStats.length;
+  const avgPortionSize = totalPortions>0 ? totalGrams/totalPortions : 0;
+
+  const pairs = perDayStats.filter(d=>d.avgGlucose!=null && d.dayGrams>0);
+  let correlationText = '這14天裡，同時有飲食記錄跟血糖記錄的天數不夠（至少需要3天），暫時無法計算關聯。';
+  if(pairs.length>=3){
+    const n = pairs.length;
+    const xs = pairs.map(d=>d.dayGrams), ys = pairs.map(d=>d.avgGlucose);
+    const xMean = xs.reduce((a,b)=>a+b,0)/n, yMean = ys.reduce((a,b)=>a+b,0)/n;
+    let num=0, denX=0, denY=0;
+    for(let i=0;i<n;i++){
+      num += (xs[i]-xMean)*(ys[i]-yMean);
+      denX += (xs[i]-xMean)**2;
+      denY += (ys[i]-yMean)**2;
+    }
+    const r = (denX>0 && denY>0) ? num/Math.sqrt(denX*denY) : null;
+    if(r!=null){
+      const strength = Math.abs(r)>0.6?'明顯':(Math.abs(r)>0.3?'中等':'微弱');
+      const direction = r>0.05 ? '正相關（那天吃越多，平均血糖傾向越高）' : (r<-0.05 ? '負相關（那天吃越多，平均血糖反而傾向越低）' : '幾乎沒有關聯');
+      correlationText = `相關係數 r = ${r.toFixed(2)}（${strength}${direction}），根據這 ${n} 天有同時記錄飲食跟血糖的資料計算。`;
+    }
+  }
+  const dayRowsHtml = perDayStats.map(d=>`
+    <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line);">
+      <span>${d.dateStr}</span>
+      <span>進食 ${d.feedCount} 次，共 ${d.dayGrams.toFixed(0)}g</span>
+      <span>平均血糖 ${d.avgGlucose!=null ? d.avgGlucose.toFixed(1) : '--'}</span>
+    </div>`).join('');
+  el.innerHTML = `
+    <div class="supply-card">
+      <div class="supply-title">🍽️ 常見進食時間（最近14天）</div>
+      <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
+        ${clusters.length ? clusters.map(c=>`約 <b>${c.avgTime}</b>（這14天出現 ${c.count} 次）`).join('<br>') : '這14天沒有飲食記錄。'}
+      </div>
+    </div>
+    <div class="supply-card">
+      <div class="supply-title">📊 份量與頻率</div>
+      <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
+        平均一天進食 <b>${avgFeedCount.toFixed(1)}</b> 次<br>
+        平均每次份量約 <b>${avgPortionSize.toFixed(1)}g</b>
+      </div>
+    </div>
+    <div class="supply-card">
+      <div class="supply-title">🔗 進食量與血糖關聯</div>
+      <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">${correlationText}</div>
+      <div style="margin-top:8px;">${dayRowsHtml}</div>
+      <p style="font-size:10.5px;color:var(--ink-soft);margin-top:8px;">這是簡單的「當天總進食量 vs 當天平均血糖」統計關聯，不是醫療診斷，僅供參考觀察趨勢。</p>
+    </div>
+  `;
 }
 function renderWeeklySummary(){
   const weekDates = getWeekDates(weekOffset);
