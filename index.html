@@ -5944,15 +5944,23 @@ function mergeDiaryData(localD, remoteD){
             let winner;
             if(existingContent === newContent){
               // identical content, no real conflict — carry the reviewed
-              // status forward if either side already had it
+              // status forward if either side already had it, and make sure
+              // a stale _mergeFlag left over on the surviving object (e.g.
+              // from this device's own out-of-date local copy) actually gets
+              // cleared rather than just having _reviewed added on top of it.
               winner = existing;
-              if(e._reviewed) winner._reviewed = true;
+              if(e._reviewed || winner._reviewed){
+                winner._reviewed = true;
+                delete winner._mergeFlag;
+              }
             } else if((e._updatedAt||0) > (existing._updatedAt||0)){
               winner = Object.assign({}, e);
-              if(!winner._reviewed) winner._mergeFlag = true;
+              if(winner._reviewed) delete winner._mergeFlag;
+              else winner._mergeFlag = true;
             } else {
               winner = existing;
-              if(!winner._reviewed) winner._mergeFlag = true;
+              if(winner._reviewed) delete winner._mergeFlag;
+              else winner._mergeFlag = true;
             }
             mergePhotosOnto(winner, e.photos);
             byId.set(e._id, winner);
@@ -5972,7 +5980,10 @@ function mergeDiaryData(localD, remoteD){
             byContentKey.set(key, entry);
           } else {
             const existing = byContentKey.get(key);
-            if(e._reviewed) existing._reviewed = true;
+            if(e._reviewed || existing._reviewed){
+              existing._reviewed = true;
+              delete existing._mergeFlag;
+            }
             mergePhotosOnto(existing, e.photos);
           }
         }
@@ -5983,12 +5994,15 @@ function mergeDiaryData(localD, remoteD){
       combined.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       day[cat] = combined;
     });
-    // free-text day notes: if they differ, keep both, clearly separated
-    if(l.notes && r.notes && l.notes!==r.notes){
-      day.notes = l.notes + '\n----- (另一台裝置的備註) -----\n' + r.notes;
-    } else {
-      day.notes = l.notes || r.notes || '';
-    }
+    // free-text day notes: if they differ, keep both — but de-dupe by segment
+    // so repeated merges (across multiple sync cycles) don't keep
+    // re-appending the same content over and over.
+    const SEP = '\n----- (另一台裝置的備註) -----\n';
+    const lSegments = (l.notes||'').split(SEP).map(s=>s.trim()).filter(Boolean);
+    const rSegments = (r.notes||'').split(SEP).map(s=>s.trim()).filter(Boolean);
+    const mergedSegments = [...lSegments];
+    rSegments.forEach(seg=>{ if(!mergedSegments.includes(seg)) mergedSegments.push(seg); });
+    day.notes = mergedSegments.join(SEP);
     merged[dateStr] = day;
   });
   return merged;
