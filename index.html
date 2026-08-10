@@ -1455,6 +1455,30 @@ function gramsEatenInPastHours(dateStr, time, hoursBack){
   });
   return totalGrams;
 }
+function previousGlucoseReading(dateStr, time, excludeIdx){
+  // Find the chronologically most recent glucose reading strictly before this
+  // one (same day earlier, excluding this exact entry by index; otherwise
+  // scan backward through previous days).
+  const sameDay = (data[dateStr] && data[dateStr].glucose) || [];
+  let best = null, bestTime = null;
+  sameDay.forEach((e,i)=>{
+    if(i===excludeIdx) return;
+    if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+    if(e.time < time && (bestTime===null || e.time>bestTime)){ best = e; bestTime = e.time; }
+  });
+  if(best) return best;
+  const priorDates = Object.keys(data).filter(d=>d<dateStr).sort().reverse();
+  for(const d of priorDates){
+    const list = (data[d] && data[d].glucose) || [];
+    let dayBest = null, dayBestTime = null;
+    list.forEach(e=>{
+      if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+      if(dayBestTime===null || e.time>dayBestTime){ dayBest = e; dayBestTime = e.time; }
+    });
+    if(dayBest) return dayBest;
+  }
+  return null;
+}
 function hoursSinceLastInsulin(dateStr, time){
   // Search backward from this glucose reading's moment: same day earlier, then
   // previous days, for the most recent insulin entry with a valid time.
@@ -1490,8 +1514,17 @@ function renderRowHtml(dateStr, cat, e, idx){
     const trendArrow = TREND_ARROWS[e.trend] || '';
     const hoursSince = hoursSinceLastInsulin(dateStr, e.time);
     const hoursHtml = hoursSince!=null ? ` <span style="font-size:11px;color:var(--ink-soft);">(+${hoursSince.toFixed(1)}h)</span>` : '';
+    const prev = previousGlucoseReading(dateStr, e.time, idx);
+    let deltaHtml = '';
+    if(prev && typeof prev.value==='number' && prev.value>0){
+      const delta = e.value - prev.value;
+      const pct = (delta/prev.value)*100;
+      const arrow = delta>0 ? '↑' : (delta<0 ? '↓' : '→');
+      const deltaColor = delta<0 ? '#3B6E8F' : (delta>0 ? '#D6622C' : 'var(--ink-soft)');
+      deltaHtml = ` <span style="font-size:11px;color:${deltaColor};">(${arrow}${Math.abs(delta).toFixed(1)}, ${Math.abs(pct).toFixed(0)}%)</span>`;
+    }
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${hoursHtml}${detail}`;
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${hoursHtml}${deltaHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -1644,9 +1677,11 @@ function buildKcalProgressHtml(day, dateStr){
     const diff = totalKcal - target; // positive = went over that day, negative = under
     const isOver = diff>1;
     const onTarget = Math.abs(diff)<=1;
-    const scaleMax = Math.max(target, totalKcal) * 1.08;
-    const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
-    const targetPct = Math.min(100, (target/scaleMax)*100);
+    const TARGET_FIXED_PCT = 85;
+    const overflowRoom = target * (100/TARGET_FIXED_PCT - 1);
+    const barScale = target + overflowRoom;
+    const fillPct = Math.min(100, (totalKcal/barScale)*100);
+    const targetPct = TARGET_FIXED_PCT;
     let captionHtml;
     if(onTarget) captionHtml = `剛好符合當天目標`;
     else if(isOver) captionHtml = `當天總共超吃 <b>${diff.toFixed(0)} kcal</b>`;
@@ -1678,16 +1713,28 @@ function buildKcalProgressHtml(day, dateStr){
     }).filter(Boolean);
     suggestionStr = gramSuggestions.length ? `單獨用其中一種補：${gramSuggestions.join('　或　')}` : '';
   }
-  const scaleMax = Math.max(target, totalKcal, expected) * 1.08;
-  const fillPct = Math.min(100, (totalKcal/scaleMax)*100);
-  const markerPct = Math.min(100, (expected/scaleMax)*100);
-  const targetPct = Math.min(100, (target/scaleMax)*100);
-  const period1Pct = Math.min(100, (target/3/scaleMax)*100);
-  const period2Pct = Math.min(100, (target*2/3/scaleMax)*100);
+  // Target sits at a FIXED position on the bar (85%), with the remaining 15%
+  // reserved as a visible "overflow zone" for when actual/expected exceed it.
+  // This keeps the target line and the three even period-thirds in
+  // consistent, predictable positions instead of drifting based on how far
+  // over/under today happens to be.
+  const TARGET_FIXED_PCT = 85;
+  const overflowRoom = target * (100/TARGET_FIXED_PCT - 1); // kcal represented by the remaining 15%
+  const barScale = target + overflowRoom; // total kcal represented by the full 100% bar width
+  const fillPct = Math.min(100, (totalKcal/barScale)*100);
+  const markerPct = Math.min(100, (expected/barScale)*100);
+  const targetPct = TARGET_FIXED_PCT;
+  const period1Pct = TARGET_FIXED_PCT/3;
+  const period2Pct = TARGET_FIXED_PCT*2/3;
   let captionHtml;
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
   else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
   else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
+  const gramsRecently = gramsEatenInPastHours(dateStr || todayStr(), nowTime(), 4);
+  const recentFoodOk = gramsRecently >= 5;
+  const preInjectionHtml = `<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:${recentFoodOk?'#E3F2E9':'#FCE4EC'};font-size:11.5px;color:${recentFoodOk?'#2E6B4F':'#B23A48'};">
+    ${recentFoodOk?'✅':'⚠️'} 過去4小時內吃了約 <b>${gramsRecently.toFixed(1)}g</b>${recentFoodOk?'（達到5g參考線）':'（還沒到5g參考線）'}　<span style="opacity:0.75;">打針前參考</span>
+  </div>`;
   return `<div class="kcal-progress${isOver?' over':''}">
     ${missingWarningHtml}
     <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target} kcal</div>
@@ -1700,6 +1747,7 @@ function buildKcalProgressHtml(day, dateStr){
     </div>
     <div class="kcal-bar-legend"><span>● 目前進度線</span><span>┆ 三段時間分界</span><span>┊ 今日總目標</span></div>
     <div class="kcal-bar-caption">${captionHtml}</div>
+    ${preInjectionHtml}
   </div>`;
 }
 function renderDayRows(dateStr, day){
@@ -2574,12 +2622,7 @@ function setCategory(cat){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
     const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
     const needleTags = loadTagsGeneric(INSULIN_NEEDLE_KEY, []);
-    const gramsRecently = gramsEatenInPastHours(fDate.value || todayStr(), nowTime(), 4);
-    const recentFoodOk = gramsRecently >= 5;
     dynamicFields.innerHTML = `
-      <div style="background:${recentFoodOk?'#E3F2E9':'#FCE4EC'};border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:12px;color:${recentFoodOk?'#2E6B4F':'#B23A48'};">
-        ${recentFoodOk?'✅':'⚠️'} 過去4小時內吃了約 <b>${gramsRecently.toFixed(1)}g</b>${recentFoodOk?'（達到5g參考線）':'（還沒到5g參考線，供打針前參考）'}
-      </div>
       <label>劑量</label>
       <div class="option-grid" id="doseTagGrid">${renderTagButtons(doseTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -6080,11 +6123,17 @@ async function syncFromDriveOnLogin(){
         data = remoteEnvelope.diary;
         await migrateEmbeddedPhotos(); // move any embedded base64 photos from the cloud copy into IndexedDB
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        localStorage.setItem('kleo-last-modified', String(remoteLastModified));
-        localStorage.setItem(LAST_SYNCED_KEY, String(remoteLastModified));
+        // IMPORTANT: everything below applies remote's already-authoritative
+        // data — it is NOT a new local change, so it must never bump
+        // 'kleo-last-modified' or trigger another push (that would corrupt
+        // this device's bookkeeping into wrongly believing it has unsynced
+        // local edits on every subsequent sync, causing it to push instead of
+        // pull). Write directly to localStorage instead of calling the
+        // wrapper save*() functions, which all route through
+        // markLocalChangeAndSync().
         if(remoteEnvelope.supplies){
           supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
-          saveSupplies();
+          localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies));
         }
         if(remoteEnvelope.calEvents){
           const normalized = {};
@@ -6092,16 +6141,16 @@ async function syncFromDriveOnLogin(){
             normalized[d] = (remoteEnvelope.calEvents[d]||[]).map(normalizeCalEvent);
           });
           calEvents = normalized;
-          saveCalEvents();
+          localStorage.setItem(CAL_EVENTS_KEY, JSON.stringify(calEvents));
         }
         if(remoteEnvelope.foodBrandKcal){
-          saveFoodBrandKcal(remoteEnvelope.foodBrandKcal);
+          localStorage.setItem(FOOD_BRAND_KCAL_KEY, JSON.stringify(remoteEnvelope.foodBrandKcal));
         }
         if(remoteEnvelope.dailyKcalTarget!=null){
-          saveDailyKcalTarget(remoteEnvelope.dailyKcalTarget);
+          localStorage.setItem(DAILY_KCAL_TARGET_KEY, String(remoteEnvelope.dailyKcalTarget));
         }
         if(remoteEnvelope.dailyTreatsCount!=null){
-          saveDailyTreatsCount(remoteEnvelope.dailyTreatsCount);
+          localStorage.setItem(DAILY_TREATS_COUNT_KEY, String(remoteEnvelope.dailyTreatsCount));
         }
         if(remoteEnvelope.todos){
           todos = remoteEnvelope.todos;
@@ -6110,6 +6159,11 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.tagStorage){
           restoreSyncableTagStorage(remoteEnvelope.tagStorage);
         }
+        // Now that all remote data has been applied, mark this device as
+        // caught up exactly to remote's timestamp — this must be the LAST
+        // write to these bookkeeping keys.
+        localStorage.setItem('kleo-last-modified', String(remoteLastModified));
+        localStorage.setItem(LAST_SYNCED_KEY, String(remoteLastModified));
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
       } else {
