@@ -3847,28 +3847,34 @@ function renderFoodPatternView(){
   const PATTERN_DAYS = 14;
   const weekDates = getLastNDates(PATTERN_DAYS);
   let allTimes = [];
-  let totalGrams = 0, totalPortions = 0;
+  let totalGrams = 0, totalGramPortions = 0;
+  let totalPieces = 0, totalPiecePortions = 0;
   const perDayStats = [];
   weekDates.forEach(dateStr=>{
     const day = data[dateStr] || {};
     const foodEntries = (day.food||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
-    let dayGrams = 0;
+    let dayGrams = 0, dayPieces = 0;
     foodEntries.forEach(e=>{
       allTimes.push(e.time);
       parseFoodEntryGroups(e.note).forEach(g=>{
-        if(g.grams!=null){ dayGrams += g.grams; totalGrams += g.grams; totalPortions++; }
+        if(g.grams==null) return;
+        if(g.unit==='顆'){ dayPieces += g.grams; totalPieces += g.grams; totalPiecePortions++; }
+        else { dayGrams += g.grams; totalGrams += g.grams; totalGramPortions++; }
       });
     });
     const glucoseEntries = (day.glucose||[]).filter(x=>typeof x.value==='number');
     const avgGlucose = glucoseEntries.length ? glucoseEntries.reduce((a,x)=>a+x.value,0)/glucoseEntries.length : null;
-    perDayStats.push({dateStr, feedCount: foodEntries.length, dayGrams, avgGlucose});
+    perDayStats.push({dateStr, feedCount: foodEntries.length, dayGrams, dayPieces, avgGlucose});
   });
   const clusters = clusterFeedingTimes(allTimes);
   const avgFeedCount = perDayStats.reduce((a,d)=>a+d.feedCount,0)/perDayStats.length;
-  const avgPortionSize = totalPortions>0 ? totalGrams/totalPortions : 0;
+  const avgPortionSizeG = totalGramPortions>0 ? totalGrams/totalGramPortions : 0;
+  const avgPortionSizePc = totalPiecePortions>0 ? totalPieces/totalPiecePortions : 0;
 
+  // Correlation uses grams-based food only (乾糧/罐頭 etc) since treats measured
+  // in pieces aren't directly comparable by weight without a conversion.
   const pairs = perDayStats.filter(d=>d.avgGlucose!=null && d.dayGrams>0);
-  let correlationText = '這14天裡，同時有飲食記錄跟血糖記錄的天數不夠（至少需要3天），暫時無法計算關聯。';
+  let correlationText = '這14天裡，同時有克數飲食記錄跟血糖記錄的天數不夠（至少需要3天），暫時無法計算關聯。';
   if(pairs.length>=3){
     const n = pairs.length;
     const xs = pairs.map(d=>d.dayGrams), ys = pairs.map(d=>d.avgGlucose);
@@ -3883,13 +3889,13 @@ function renderFoodPatternView(){
     if(r!=null){
       const strength = Math.abs(r)>0.6?'明顯':(Math.abs(r)>0.3?'中等':'微弱');
       const direction = r>0.05 ? '正相關（那天吃越多，平均血糖傾向越高）' : (r<-0.05 ? '負相關（那天吃越多，平均血糖反而傾向越低）' : '幾乎沒有關聯');
-      correlationText = `相關係數 r = ${r.toFixed(2)}（${strength}${direction}），根據這 ${n} 天有同時記錄飲食跟血糖的資料計算。`;
+      correlationText = `相關係數 r = ${r.toFixed(2)}（${strength}${direction}），根據這 ${n} 天有同時記錄克數飲食跟血糖的資料計算（不含用「顆」計算的零食）。`;
     }
   }
   const dayRowsHtml = perDayStats.map(d=>`
     <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line);">
       <span>${d.dateStr}</span>
-      <span>進食 ${d.feedCount} 次，共 ${d.dayGrams.toFixed(0)}g</span>
+      <span>進食 ${d.feedCount} 次，共 ${d.dayGrams.toFixed(0)}g${d.dayPieces>0?`+${d.dayPieces.toFixed(0)}顆`:''}</span>
       <span>平均血糖 ${d.avgGlucose!=null ? d.avgGlucose.toFixed(1) : '--'}</span>
     </div>`).join('');
   el.innerHTML = `
@@ -3903,7 +3909,8 @@ function renderFoodPatternView(){
       <div class="supply-title">📊 份量與頻率</div>
       <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
         平均一天進食 <b>${avgFeedCount.toFixed(1)}</b> 次<br>
-        平均每次份量約 <b>${avgPortionSize.toFixed(1)}g</b>
+        ${totalGramPortions>0 ? `以g計算的食物，平均每次份量約 <b>${avgPortionSizeG.toFixed(1)}g</b><br>` : ''}
+        ${totalPiecePortions>0 ? `以顆計算的零食，平均每次份量約 <b>${avgPortionSizePc.toFixed(1)}顆</b>` : ''}
       </div>
     </div>
     <div class="supply-card">
