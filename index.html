@@ -66,17 +66,22 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .more-menu-item:active{background:var(--line);}
 .nav-dropdown-wrap{position:relative;}
 .report-tab-btn.active{background:var(--ink);color:var(--paper-raised);}
-.ampm-table{border-collapse:collapse;font-size:11px;white-space:nowrap;}
+.ampm-table{border-collapse:collapse;font-size:11px;white-space:nowrap;table-layout:fixed;}
 .ampm-table th, .ampm-table td{
   border:1px solid var(--line);padding:4px 6px;text-align:center;
+  width:38px;min-width:38px;max-width:38px;overflow:hidden;text-overflow:ellipsis;
 }
+.ampm-table th.ampm-date-col, .ampm-table td.ampm-date{width:80px;min-width:80px;max-width:80px;}
+.ampm-table td.ampm-remarks, .ampm-table th.ampm-remarks-col{width:240px;min-width:240px;max-width:240px;white-space:normal;}
 .ampm-table th{background:#00000006;font-weight:600;position:sticky;top:0;}
 .ampm-table td.ampm-date{position:sticky;left:0;background:var(--paper);font-weight:600;text-align:left;z-index:1;}
-.ampm-table td.ampm-remarks{text-align:left;white-space:normal;min-width:220px;font-size:10.5px;color:var(--ink-soft);}
+.ampm-table td.ampm-remarks{text-align:left;font-size:10.5px;color:var(--ink-soft);}
 .ampm-table td.ampm-preshot{font-weight:700;}
 .ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
 .ampm-am-group{background:#F5F2E8;}
 .ampm-pm-group{background:#EAF1EE;}
+.ampm-legend{font-size:10.5px;color:var(--ink-soft);margin-top:10px;line-height:1.7;}
+.ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
   background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
@@ -3900,16 +3905,26 @@ function buildDaySessionsForAmpm(dateStr, day){
 
   return { amSession, pmSession, remarks: remarkParts.join('；') };
 }
+function ampmValueColor(v){
+  // Matches the BG range key from the reference Feline Diabetes Support Group sheet
+  if(v>27.7) return '#7B1F1F';       // BG > 27.7
+  if(v>=22.2) return '#C0392B';      // 22.2 - 27.7
+  if(v>=16.7) return '#D6622C';      // 16.7 - 22.1
+  if(v>=11.1) return '#D9A441';      // 11.1 - 16.6
+  if(v>=5.6) return '#3F7A5C';       // 5.6 - 11.0 (target)
+  if(v>=4.4) return '#3B6E8F';       // 4.4 - 5.5
+  return '#7B1FA2';                  // BG < 4.4 (Take Action!)
+}
 function renderAmpmTable(){
   const el = document.getElementById('ampmTableView');
   const days = getLastNDates(30);
   const hourCols = Array.from({length:11}, (_,i)=>i+1);
   let html = `<table class="ampm-table"><thead>
     <tr>
-      <th rowspan="2">Date</th>
+      <th class="ampm-date-col" rowspan="2">Date</th>
       <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
       <th class="ampm-pm-group" colspan="${2+hourCols.length}">PM</th>
-      <th rowspan="2">Remarks</th>
+      <th class="ampm-remarks-col" rowspan="2">Remarks</th>
     </tr>
     <tr>
       <th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
@@ -3923,12 +3938,16 @@ function renderAmpmTable(){
     if(!day) return;
     const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day);
     if(!amSession && !pmSession && !remarks) return; // skip totally empty days
+    function valCell(v, extraClass){
+      if(v==null) return `<td class="${extraClass}"></td>`;
+      return `<td class="${extraClass}" style="color:${ampmValueColor(v)};font-weight:600;">${v}</td>`;
+    }
     function sessionCells(session, groupClass){
       if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
       const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
-      return `<td class="${groupClass} ampm-preshot">${session.preBg!=null?session.preBg:''}</td>
+      return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
         <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
-        ${hourCols.map(h=>`<td class="${groupClass}">${session.hours[h]!=null?session.hours[h]:''}</td>`).join('')}`;
+        ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
     }
     html += `<tr>
       <td class="ampm-date">${dateStr}</td>
@@ -3938,7 +3957,17 @@ function renderAmpmTable(){
     </tr>`;
   });
   html += `</tbody></table>
-    <p style="font-size:10.5px;color:var(--ink-soft);margin-top:8px;">PS = 打針前血糖（Pre-Shot）；+1~+11 = 打針後幾小時的血糖讀數；顯示最近30天。</p>`;
+    <div class="ampm-legend">
+      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數（自動抓最接近的讀數）　顯示最近30天<br>
+      <b>顏色說明：</b>
+      <span class="swatch" style="background:#7B1F1F;"></span>&gt;27.7　
+      <span class="swatch" style="background:#C0392B;"></span>22.2-27.7　
+      <span class="swatch" style="background:#D6622C;"></span>16.7-22.1　
+      <span class="swatch" style="background:#D9A441;"></span>11.1-16.6　
+      <span class="swatch" style="background:#3F7A5C;"></span>5.6-11.0（目標範圍）　
+      <span class="swatch" style="background:#3B6E8F;"></span>4.4-5.5　
+      <span class="swatch" style="background:#7B1FA2;"></span>&lt;4.4（該處理了！）
+    </div>`;
   el.innerHTML = html;
 }
 function renderFoodPatternView(){
