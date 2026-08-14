@@ -66,6 +66,17 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .more-menu-item:active{background:var(--line);}
 .nav-dropdown-wrap{position:relative;}
 .report-tab-btn.active{background:var(--ink);color:var(--paper-raised);}
+.ampm-table{border-collapse:collapse;font-size:11px;white-space:nowrap;}
+.ampm-table th, .ampm-table td{
+  border:1px solid var(--line);padding:4px 6px;text-align:center;
+}
+.ampm-table th{background:#00000006;font-weight:600;position:sticky;top:0;}
+.ampm-table td.ampm-date{position:sticky;left:0;background:var(--paper);font-weight:600;text-align:left;z-index:1;}
+.ampm-table td.ampm-remarks{text-align:left;white-space:normal;min-width:220px;font-size:10.5px;color:var(--ink-soft);}
+.ampm-table td.ampm-preshot{font-weight:700;}
+.ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
+.ampm-am-group{background:#F5F2E8;}
+.ampm-pm-group{background:#EAF1EE;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
   background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;
@@ -781,6 +792,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="sync-btn report-tab-btn active" id="reportTabTable" data-tab="table">資料表</button>
     <button class="sync-btn report-tab-btn" id="reportTabWeekly" data-tab="weekly">每週摘要</button>
     <button class="sync-btn report-tab-btn" id="reportTabPattern" data-tab="pattern">進食模式</button>
+    <button class="sync-btn report-tab-btn" id="reportTabAmpm" data-tab="ampm">AM/PM對照表</button>
   </div>
   <div id="reportContent"></div>
   <div id="weeklySummaryView" style="display:none;">
@@ -792,6 +804,7 @@ textarea{resize:vertical; min-height:64px;}
     <div id="weeklySummaryContent" style="padding:8px 16px 24px;"></div>
   </div>
   <div id="foodPatternView" style="display:none;padding:8px 16px 24px;"></div>
+  <div id="ampmTableView" style="display:none;padding:8px 16px 24px;overflow-x:auto;"></div>
 </div>
 
 <div id="galleryView" style="display:none;">
@@ -3284,6 +3297,7 @@ reportBtn.addEventListener('click', ()=>{
   document.getElementById('reportContent').style.display = 'block';
   document.getElementById('weeklySummaryView').style.display = 'none';
   document.getElementById('foodPatternView').style.display = 'none';
+  document.getElementById('ampmTableView').style.display = 'none';
   const today = todayStr();
   rangeEnd.value = today;
   const d = new Date();
@@ -3306,8 +3320,10 @@ document.querySelectorAll('.report-tab-btn').forEach(btn=>{
     document.getElementById('reportContent').style.display = tab==='table' ? 'block' : 'none';
     document.getElementById('weeklySummaryView').style.display = tab==='weekly' ? 'block' : 'none';
     document.getElementById('foodPatternView').style.display = tab==='pattern' ? 'block' : 'none';
+    document.getElementById('ampmTableView').style.display = tab==='ampm' ? 'block' : 'none';
     if(tab==='weekly') renderWeeklySummary();
     if(tab==='pattern') renderFoodPatternView();
+    if(tab==='ampm') renderAmpmTable();
   });
 });
 document.getElementById('weekPrevBtn').addEventListener('click', ()=>{
@@ -3841,6 +3857,89 @@ function clusterFeedingTimes(allTimes){
     const h = Math.floor(avg/60), m = Math.round(avg%60);
     return { avgTime: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`, count: c.length };
   }).sort((a,b)=> b.count-a.count);
+}
+// ---- AM/PM session table (Feline Diabetes Support Group style) ----
+function toMinutesOfDay(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
+function buildDaySessionsForAmpm(dateStr, day){
+  const insulinEntries = (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time));
+  const glucoseEntries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number').sort((a,b)=>a.time.localeCompare(b.time));
+  const amShot = insulinEntries.find(e=> toMinutesOfDay(e.time) < 14*60);
+  const pmShot = insulinEntries.slice().reverse().find(e=> toMinutesOfDay(e.time) >= 14*60);
+
+  function findPreShotBg(shotMin){
+    let best = null, bestDiff = Infinity;
+    glucoseEntries.forEach(g=>{
+      const gMin = toMinutesOfDay(g.time);
+      const diff = shotMin - gMin;
+      if(diff>=0 && diff<bestDiff){ best = g.value; bestDiff = diff; }
+    });
+    return best;
+  }
+  function buildSession(shot, windowStartMin, windowEndMin){
+    if(!shot) return null;
+    const shotMin = toMinutesOfDay(shot.time);
+    const hours = {};
+    glucoseEntries.forEach(g=>{
+      const gMin = toMinutesOfDay(g.time);
+      if(gMin < windowStartMin || gMin >= windowEndMin) return;
+      if(gMin <= shotMin) return;
+      const hDiff = Math.round((gMin-shotMin)/60);
+      if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null) hours[hDiff] = g.value;
+    });
+    return { preBg: findPreShotBg(shotMin), dose: shot.dose, time: shot.time, hours };
+  }
+  const pmShotMin = pmShot ? toMinutesOfDay(pmShot.time) : 1440;
+  const amSession = buildSession(amShot, 0, pmShotMin);
+  const pmSession = buildSession(pmShot, pmShotMin, 1440);
+
+  const remarkParts = [];
+  if(amShot) remarkParts.push(`AM injection ${amShot.time}` + (amShot.dose && amShot.dose.toLowerCase()==='skip' ? ' (SKIP)' : ''));
+  if(pmShot) remarkParts.push(`PM injection ${pmShot.time}` + (pmShot.dose && pmShot.dose.toLowerCase()==='skip' ? ' (SKIP)' : ''));
+  if(day.notes) remarkParts.push(day.notes.split('\n')[0]);
+  (day.noteEntries||[]).forEach(n=>{ if(n.note) remarkParts.push(n.note); });
+
+  return { amSession, pmSession, remarks: remarkParts.join('；') };
+}
+function renderAmpmTable(){
+  const el = document.getElementById('ampmTableView');
+  const days = getLastNDates(30);
+  const hourCols = Array.from({length:11}, (_,i)=>i+1);
+  let html = `<table class="ampm-table"><thead>
+    <tr>
+      <th rowspan="2">Date</th>
+      <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
+      <th class="ampm-pm-group" colspan="${2+hourCols.length}">PM</th>
+      <th rowspan="2">Remarks</th>
+    </tr>
+    <tr>
+      <th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
+      ${hourCols.map(h=>`<th class="ampm-am-group">+${h}</th>`).join('')}
+      <th class="ampm-pm-group">PS</th><th class="ampm-pm-group">Units</th>
+      ${hourCols.map(h=>`<th class="ampm-pm-group">+${h}</th>`).join('')}
+    </tr>
+  </thead><tbody>`;
+  days.forEach(dateStr=>{
+    const day = data[dateStr];
+    if(!day) return;
+    const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day);
+    if(!amSession && !pmSession && !remarks) return; // skip totally empty days
+    function sessionCells(session, groupClass){
+      if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
+      const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
+      return `<td class="${groupClass} ampm-preshot">${session.preBg!=null?session.preBg:''}</td>
+        <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
+        ${hourCols.map(h=>`<td class="${groupClass}">${session.hours[h]!=null?session.hours[h]:''}</td>`).join('')}`;
+    }
+    html += `<tr>
+      <td class="ampm-date">${dateStr}</td>
+      ${sessionCells(amSession,'ampm-am-group')}
+      ${sessionCells(pmSession,'ampm-pm-group')}
+      <td class="ampm-remarks">${escapeHtml(remarks)}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>
+    <p style="font-size:10.5px;color:var(--ink-soft);margin-top:8px;">PS = 打針前血糖（Pre-Shot）；+1~+11 = 打針後幾小時的血糖讀數；顯示最近30天。</p>`;
+  el.innerHTML = html;
 }
 function renderFoodPatternView(){
   const el = document.getElementById('foodPatternView');
