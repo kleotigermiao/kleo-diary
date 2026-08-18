@@ -81,6 +81,23 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .ampm-am-group{background:#F5F2E8;}
 .ampm-pm-group{background:#EAF1EE;}
 .ampm-legend{font-size:10.5px;color:var(--ink-soft);margin-top:10px;line-height:1.7;}
+.site-grid{
+  display:grid;grid-template-columns:20px repeat(6,1fr);gap:5px;
+  max-width:320px;margin-top:6px;
+}
+.site-grid-corner{}
+.site-grid-colhead, .site-grid-rowhead{
+  font-size:11px;color:var(--ink-soft);text-align:center;
+  display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;
+}
+.site-grid-cell{
+  aspect-ratio:1;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;
+}
+.site-grid-cell.selected{border-color:var(--ink);box-shadow:0 0 0 2px var(--paper);}
+.site-grid-legend{
+  display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:10.5px;color:var(--ink-soft);
+}
+.site-grid-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle;}
 .ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
@@ -726,6 +743,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn" data-cat="stool"><span class="ic">💩</span>排便</button>
     <button class="cat-btn" data-cat="vomit"><span class="ic">🤮</span>嘔吐</button>
     <button class="cat-btn" data-cat="med"><span class="ic">💊</span>用藥</button>
+    <button class="cat-btn" data-cat="respRate"><span class="ic">🫁</span>呼吸率</button>
     <button class="cat-btn" data-cat="note"><span class="ic">📝</span>備註</button>
   </div>
 
@@ -1136,9 +1154,9 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',mood:'😺',appetite:'🍖',noteEntries:'📝'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',mood:'😺',appetite:'🍖',noteEntries:'📝'};
 const TREND_ARROWS = {up_fast:'↑', up:'↗', stable:'→', down:'↘', down_fast:'↓'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',mood:'精神',appetite:'食慾',noteEntries:'備註'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
   if(!entries || entries.length===0) return null;
@@ -1162,7 +1180,7 @@ function deltaSpan(diff, formatFn){
   return `<span class="delta ${cls}">${arrow} ${formatFn(Math.abs(diff))}</span>`;
 }
 const CUSTOM_SLOTS_KEY = 'kleo-custom-status-slots-v1';
-const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med'];
+const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med','respRate'];
 const CUSTOM_SLOT_COUNT = 4;
 function loadCustomSlots(){
   try{
@@ -1550,6 +1568,9 @@ function renderRowHtml(dateStr, cat, e, idx){
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
   } else if(cat==='weight'){
     valHtml = `<span class="tag normal">${e.value} kg</span>`;
+  } else if(cat==='respRate'){
+    const rrDetail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
+    valHtml = `<span class="tag normal">${e.value} 次/分</span>${rrDetail}`;
   } else if(cat==='insulin'){
     const extra = [];
     if(e.site) extra.push(e.site);
@@ -1834,7 +1855,7 @@ function buildRemindersBanner(){
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
-    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
   const dates = Object.keys(data).sort().reverse();
   if(dates.length===0){
@@ -2203,6 +2224,10 @@ function openSheetForEdit(dateStr, cat, idx){
       document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>{
         b.classList.toggle('active', b.dataset.val===entry.site);
       });
+      if(/^[A-F][1-6]$/.test(entry.site)){
+        const gridEl = document.getElementById('siteGridPicker');
+        if(gridEl){ gridEl.innerHTML = buildSiteGridHtml(entry.site); wireSiteGridPicker(); }
+      }
     }
     if(entry.needle){
       document.getElementById('fNeedle').value = entry.needle;
@@ -2297,6 +2322,11 @@ function openSheetForEdit(dateStr, cat, idx){
       });
     }
     else if(cat==='weight') valEl.value = entry.value;
+    else if(cat==='respRate'){
+      valEl.value = entry.value;
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = entry.note || '';
+    }
     else if(cat==='insulin') valEl.value = entry.dose;
     else if(cat==='water') valEl.value = entry.ml;
     else valEl.value = entry.note || '';
@@ -2424,6 +2454,58 @@ function showTagManageModal(currentName, onRename, onDelete){
     if(!confirm(`確定要刪除標籤「${currentName}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)) return;
     onDelete();
     close();
+  });
+}
+const INJECTION_GRID_ROWS = ['A','B','C','D','E','F'];
+const INJECTION_GRID_COLS = [1,2,3,4,5,6];
+function computeSiteUsageRecency(){
+  const usage = {}; // site label -> {lastUsedDate, count}
+  Object.keys(data).sort().forEach(dateStr=>{
+    (data[dateStr].insulin||[]).forEach(e=>{
+      if(e.site && /^[A-F][1-6]$/.test(e.site)){
+        const prev = usage[e.site];
+        usage[e.site] = { lastUsedDate: dateStr, count: (prev?prev.count:0)+1 };
+      }
+    });
+  });
+  return usage;
+}
+function siteRecencyColor(lastUsedDate){
+  if(!lastUsedDate) return '#3F7A5C'; // never used
+  const daysSince = Math.floor((new Date(todayStr()+'T00:00:00') - new Date(lastUsedDate+'T00:00:00')) / 86400000);
+  if(daysSince<3) return '#C0392B';
+  if(daysSince<7) return '#D6622C';
+  if(daysSince<14) return '#D9A441';
+  return '#3F7A5C';
+}
+function buildSiteGridHtml(selectedSite){
+  const usage = computeSiteUsageRecency();
+  let html = `<div class="site-grid">
+    <div class="site-grid-corner"></div>
+    ${INJECTION_GRID_COLS.map(c=>`<div class="site-grid-colhead">${c}</div>`).join('')}`;
+  INJECTION_GRID_ROWS.forEach(r=>{
+    html += `<div class="site-grid-rowhead">${r}</div>`;
+    INJECTION_GRID_COLS.forEach(c=>{
+      const label = `${r}${c}`;
+      const info = usage[label];
+      const color = siteRecencyColor(info ? info.lastUsedDate : null);
+      const isSelected = selectedSite===label;
+      const title = info ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次` : `${label}：從沒用過`;
+      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}" data-site="${label}" style="background:${color};" title="${title}"></button>`;
+    });
+  });
+  html += `</div>`;
+  return html;
+}
+function wireSiteGridPicker(){
+  document.querySelectorAll('.site-grid-cell').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const site = btn.dataset.site;
+      document.getElementById('fSite').value = site;
+      document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>b.classList.remove('active'));
+      document.getElementById('siteGridPicker').innerHTML = buildSiteGridHtml(site);
+      wireSiteGridPicker();
+    });
   });
 }
 function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
@@ -2638,6 +2720,10 @@ function setCategory(cat){
       <textarea id="fDetail" placeholder="例如尿團偏小、顏色偏深…" style="height:44px;"></textarea>`;
   } else if(cat==='weight'){
     dynamicFields.innerHTML = `<label>體重 (kg)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 4.20">`;
+  } else if(cat==='respRate'){
+    dynamicFields.innerHTML = `<label>呼吸率 (次/分鐘)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 30">
+      <label>補充說明（可選）</label>
+      <textarea id="fDetail" placeholder="例如睡眠中量測、剛活動完…" style="height:44px;"></textarea>`;
   } else if(cat==='insulin'){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
     const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
@@ -2657,6 +2743,14 @@ function setCategory(cat){
         <input type="text" id="newSiteInput" placeholder="新增位置…" style="flex:1;">
         <button type="button" id="addSiteBtn" class="tag-add-btn">新增</button>
       </div>
+      <label style="margin-top:10px;">或用身體位置圖選（顏色代表多久沒用這個位置）</label>
+      <div id="siteGridPicker">${buildSiteGridHtml()}</div>
+      <div class="site-grid-legend">
+        <span><i style="background:#3F7A5C;"></i>≥14天沒用/從沒用過</span>
+        <span><i style="background:#D9A441;"></i>7-13天</span>
+        <span><i style="background:#D6622C;"></i>3-6天</span>
+        <span><i style="background:#C0392B;"></i>0-2天內用過</span>
+      </div>
       <label>針管型號（可選）</label>
       <div class="option-grid" id="needleTagGrid">${renderTagButtons(needleTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -2674,6 +2768,7 @@ function setCategory(cat){
     wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
     wireAddTag('newSiteInput','addSiteBtn','siteTagGrid', siteTags, INSULIN_SITE_KEY, 'fSite');
     wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
+    wireSiteGridPicker();
   } else if(cat==='water'){
     const currentBase = loadWaterBase();
     const isNewEntry = !editContext;
@@ -3158,7 +3253,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -3183,6 +3278,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       updated = {time, value: parseInt(rawVal)};
     } else if(cat==='weight'){
       updated = {time, value: parseFloat(rawVal)};
+    } else if(cat==='respRate'){
+      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined};
     } else if(cat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
@@ -3230,6 +3327,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       data[dateStr][currentCat].push({time, value: parseInt(rawVal)});
     } else if(currentCat==='weight'){
       data[dateStr].weight.push({time, value: parseFloat(rawVal)});
+    } else if(currentCat==='respRate'){
+      data[dateStr].respRate.push({time, value: parseFloat(numRaw), note: detailRaw || undefined});
     } else if(currentCat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
@@ -3568,6 +3667,7 @@ const REPORT_COLUMNS = [
   {key:'glucose', label:'血糖', icon:'🩸'},
   {key:'glucoseNote', label:'血糖備註', icon:'📝'},
   {key:'weight', label:'體重', icon:'⚖️'},
+  {key:'respRate', label:'呼吸率', icon:'🫁'},
   {key:'insulin', label:'胰島素', icon:'💉'},
   {key:'insulinNote', label:'胰島素備註', icon:'📝'},
   {key:'insulinSite', label:'胰島素位置', icon:'📍'},
@@ -3624,6 +3724,7 @@ function reportCellLines(day, catKey){
   const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
   if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}`);
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
+  if(catKey==='respRate') return entries.map(e=>`${e.time} → ${e.value}次/分`);
   if(catKey==='insulin') return entries.map(e=>`${e.time} ${e.dose}`);
   if(catKey==='water'){
     if(entries.length===0) return [];
@@ -3940,7 +4041,7 @@ function renderAmpmTable(){
     if(!amSession && !pmSession && !remarks) return; // skip totally empty days
     function valCell(v, extraClass){
       if(v==null) return `<td class="${extraClass}"></td>`;
-      return `<td class="${extraClass}" style="color:${ampmValueColor(v)};font-weight:600;">${v}</td>`;
+      return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
     }
     function sessionCells(session, groupClass){
       if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
@@ -4055,7 +4156,7 @@ function renderWeeklySummary(){
   const allDatesSorted = Object.keys(data).sort().reverse();
   const content = document.getElementById('weeklySummaryContent');
   content.innerHTML = weekDates.map(dateStr=>{
-    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
     const idx = allDatesSorted.indexOf(dateStr);
     const stats = computeDayReportStats(dateStr, day, allDatesSorted, idx);
     const chartHtml = buildMiniDayChart(day);
@@ -5001,7 +5102,7 @@ function openCalDayMenu(dateStr){
   document.getElementById('calJumpToMainBtn').addEventListener('click', ()=>{
     overlay.remove();
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
     }
     document.getElementById('calendarView').style.display = 'none';
     document.getElementById('main').style.display = 'block';
@@ -5464,7 +5565,7 @@ function parseCsvToImportData(csvText){
     if(row.every(c=>(c||'').trim()==='')) continue;
     const dateStr = (row[dateIdx]||'').trim();
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
-    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
     headerKeys.forEach((key, i)=>{
       if(key==null || key==='date') return;
       const cell = (row[i]||'').trim();
@@ -5530,7 +5631,7 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
       addedDays++;
     }
     ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite'].forEach(cat=>{
@@ -6010,7 +6111,7 @@ async function findOrCreateDriveFile(){
 
 const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
 
-const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite','noteEntries'];
+const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite','noteEntries'];
 function entryIdentityKey(e){
   // Photos are represented differently locally (short IndexedDB ref ids)
   // vs on the cloud copy (hydrated base64 strings) for the exact same
