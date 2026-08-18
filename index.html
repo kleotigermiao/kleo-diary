@@ -4044,7 +4044,9 @@ function renderAmpmTable(){
     const day = data[dateStr];
     if(!day) return;
     const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day);
-    if(!amSession && !pmSession && !remarks) return; // skip totally empty days
+    const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number');
+    const hasAnyInsulin = (day.insulin||[]).length>0;
+    if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin) return; // skip only if truly nothing logged that day
     function valCell(v, extraClass){
       if(v==null) return `<td class="${extraClass}"></td>`;
       return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
