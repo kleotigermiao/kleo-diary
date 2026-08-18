@@ -94,6 +94,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   aspect-ratio:1;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;
 }
 .site-grid-cell.selected{border-color:var(--ink);box-shadow:0 0 0 2px var(--paper);}
+.site-grid-divider{border-right:2px dashed var(--ink-soft);padding-right:6px;margin-right:1px;}
 .site-grid-legend{
   display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:10.5px;color:var(--ink-soft);
 }
@@ -1792,7 +1793,7 @@ function buildKcalProgressHtml(day, dateStr){
   </div>`;
 }
 function renderDayRows(dateStr, day){
-  const cats = ['mood','appetite','food','water','glucose','weight','insulin','urine','stool','vomit','med','noteEntries'];
+  const cats = ['mood','appetite','food','water','glucose','weight','respRate','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -2482,7 +2483,7 @@ function buildSiteGridHtml(selectedSite){
   const usage = computeSiteUsageRecency();
   let html = `<div class="site-grid">
     <div class="site-grid-corner"></div>
-    ${INJECTION_GRID_COLS.map(c=>`<div class="site-grid-colhead">${c}</div>`).join('')}`;
+    ${INJECTION_GRID_COLS.map(c=>`<div class="site-grid-colhead${c===3?' site-grid-divider':''}">${c}</div>`).join('')}`;
   INJECTION_GRID_ROWS.forEach(r=>{
     html += `<div class="site-grid-rowhead">${r}</div>`;
     INJECTION_GRID_COLS.forEach(c=>{
@@ -2491,7 +2492,7 @@ function buildSiteGridHtml(selectedSite){
       const color = siteRecencyColor(info ? info.lastUsedDate : null);
       const isSelected = selectedSite===label;
       const title = info ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次` : `${label}：從沒用過`;
-      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}" data-site="${label}" style="background:${color};" title="${title}"></button>`;
+      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="background:${color};" title="${title}"></button>`;
     });
   });
   html += `</div>`;
@@ -2743,7 +2744,12 @@ function setCategory(cat){
         <input type="text" id="newSiteInput" placeholder="新增位置…" style="flex:1;">
         <button type="button" id="addSiteBtn" class="tag-add-btn">新增</button>
       </div>
-      <label style="margin-top:10px;">或用身體位置圖選（顏色代表多久沒用這個位置）</label>
+      <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;">
+        <div style="flex:1;height:1px;background:var(--line);"></div>
+        <span style="font-size:12px;color:var(--ink-soft);font-weight:600;">或</span>
+        <div style="flex:1;height:1px;background:var(--line);"></div>
+      </div>
+      <label style="margin-top:0;">用身體位置圖選（顏色代表多久沒用這個位置，跟上面是同一個欄位，兩種選一種就好）</label>
       <div id="siteGridPicker">${buildSiteGridHtml()}</div>
       <div class="site-grid-legend">
         <span><i style="background:#3F7A5C;"></i>≥14天沒用/從沒用過</span>
@@ -4983,7 +4989,7 @@ function renderCalendar(){
         else bg = 'background:#F9C9D6;';
       } else {
         // has a day object but not enough data for a score: still show a faint marker if it has any real entries
-        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
+        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
         if(hasAnyEntry) bg = 'background:#00000012;';
       }
     }
@@ -5634,7 +5640,7 @@ function mergeImportedData(incoming){
       data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
       addedDays++;
     }
-    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','mood','appetite'].forEach(cat=>{
+    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite'].forEach(cat=>{
       if(!data[dateStr][cat]) data[dateStr][cat] = [];
       (incoming[dateStr][cat]||[]).forEach(entry=>{
         data[dateStr][cat].push(entry);
