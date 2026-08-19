@@ -66,16 +66,16 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .more-menu-item:active{background:var(--line);}
 .nav-dropdown-wrap{position:relative;}
 .report-tab-btn.active{background:var(--ink);color:var(--paper-raised);}
-.ampm-table{border-collapse:collapse;font-size:11px;white-space:nowrap;table-layout:fixed;}
+.ampm-table{border-collapse:collapse;font-size:10px;white-space:nowrap;table-layout:fixed;width:100%;}
 .ampm-table th, .ampm-table td{
-  border:1px solid var(--line);padding:4px 6px;text-align:center;
-  width:38px;min-width:38px;max-width:38px;overflow:hidden;text-overflow:ellipsis;
+  border:1px solid var(--line);padding:3px 2px;text-align:center;
+  width:26px;min-width:26px;max-width:26px;overflow:hidden;text-overflow:ellipsis;
 }
-.ampm-table th.ampm-date-col, .ampm-table td.ampm-date{width:80px;min-width:80px;max-width:80px;}
-.ampm-table td.ampm-remarks, .ampm-table th.ampm-remarks-col{width:240px;min-width:240px;max-width:240px;white-space:normal;}
+.ampm-table th.ampm-date-col, .ampm-table td.ampm-date{width:62px;min-width:62px;max-width:62px;font-size:10px;}
+.ampm-table td.ampm-remarks, .ampm-table th.ampm-remarks-col{width:90px;min-width:90px;max-width:90px;}
 .ampm-table th{background:#00000006;font-weight:600;position:sticky;top:0;}
 .ampm-table td.ampm-date{position:sticky;left:0;background:var(--paper);font-weight:600;text-align:left;z-index:1;}
-.ampm-table td.ampm-remarks{text-align:left;font-size:10.5px;color:var(--ink-soft);}
+.ampm-table td.ampm-remarks{text-align:left;font-size:10.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
 .ampm-table td.ampm-preshot{font-weight:700;}
 .ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
 .ampm-am-group{background:#F5F2E8;}
@@ -1425,10 +1425,11 @@ function loadFoodBrands(type){ return loadTagsGeneric('kleo-food-brands-'+type, 
 function saveFoodBrands(type, brands){ saveTagsGeneric('kleo-food-brands-'+type, brands); }
 const FOOD_TYPE_UNITS_KEY = 'kleo-food-type-units-v1';
 function loadFoodTypeUnits(){
+  const defaults = {'零食':'顆'}; // treats default to pieces — too light to weigh accurately
   try{
     const raw = localStorage.getItem(FOOD_TYPE_UNITS_KEY);
-    return raw ? JSON.parse(raw) : {'零食':'顆'}; // treats default to pieces — too light to weigh accurately
-  }catch(e){ return {'零食':'顆'}; }
+    return raw ? Object.assign({}, defaults, JSON.parse(raw)) : defaults;
+  }catch(e){ return defaults; }
 }
 function saveFoodTypeUnits(map){
   try{ localStorage.setItem(FOOD_TYPE_UNITS_KEY, JSON.stringify(map)); }catch(e){}
@@ -2780,12 +2781,10 @@ function setCategory(cat){
     const isNewEntry = !editContext;
     const currentHour = new Date().getHours();
     let defaultPeriod;
-    // Guess based on which of the three check-in times (00:00 / 08:00 / 20:00)
-    // "now" is closest to, using midpoints between them as boundaries:
-    //   22:00-04:00 → closest to the 00:00 check → lateevening (20-24)
-    //   04:00-14:00 → closest to the 08:00 check → midnight (00-08)
-    //   14:00-22:00 → closest to the 20:00 check → daytime (08-20)
-    if(currentHour>=22 || currentHour<4) defaultPeriod = 'lateevening';
+    if(!isNewEntry){
+      const existingEntry = data[editContext.date] && data[editContext.date].water && data[editContext.date].water[editContext.idx];
+      defaultPeriod = (existingEntry && existingEntry.period) || 'daytime';
+    } else if(currentHour>=22 || currentHour<4) defaultPeriod = 'lateevening';
     else if(currentHour>=4 && currentHour<14) defaultPeriod = 'midnight';
     else defaultPeriod = 'daytime';
     const periodLabels = {
@@ -2794,14 +2793,12 @@ function setCategory(cat){
       midnight: '🌃 剛跨午夜（00-08）'
     };
     dynamicFields.innerHTML = `
-      ${isNewEntry ? `
       <label>這是哪一段的水？</label>
       <div class="option-grid" id="waterPeriodGrid">
         <button type="button" class="option-btn water-period-btn${defaultPeriod==='daytime'?' active':''}" data-period="daytime">${periodLabels.daytime}</button>
         <button type="button" class="option-btn water-period-btn${defaultPeriod==='lateevening'?' active':''}" data-period="lateevening">${periodLabels.lateevening}</button>
         <button type="button" class="option-btn water-period-btn${defaultPeriod==='midnight'?' active':''}" data-period="midnight">${periodLabels.midnight}</button>
       </div>
-      ` : ''}
       <label>固定水量 (ml)</label>
       <input type="text" inputmode="numeric" id="fWaterBase" value="${currentBase}">
       <label>剩餘水量 (ml)</label>
@@ -2811,10 +2808,10 @@ function setCategory(cat){
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
     `;
     wireWaterInputs();
-    if(isNewEntry){
+    {
       const applyWaterPeriodDate = (period)=>{
         document.getElementById('fWaterPeriod').value = period;
-        if(period==='lateevening'){
+        if(isNewEntry && period==='lateevening'){
           // "lateevening" covers 20:00-24:00. If it's being logged before actual
           // midnight has passed (e.g. 23:30/23:55), the date should stay today
           // (that 20:00-24:00 window is still today's). Only shift back a day
@@ -2827,13 +2824,14 @@ function setCategory(cat){
           } else {
             fDate.value = todayStr();
           }
-        } else {
+        } else if(isNewEntry){
           // 'midnight' (00-08) and 'daytime' (08-20) always belong to today —
           // there is nothing to shift for either of these.
           fDate.value = todayStr();
         }
       };
-      applyWaterPeriodDate(defaultPeriod);
+      if(isNewEntry) applyWaterPeriodDate(defaultPeriod);
+      else document.getElementById('fWaterPeriod').value = defaultPeriod; // editing: just reflect current selection, don't touch fDate
       document.querySelectorAll('.water-period-btn').forEach(btn=>{
         btn.addEventListener('click', ()=>{
           document.querySelectorAll('.water-period-btn').forEach(b=>b.classList.remove('active'));
@@ -3987,22 +3985,41 @@ function buildDaySessionsForAmpm(dateStr, day){
     });
     return best;
   }
-  function buildSession(shot, windowStartMin, windowEndMin){
-    if(!shot) return null;
-    const shotMin = toMinutesOfDay(shot.time);
+  function buildSession(shot, windowStartMin, windowEndMin, fallbackAnchorMin){
+    // If there's no real injection yet for this half of the day, still show
+    // whatever glucose readings exist by anchoring hour-buckets to a nominal
+    // reference time instead — otherwise readings taken before any shot has
+    // happened (e.g. still-early morning) would silently vanish from the table.
+    const hasRealShot = !!shot;
+    const anchorMin = hasRealShot ? toMinutesOfDay(shot.time) : fallbackAnchorMin;
     const hours = {};
-    glucoseEntries.forEach(g=>{
-      const gMin = toMinutesOfDay(g.time);
-      if(gMin < windowStartMin || gMin >= windowEndMin) return;
-      if(gMin <= shotMin) return;
-      const hDiff = Math.round((gMin-shotMin)/60);
-      if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null) hours[hDiff] = g.value;
-    });
-    return { preBg: findPreShotBg(shotMin), dose: shot.dose, time: shot.time, hours };
+    let anyReading = false;
+    if(hasRealShot){
+      glucoseEntries.forEach(g=>{
+        const gMin = toMinutesOfDay(g.time);
+        if(gMin < windowStartMin || gMin >= windowEndMin) return;
+        if(gMin <= anchorMin) return; // pre-shot readings go in PS, not the hourly buckets
+        const hDiff = Math.round((gMin-anchorMin)/60);
+        if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null){ hours[hDiff] = g.value; anyReading = true; }
+      });
+    } else {
+      // No real shot to anchor hour-buckets to — just list this window's
+      // readings into consecutive slots in chronological order, so nothing
+      // silently disappears (e.g. multiple readings all landing "before 8am"
+      // would otherwise collide into the same bucket and drop all but one).
+      let slot = 1;
+      glucoseEntries.forEach(g=>{
+        const gMin = toMinutesOfDay(g.time);
+        if(gMin < windowStartMin || gMin >= windowEndMin) return;
+        if(slot<=11){ hours[slot] = g.value; slot++; anyReading = true; }
+      });
+    }
+    if(!hasRealShot && !anyReading) return null; // truly nothing to show for this half of the day
+    return { preBg: hasRealShot ? findPreShotBg(anchorMin) : null, dose: shot ? shot.dose : null, time: shot ? shot.time : null, hours };
   }
   const pmShotMin = pmShot ? toMinutesOfDay(pmShot.time) : 1440;
-  const amSession = buildSession(amShot, 0, pmShotMin);
-  const pmSession = buildSession(pmShot, pmShotMin, 1440);
+  const amSession = buildSession(amShot, 0, pmShotMin, 8*60);
+  const pmSession = buildSession(pmShot, pmShotMin, 1440, 20*60);
 
   const remarkParts = [];
   if(amShot) remarkParts.push(`AM injection ${amShot.time}` + (amShot.dose && amShot.dose.toLowerCase()==='skip' ? ' (SKIP)' : ''));
@@ -4022,11 +4039,49 @@ function ampmValueColor(v){
   if(v>=4.4) return '#3B6E8F';       // 4.4 - 5.5
   return '#7B1FA2';                  // BG < 4.4 (Take Action!)
 }
+function buildTestingGapHtml(){
+  // Which 4-hour block of the day has the fewest glucose readings over the
+  // last 14 days? Helps decide when to prioritize testing.
+  const blocks = [
+    {label:'00:00-04:00', start:0, end:4*60},
+    {label:'04:00-08:00', start:4*60, end:8*60},
+    {label:'08:00-12:00', start:8*60, end:12*60},
+    {label:'12:00-16:00', start:12*60, end:16*60},
+    {label:'16:00-20:00', start:16*60, end:20*60},
+    {label:'20:00-24:00', start:20*60, end:24*60},
+  ];
+  const counts = blocks.map(()=>0);
+  const recentDays = getLastNDates(14);
+  let totalReadings = 0;
+  recentDays.forEach(dateStr=>{
+    const day = data[dateStr];
+    if(!day) return;
+    (day.glucose||[]).forEach(e=>{
+      if(!/^\d{1,2}:\d{2}$/.test(e.time||'') || typeof e.value!=='number') return;
+      const min = toMinutesOfDay(e.time);
+      const idx = blocks.findIndex(b=> min>=b.start && min<b.end);
+      if(idx>=0){ counts[idx]++; totalReadings++; }
+    });
+  });
+  if(totalReadings===0) return '';
+  const minCount = Math.min(...counts);
+  const gapBlocks = blocks.filter((b,i)=>counts[i]===minCount);
+  const gapLabel = gapBlocks.map(b=>b.label).join('、');
+  return `<div class="supply-card" style="margin-bottom:14px;">
+    <div class="supply-title">📉 建議補測時段（最近14天）</div>
+    <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
+      最少血糖記錄的時段是 <b>${gapLabel}</b>（這14天只有 ${minCount} 筆），建議下次多在這個時段測一下，讓一天的血糖曲線更完整。
+    </div>
+    <div style="font-size:10.5px;color:var(--ink-soft);margin-top:6px;">
+      ${blocks.map((b,i)=>`${b.label}: ${counts[i]}筆`).join('　')}
+    </div>
+  </div>`;
+}
 function renderAmpmTable(){
   const el = document.getElementById('ampmTableView');
   const days = getLastNDates(30);
-  const hourCols = Array.from({length:11}, (_,i)=>i+1);
-  let html = `<table class="ampm-table"><thead>
+  const hourCols = Array.from({length:6}, (_,i)=>i+1);
+  let html = buildTestingGapHtml() + `<table class="ampm-table"><thead>
     <tr>
       <th class="ampm-date-col" rowspan="2">Date</th>
       <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
@@ -4062,12 +4117,12 @@ function renderAmpmTable(){
       <td class="ampm-date">${dateStr}</td>
       ${sessionCells(amSession,'ampm-am-group')}
       ${sessionCells(pmSession,'ampm-pm-group')}
-      <td class="ampm-remarks">${escapeHtml(remarks)}</td>
+      <td class="ampm-remarks" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>
     </tr>`;
   });
   html += `</tbody></table>
     <div class="ampm-legend">
-      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數（自動抓最接近的讀數）　顯示最近30天<br>
+      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+6 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
       <b>顏色說明：</b>
       <span class="swatch" style="background:#7B1F1F;"></span>&gt;27.7　
       <span class="swatch" style="background:#C0392B;"></span>22.2-27.7　
@@ -4078,6 +4133,13 @@ function renderAmpmTable(){
       <span class="swatch" style="background:#7B1FA2;"></span>&lt;4.4（該處理了！）
     </div>`;
   el.innerHTML = html;
+  el.querySelectorAll('.ampm-remarks').forEach(td=>{
+    td.addEventListener('click', ()=>{
+      const full = td.dataset.fullRemarks;
+      if(!full) return;
+      alert(full);
+    });
+  });
 }
 function renderFoodPatternView(){
   const el = document.getElementById('foodPatternView');
