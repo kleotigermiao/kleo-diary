@@ -99,6 +99,29 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:10.5px;color:var(--ink-soft);
 }
 .site-grid-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle;}
+
+#injectScreenView{
+  position:fixed;inset:0;background:var(--paper);z-index:300;
+  display:flex;flex-direction:column;padding:24px 20px;overflow-y:auto;
+}
+.inject-close-btn{
+  position:absolute;top:16px;right:16px;background:none;border:none;
+  font-size:20px;color:var(--ink-soft);cursor:pointer;padding:6px;
+}
+.inject-top-row{display:flex;gap:20px;align-items:flex-start;}
+.inject-clock{flex:1;min-width:0;}
+.inject-year{font-family:'Archivo Narrow',sans-serif;font-size:34px;font-weight:700;color:var(--ink);line-height:1.1;}
+.inject-date{font-family:'Archivo Narrow',sans-serif;font-size:30px;font-weight:700;color:var(--ink);line-height:1.25;margin-top:4px;}
+.inject-time{font-family:'IBM Plex Mono',monospace;font-size:44px;font-weight:700;color:var(--ink);margin-top:10px;letter-spacing:1px;}
+.inject-dose-box{
+  border:2px solid var(--ink);border-radius:8px;padding:6px 10px;min-width:100px;
+}
+.inject-dose-box select{
+  border:none;background:none;font-size:16px;font-weight:700;color:var(--ink);
+  font-family:'IBM Plex Mono',monospace;width:100%;text-align:center;
+}
+.inject-divider{height:2px;background:var(--ink);opacity:0.15;margin:20px 0;}
+.inject-site-grid-wrap{margin-top:4px;}
 .ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
@@ -715,6 +738,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="calendarBtn">日曆</button>
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
           <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
+          <button type="button" class="more-menu-item" id="injectScreenMenuItem">打針畫面</button>
         </div>
       </div>
     </div>
@@ -725,6 +749,8 @@ textarea{resize:vertical; min-height:64px;}
     <span><span class="dot high"></span>偏高</span>
   </div>
 </div>
+
+<div id="injectScreenView" style="display:none;"></div>
 
 <main id="main"></main>
 
@@ -2480,6 +2506,71 @@ function siteRecencyColor(lastUsedDate){
   if(daysSince<14) return '#D9A441';
   return '#3F7A5C';
 }
+// ---- Injection info screen (view-only, for opening via Shortcut and screenshotting) ----
+function renderInjectScreen(){
+  const el = document.getElementById('injectScreenView');
+  const now = new Date();
+  const year = now.getFullYear();
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const weekdayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const dateLabel = `${monthNames[now.getMonth()]} ${now.getDate()}${['th','st','nd','rd'][(now.getDate()%10>3||[11,12,13].includes(now.getDate()%100))?0:now.getDate()%10]}`;
+  const weekdayLabel = weekdayNames[now.getDay()];
+  const timeLabel = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
+  // default-select whichever dose was used most recently, as a quick reference
+  let mostRecentDose = null, mostRecentTs = -1;
+  Object.keys(data).forEach(dateStr=>{
+    (data[dateStr].insulin||[]).forEach(e=>{
+      if(!e.dose || !/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+      const ts = new Date(dateStr+'T'+e.time+':00').getTime();
+      if(ts>mostRecentTs){ mostRecentTs = ts; mostRecentDose = e.dose; }
+    });
+  });
+  el.innerHTML = `
+    <button type="button" class="inject-close-btn" id="injectScreenCloseBtn">✕ 返回App</button>
+    <div class="inject-top-row">
+      <div class="inject-clock">
+        <div class="inject-year">${year}</div>
+        <div class="inject-date">${dateLabel}<br>${weekdayLabel}</div>
+        <div class="inject-time">${timeLabel}</div>
+      </div>
+      <div class="inject-dose-box">
+        <select id="injectDoseSelect">
+          ${doseTags.map(d=>`<option value="${escapeHtml(d)}"${d===mostRecentDose?' selected':''}>${escapeHtml(d)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="inject-divider"></div>
+    <div class="inject-site-grid-wrap">${buildSiteGridHtml(null)}</div>
+    <div class="inject-divider"></div>
+  `;
+  document.getElementById('injectScreenCloseBtn').addEventListener('click', closeInjectScreen);
+  // grid is view-only here: no click handlers get wired (buildSiteGridHtml
+  // alone doesn't attach any), just make sure it doesn't look clickable
+  el.querySelectorAll('.site-grid-cell').forEach(btn=>{ btn.style.cursor = 'default'; btn.style.pointerEvents = 'none'; });
+}
+let injectScreenTimer = null;
+function openInjectScreen(){
+  document.getElementById('injectScreenView').style.display = 'flex';
+  renderInjectScreen();
+  if(injectScreenTimer) clearInterval(injectScreenTimer);
+  injectScreenTimer = setInterval(renderInjectScreen, 1000*30); // refresh every 30s so the clock stays current
+}
+function closeInjectScreen(){
+  document.getElementById('injectScreenView').style.display = 'none';
+  if(injectScreenTimer){ clearInterval(injectScreenTimer); injectScreenTimer = null; }
+  // clean the URL so a page refresh doesn't reopen this screen unintentionally
+  if(window.location.search.includes('view=inject') || window.location.hash==='#inject'){
+    history.replaceState(null, '', window.location.pathname);
+  }
+}
+// Auto-open when launched via a Shortcut/bookmark with ?view=inject or #inject
+if(window.location.search.includes('view=inject') || window.location.hash==='#inject'){
+  document.addEventListener('DOMContentLoaded', ()=>{
+    // wait for the main load() to finish restoring data before rendering the dose/site history
+    setTimeout(openInjectScreen, 400);
+  });
+}
 function buildSiteGridHtml(selectedSite){
   const usage = computeSiteUsageRecency();
   let html = `<div class="site-grid">
@@ -4080,19 +4171,14 @@ function buildTestingGapHtml(){
 function renderAmpmTable(){
   const el = document.getElementById('ampmTableView');
   const days = getLastNDates(30);
-  const hourCols = Array.from({length:6}, (_,i)=>i+1);
+  const hourCols = Array.from({length:11}, (_,i)=>i+1);
   let html = buildTestingGapHtml() + `<table class="ampm-table"><thead>
     <tr>
-      <th class="ampm-date-col" rowspan="2">Date</th>
-      <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
-      <th class="ampm-pm-group" colspan="${2+hourCols.length}">PM</th>
-      <th class="ampm-remarks-col" rowspan="2">Remarks</th>
-    </tr>
-    <tr>
-      <th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
-      ${hourCols.map(h=>`<th class="ampm-am-group">+${h}</th>`).join('')}
-      <th class="ampm-pm-group">PS</th><th class="ampm-pm-group">Units</th>
-      ${hourCols.map(h=>`<th class="ampm-pm-group">+${h}</th>`).join('')}
+      <th class="ampm-date-col" rowspan="1">Date</th>
+      <th style="width:26px;min-width:26px;max-width:26px;">AM/PM</th>
+      <th>PS</th><th>Units</th>
+      ${hourCols.map(h=>`<th>+${h}</th>`).join('')}
+      <th class="ampm-remarks-col">Remarks</th>
     </tr>
   </thead><tbody>`;
   days.forEach(dateStr=>{
@@ -4106,23 +4192,25 @@ function renderAmpmTable(){
       if(v==null) return `<td class="${extraClass}"></td>`;
       return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
     }
-    function sessionCells(session, groupClass){
-      if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
-      const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
-      return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
-        <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
-        ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
+    function sessionRow(session, groupClass, label, rowspanRemarks){
+      const cells = !session
+        ? `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('')
+        : (()=>{
+            const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
+            return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
+              <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
+              ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
+          })();
+      const dateCell = rowspanRemarks ? `<td class="ampm-date" rowspan="2">${dateStr}</td>` : '';
+      const remarksCell = rowspanRemarks ? `<td class="ampm-remarks" rowspan="2" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>` : '';
+      return `<tr>${dateCell}<td class="${groupClass}" style="font-weight:700;">${label}</td>${cells}${remarksCell}</tr>`;
     }
-    html += `<tr>
-      <td class="ampm-date">${dateStr}</td>
-      ${sessionCells(amSession,'ampm-am-group')}
-      ${sessionCells(pmSession,'ampm-pm-group')}
-      <td class="ampm-remarks" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>
-    </tr>`;
+    html += sessionRow(amSession, 'ampm-am-group', 'AM', true);
+    html += sessionRow(pmSession, 'ampm-pm-group', 'PM', false);
   });
   html += `</tbody></table>
     <div class="ampm-legend">
-      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+6 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
+      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
       <b>顏色說明：</b>
       <span class="swatch" style="background:#7B1F1F;"></span>&gt;27.7　
       <span class="swatch" style="background:#C0392B;"></span>22.2-27.7　
@@ -6031,6 +6119,7 @@ document.getElementById('checkStorageMenuItem').addEventListener('click', showSt
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
 document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
+document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 
 
