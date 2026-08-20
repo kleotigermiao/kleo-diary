@@ -720,6 +720,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="localHistoryMenuItem">還原</button>
           <button type="button" class="more-menu-item" id="dedupeMenuItem">清除重複記錄</button>
           <button type="button" class="more-menu-item" id="clearPhotosMenuItem">清除舊照片</button>
+          <button type="button" class="more-menu-item" id="gptLinkMenuItem">取得GPT讀取連結</button>
         </div>
       </div>
 
@@ -771,6 +772,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn" data-cat="vomit"><span class="ic">🤮</span>嘔吐</button>
     <button class="cat-btn" data-cat="med"><span class="ic">💊</span>用藥</button>
     <button class="cat-btn" data-cat="respRate"><span class="ic">🫁</span>呼吸率</button>
+    <button class="cat-btn" data-cat="urinalysis"><span class="ic">🧪</span>尿酮尿糖</button>
     <button class="cat-btn" data-cat="note"><span class="ic">📝</span>備註</button>
   </div>
 
@@ -1181,9 +1183,9 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',mood:'😺',appetite:'🍖',noteEntries:'📝'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',urinalysis:'🧪',mood:'😺',appetite:'🍖',noteEntries:'📝'};
 const TREND_ARROWS = {up_fast:'↑', up:'↗', stable:'→', down:'↘', down_fast:'↓'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',mood:'精神',appetite:'食慾',noteEntries:'備註'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',urinalysis:'尿酮尿糖',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
   if(!entries || entries.length===0) return null;
@@ -1207,7 +1209,7 @@ function deltaSpan(diff, formatFn){
   return `<span class="delta ${cls}">${arrow} ${formatFn(Math.abs(diff))}</span>`;
 }
 const CUSTOM_SLOTS_KEY = 'kleo-custom-status-slots-v1';
-const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med','respRate'];
+const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med','respRate','urinalysis'];
 const CUSTOM_SLOT_COUNT = 4;
 function loadCustomSlots(){
   try{
@@ -1590,7 +1592,8 @@ function renderRowHtml(dateStr, cat, e, idx){
       deltaHtml = ` <span style="font-size:11px;color:${deltaColor};">(${arrow}${Math.abs(delta).toFixed(1)}, ${Math.abs(pct).toFixed(0)}%)</span>`;
     }
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${hoursHtml}${deltaHtml}${detail}`;
+    const meterHtml = e.meter==='petTest' ? ` <span style="font-size:10px;color:var(--ink-soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px;">PetTest</span>` : '';
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${meterHtml}${hoursHtml}${deltaHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -1599,6 +1602,11 @@ function renderRowHtml(dateStr, cat, e, idx){
   } else if(cat==='respRate'){
     const rrDetail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     valHtml = `<span class="tag normal">${e.value} 次/分</span>${rrDetail}`;
+  } else if(cat==='urinalysis'){
+    const uDetail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
+    const ketoneAbnormal = e.ketone && e.ketone!=='NEG.';
+    const glucoseAbnormal = e.glucose && e.glucose!=='NEG.';
+    valHtml = `<span class="tag ${ketoneAbnormal?'high':'normal'}">酮 ${e.ketone||'--'}</span> <span class="tag ${glucoseAbnormal?'high':'normal'}">糖 ${e.glucose||'--'}</span>${uDetail}`;
   } else if(cat==='insulin'){
     const extra = [];
     if(e.site) extra.push(e.site);
@@ -1820,7 +1828,7 @@ function buildKcalProgressHtml(day, dateStr){
   </div>`;
 }
 function renderDayRows(dateStr, day){
-  const cats = ['mood','appetite','food','water','glucose','weight','respRate','insulin','urine','stool','vomit','med','noteEntries'];
+  const cats = ['mood','appetite','food','water','glucose','weight','respRate','urinalysis','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -1833,7 +1841,7 @@ function renderDayRows(dateStr, day){
 
 function escapeHtml(s){
   const d = document.createElement('div');
-  d.innerText = s;
+  d.textContent = s;
   return d.innerHTML;
 }
 
@@ -1883,7 +1891,7 @@ function buildRemindersBanner(){
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
-    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
   const dates = Object.keys(data).sort().reverse();
   if(dates.length===0){
@@ -1951,7 +1959,7 @@ function render(){
         alert('刪除失敗，已還原成刪除前的狀態，請稍後再試一次。');
       } else {
         photoRefsToClean.forEach(id=>{ idbDeletePhoto(id).catch(()=>{}); photoCache.delete(id); });
-        if(cat==='glucose' || cat==='insulin') refundSupplyOnDelete(cat, removedEntry);
+        if(cat==='glucose' || cat==='insulin' || cat==='urinalysis') refundSupplyOnDelete(cat, removedEntry);
       }
       render();
     });
@@ -2331,6 +2339,12 @@ function openSheetForEdit(dateStr, cat, idx){
           if(trendEl) trendEl.value = entry.trend;
         }
       }
+      const meterVal = entry.meter || 'alphatrak';
+      document.querySelectorAll('.glucose-meter-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.meter===meterVal);
+      });
+      const meterEl = document.getElementById('fGlucoseMeter');
+      if(meterEl) meterEl.value = meterVal;
     }
     else if(cat==='urine'){
       const detailEl = document.getElementById('fDetail');
@@ -2784,6 +2798,12 @@ function setCategory(cat){
     });
   } else if(cat==='glucose'){
     dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
+      <label>用哪台機器測的？</label>
+      <div class="option-grid" id="glucoseMeterGrid">
+        <button type="button" class="option-btn glucose-meter-btn active" data-meter="alphatrak">AlphaTrak</button>
+        <button type="button" class="option-btn glucose-meter-btn" data-meter="petTest">PetTest</button>
+      </div>
+      <input type="hidden" id="fGlucoseMeter" value="alphatrak">
       <label>趨勢箭頭（可選）</label>
       <div class="option-grid" id="glucoseTrendGrid">
         <button type="button" class="option-btn glucose-trend-btn" data-trend="up_fast">↑</button>
@@ -2795,6 +2815,13 @@ function setCategory(cat){
       <input type="hidden" id="fGlucoseTrend">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如左耳、同滴血、餐前…" style="height:80px;"></textarea>`;
+    document.querySelectorAll('.glucose-meter-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.glucose-meter-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('fGlucoseMeter').value = btn.dataset.meter;
+      });
+    });
     document.querySelectorAll('.glucose-trend-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const already = btn.classList.contains('active');
@@ -2817,6 +2844,45 @@ function setCategory(cat){
     dynamicFields.innerHTML = `<label>呼吸率 (次/分鐘)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 30">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如睡眠中量測、剛活動完…" style="height:44px;"></textarea>`;
+  } else if(cat==='urinalysis'){
+    const ketoneLevels = [
+      {label:'NEG.', value:'NEG.'},
+      {label:'Trace 0.5', value:'Trace 0.5'},
+      {label:'Small 1.5', value:'Small 1.5'},
+      {label:'Moderate 4.0', value:'Moderate 4.0'},
+      {label:'Large 8.0', value:'Large 8.0'},
+      {label:'Large 16', value:'Large 16'}
+    ];
+    const glucoseLevels = [
+      {label:'NEG.', value:'NEG.'},
+      {label:'Trace 5', value:'Trace 5'},
+      {label:'± 15', value:'± 15'},
+      {label:'++ 30', value:'++ 30'},
+      {label:'+++ 60', value:'+++ 60'},
+      {label:'++++ 110', value:'++++ 110'}
+    ];
+    dynamicFields.innerHTML = `<label>酮體 (Ketone, mmol/L)</label>
+      <div class="option-grid" id="ketoneLevelGrid">
+        ${ketoneLevels.map(l=>`<button type="button" class="option-btn urinalysis-level-btn" data-field="ketone" data-level="${escapeHtml(l.value)}">${escapeHtml(l.label)}</button>`).join('')}
+      </div>
+      <label style="margin-top:10px;">葡萄糖 (Glucose, mmol/L)</label>
+      <div class="option-grid" id="glucoseLevelGrid">
+        ${glucoseLevels.map(l=>`<button type="button" class="option-btn urinalysis-level-btn" data-field="glucose" data-level="${escapeHtml(l.value)}">${escapeHtml(l.label)}</button>`).join('')}
+      </div>
+      <input type="hidden" id="fKetoneLevel">
+      <input type="hidden" id="fUrineGlucoseLevel">
+      <input type="hidden" id="fVal">
+      <label style="margin-top:10px;">補充說明（可選）</label>
+      <textarea id="fDetail" placeholder="例如試紙顏色偏深、採尿方式…" style="height:44px;"></textarea>`;
+    document.querySelectorAll('.urinalysis-level-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const field = btn.dataset.field;
+        document.querySelectorAll(`.urinalysis-level-btn[data-field="${field}"]`).forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(field==='ketone' ? 'fKetoneLevel' : 'fUrineGlucoseLevel').value = btn.dataset.level;
+        document.getElementById('fVal').value = `酮${document.getElementById('fKetoneLevel').value||'?'}/糖${document.getElementById('fUrineGlucoseLevel').value||'?'}`;
+      });
+    });
   } else if(cat==='insulin'){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
     const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
@@ -3348,7 +3414,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -3366,7 +3432,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     let updated;
     if(cat==='glucose'){
       const trendEl = document.getElementById('fGlucoseTrend');
-      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, photos: photosToSave};
+      const meterEl = document.getElementById('fGlucoseMeter');
+      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, meter: (meterEl && meterEl.value) || undefined, photos: photosToSave};
     } else if(cat==='urine'){
       updated = {time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='mood' || cat==='appetite'){
@@ -3375,6 +3442,10 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       updated = {time, value: parseFloat(rawVal)};
     } else if(cat==='respRate'){
       updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined};
+    } else if(cat==='urinalysis'){
+      const ketoneEl = document.getElementById('fKetoneLevel');
+      const glucoseEl = document.getElementById('fUrineGlucoseLevel');
+      updated = {time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined};
     } else if(cat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
@@ -3414,8 +3485,10 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
       const trendEl = document.getElementById('fGlucoseTrend');
-      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, photos: photosToSave});
-      consumeSupplyOnGlucose();
+      const meterEl = document.getElementById('fGlucoseMeter');
+      const meterVal = (meterEl && meterEl.value) || 'alphatrak';
+      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, meter: meterVal, photos: photosToSave});
+      consumeSupplyOnGlucose(meterVal);
     } else if(currentCat==='urine'){
       data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='mood' || currentCat==='appetite'){
@@ -3424,6 +3497,11 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       data[dateStr].weight.push({time, value: parseFloat(rawVal)});
     } else if(currentCat==='respRate'){
       data[dateStr].respRate.push({time, value: parseFloat(numRaw), note: detailRaw || undefined});
+    } else if(currentCat==='urinalysis'){
+      const ketoneEl = document.getElementById('fKetoneLevel');
+      const glucoseEl = document.getElementById('fUrineGlucoseLevel');
+      data[dateStr].urinalysis.push({time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined});
+      consumeSupplyOnUrinalysis();
     } else if(currentCat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
@@ -3763,6 +3841,7 @@ const REPORT_COLUMNS = [
   {key:'glucoseNote', label:'血糖備註', icon:'📝'},
   {key:'weight', label:'體重', icon:'⚖️'},
   {key:'respRate', label:'呼吸率', icon:'🫁'},
+  {key:'urinalysis', label:'尿酮尿糖', icon:'🧪'},
   {key:'insulin', label:'胰島素', icon:'💉'},
   {key:'insulinNote', label:'胰島素備註', icon:'📝'},
   {key:'insulinSite', label:'胰島素位置', icon:'📍'},
@@ -3820,6 +3899,7 @@ function reportCellLines(day, catKey){
   if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}`);
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='respRate') return entries.map(e=>`${e.time} → ${e.value}次/分`);
+  if(catKey==='urinalysis') return entries.map(e=>`${e.time} 酮${e.ketone||'--'}/糖${e.glucose||'--'}`);
   if(catKey==='insulin') return entries.map(e=>`${e.time} ${e.dose}`);
   if(catKey==='water'){
     if(entries.length===0) return [];
@@ -4314,7 +4394,7 @@ function renderWeeklySummary(){
   const allDatesSorted = Object.keys(data).sort().reverse();
   const content = document.getElementById('weeklySummaryContent');
   content.innerHTML = weekDates.map(dateStr=>{
-    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     const idx = allDatesSorted.indexOf(dateStr);
     const stats = computeDayReportStats(dateStr, day, allDatesSorted, idx);
     const chartHtml = buildMiniDayChart(day);
@@ -4688,7 +4768,9 @@ backFromGallery.addEventListener('click', ()=>{
 // ---- Supplies (test strips / needles / lancets) ----
 const SUPPLIES_KEY = 'kleo-supplies-v1';
 const SUPPLIES_DEFAULTS = {
-  strips: {stock: 0},
+  strips: {stock: 0}, // AlphaTrak 3 glucose test strips
+  petTestStrips: {stock: 0}, // PetTest glucose meter test strips — separate meter, not compatible with AlphaTrak strips
+  urinalysisStrips: {stock: 0}, // ketone/glucose reagent strips for urinalysis
   needles: {stock: 0},
   lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5, lastChangedAt: null},
   countSkipAsNeedleUse: true,
@@ -4707,6 +4789,8 @@ function normalizeSupplies(parsed){
   if(!parsed) return JSON.parse(JSON.stringify(SUPPLIES_DEFAULTS));
   const normalized = Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
     strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
+    petTestStrips: Object.assign({}, SUPPLIES_DEFAULTS.petTestStrips, parsed.petTestStrips),
+    urinalysisStrips: Object.assign({}, SUPPLIES_DEFAULTS.urinalysisStrips, parsed.urinalysisStrips),
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
     lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets),
     sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor),
@@ -4742,8 +4826,9 @@ let supplies = loadSupplies();
   }catch(e){}
 })();
 
-function consumeSupplyOnGlucose(){
-  supplies.strips.stock = Math.max(0, (supplies.strips.stock||0) - 1);
+function consumeSupplyOnGlucose(meter){
+  if(meter==='petTest') supplies.petTestStrips.stock = Math.max(0, (supplies.petTestStrips.stock||0) - 1);
+  else supplies.strips.stock = Math.max(0, (supplies.strips.stock||0) - 1); // default: AlphaTrak
   supplies.lancets.testsSinceChange = (supplies.lancets.testsSinceChange||0) + 1;
   saveSupplies();
   if(supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold){
@@ -4758,10 +4843,18 @@ function consumeSupplyOnInsulin(doseText){
   supplies.needles.stock = Math.max(0, (supplies.needles.stock||0) - 1);
   saveSupplies();
 }
+function consumeSupplyOnUrinalysis(){
+  supplies.urinalysisStrips.stock = Math.max(0, (supplies.urinalysisStrips.stock||0) - 1);
+  saveSupplies();
+}
 function refundSupplyOnDelete(cat, entry){
   if(cat==='glucose'){
-    supplies.strips.stock = (supplies.strips.stock||0) + 1;
+    if(entry && entry.meter==='petTest') supplies.petTestStrips.stock = (supplies.petTestStrips.stock||0) + 1;
+    else supplies.strips.stock = (supplies.strips.stock||0) + 1;
     supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
+    saveSupplies();
+  } else if(cat==='urinalysis'){
+    supplies.urinalysisStrips.stock = (supplies.urinalysisStrips.stock||0) + 1;
     saveSupplies();
   } else if(cat==='insulin'){
     const isSkip = (entry && entry.dose || '').trim().toLowerCase()==='skip';
@@ -4899,7 +4992,9 @@ function renderSupplies(){
         <input type="text" inputmode="numeric" id="vialDurationInput" value="${supplies.insulinVial.durationDays}" style="width:70px;">
       </div>
     </div>
-    ${supplyCard('strips', '血糖試紙', '🩸', stripsDaysLeft, stripsRate)}
+    ${supplyCard('strips', '血糖試紙 (AlphaTrak)', '🩸', stripsDaysLeft, stripsRate)}
+    ${supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', null, 0)}
+    ${supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', null, 0)}
     ${supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate)}
     <div class="supply-card${lancetWarn?' warn':''}">
       <div class="supply-title">🔴 採血針</div>
@@ -5141,7 +5236,7 @@ function renderCalendar(){
         else bg = 'background:#F9C9D6;';
       } else {
         // has a day object but not enough data for a score: still show a faint marker if it has any real entries
-        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
+        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
         if(hasAnyEntry) bg = 'background:#00000012;';
       }
     }
@@ -5260,7 +5355,7 @@ function openCalDayMenu(dateStr){
   document.getElementById('calJumpToMainBtn').addEventListener('click', ()=>{
     overlay.remove();
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     }
     document.getElementById('calendarView').style.display = 'none';
     document.getElementById('main').style.display = 'block';
@@ -5723,7 +5818,7 @@ function parseCsvToImportData(csvText){
     if(row.every(c=>(c||'').trim()==='')) continue;
     const dateStr = (row[dateIdx]||'').trim();
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
-    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     headerKeys.forEach((key, i)=>{
       if(key==null || key==='date') return;
       const cell = (row[i]||'').trim();
@@ -5789,10 +5884,10 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
       addedDays++;
     }
-    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite'].forEach(cat=>{
+    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite'].forEach(cat=>{
       if(!data[dateStr][cat]) data[dateStr][cat] = [];
       (incoming[dateStr][cat]||[]).forEach(entry=>{
         data[dateStr][cat].push(entry);
@@ -6121,6 +6216,21 @@ document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeMo
 document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
 document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
+document.getElementById('gptLinkMenuItem').addEventListener('click', async ()=>{
+  if(!gAccessToken){
+    alert('請先按「同步」登入Google帳號，才能建立這個連結。');
+    return;
+  }
+  if(!confirm('這會建立一份「一般人只要有連結就能查看」的Kleo資料副本，用來讓GPT之類的外部工具讀取最新資料。\n\n這份副本會跟著每次同步自動更新，且任何拿到連結的人都能看到裡面的健康記錄內容（不只GPT）。\n\n確定要繼續嗎？')) return;
+  try{
+    const fileId = await ensurePublicMirrorIsShared();
+    const link = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    prompt('已建立/確認公開連結，複製這個網址給GPT：', link);
+  }catch(e){
+    console.error(e);
+    alert('建立連結失敗，請確認已登入並重試一次。');
+  }
+});
 
 
 // ---- Google Sign-In + Drive auto-sync ----
@@ -6270,7 +6380,7 @@ async function findOrCreateDriveFile(){
 
 const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
 
-const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','mood','appetite','noteEntries'];
+const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite','noteEntries'];
 function entryIdentityKey(e){
   // Photos are represented differently locally (short IndexedDB ref ids)
   // vs on the cloud copy (hydrated base64 strings) for the exact same
@@ -6560,6 +6670,8 @@ async function syncFromDriveOnLogin(){
           }
           supplies = normalizeSupplies({
             strips: {stock: Math.min(supplies.strips.stock, remoteSupplies.strips.stock)},
+            petTestStrips: {stock: Math.min(supplies.petTestStrips.stock, remoteSupplies.petTestStrips.stock)},
+            urinalysisStrips: {stock: Math.min(supplies.urinalysisStrips.stock, remoteSupplies.urinalysisStrips.stock)},
             needles: {stock: Math.min(supplies.needles.stock, remoteSupplies.needles.stock)},
             lancets: {
               stock: Math.min(supplies.lancets.stock, remoteSupplies.lancets.stock),
@@ -6710,6 +6822,61 @@ async function syncFromDriveOnLogin(){
   isSyncing = false;
 }
 
+let publicMirrorFileId = null;
+async function findOrCreatePublicMirrorFile(){
+  if(publicMirrorFileId) return publicMirrorFileId;
+  const cached = localStorage.getItem('kleo-public-mirror-file-id');
+  if(cached){ publicMirrorFileId = cached; return publicMirrorFileId; }
+  const PUBLIC_MIRROR_NAME = 'kleo-diary-data-public.json';
+  const q = 'https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent(`name='${PUBLIC_MIRROR_NAME}' and trashed=false`) + '&fields=files(id)';
+  const res = await driveApiFetch(q);
+  const json = await res.json();
+  const files = (json && json.files) || [];
+  if(files.length > 0){
+    publicMirrorFileId = files[0].id;
+  } else {
+    // Create in normal Drive space (no appDataFolder) so it's a regular,
+    // ownerAccessible, shareable file — this is deliberately separate from
+    // the hidden appDataFolder sync file, which can never be link-shared.
+    const metadata = { name: PUBLIC_MIRROR_NAME };
+    const boundary = 'kleopublicboundary';
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n{}\r\n--${boundary}--`;
+    const createRes = await driveApiFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body
+    });
+    const createJson = await createRes.json();
+    publicMirrorFileId = createJson.id;
+  }
+  localStorage.setItem('kleo-public-mirror-file-id', publicMirrorFileId);
+  return publicMirrorFileId;
+}
+async function pushToPublicMirror(envelope){
+  try{
+    const fileId = await findOrCreatePublicMirrorFile();
+    if(!fileId) return;
+    await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope)
+    });
+  }catch(e){
+    console.error('push to public mirror failed (main sync still succeeded)', e);
+  }
+}
+async function ensurePublicMirrorIsShared(){
+  const fileId = await findOrCreatePublicMirrorFile();
+  await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' })
+  });
+  return fileId;
+}
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId) return;
   if(isSyncing && !immediate) return;
@@ -6754,6 +6921,7 @@ function pushToDrive(immediate){
       }
       localStorage.setItem(LAST_SYNCED_KEY, String(lastModified));
       updateAuthUI(true, '已同步 ' + new Date().toLocaleTimeString('zh-TW'));
+      pushToPublicMirror(envelope); // fire-and-forget: keep the GPT-readable copy current too
     }catch(e){
       console.error('push to drive failed', e);
       updateAuthUI(true, '⚠️ 同步失敗（網路問題），本機資料仍保留，請稍後再試');
