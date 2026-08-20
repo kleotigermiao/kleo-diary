@@ -6224,6 +6224,7 @@ document.getElementById('gptLinkMenuItem').addEventListener('click', async ()=>{
   if(!confirm('這會建立一份「一般人只要有連結就能查看」的Kleo資料副本，用來讓GPT之類的外部工具讀取最新資料。\n\n這份副本會跟著每次同步自動更新，且任何拿到連結的人都能看到裡面的健康記錄內容（不只GPT）。\n\n確定要繼續嗎？')) return;
   try{
     const fileId = await ensurePublicMirrorIsShared();
+    await pushToPublicMirror(buildSyncEnvelope()); // populate it right now, don't wait for the next sync
     const link = `https://drive.google.com/uc?export=download&id=${fileId}`;
     prompt('已建立/確認公開連結，複製這個網址給GPT：', link);
   }catch(e){
@@ -6877,32 +6878,36 @@ async function ensurePublicMirrorIsShared(){
   });
   return fileId;
 }
+function buildSyncEnvelope(){
+  const lastModified = parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now()));
+  const hydratedDiary = JSON.parse(JSON.stringify(data));
+  Object.values(hydratedDiary).forEach(day=>{
+    PHOTO_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{
+        if(Array.isArray(e.photos)){
+          e.photos = e.photos.map(p => isPhotoRef(p) ? (photoCache.get(p) || null) : p).filter(Boolean);
+        }
+      });
+    });
+  });
+  // CHECKLIST for adding any new syncable local setting (do all 3, every time):
+  //   1. Its save*() function must end by calling markLocalChangeAndSync()
+  //   2. Add it to this envelope
+  //   3. Add its restore logic in BOTH branches of syncFromDriveOnLogin
+  //      (the plain "cloud is newer" pull, and the conflict-merge branch)
+  //   (tag groups like insulin dose/site/needle and food types/brands are
+  //   the exception — they're covered generically via tagStorage/
+  //   collectSyncableTagStorage, no per-tag-group wiring needed)
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
+}
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId) return;
   if(isSyncing && !immediate) return;
   clearTimeout(drivePushTimer);
   const doPush = async ()=>{
     try{
-      const lastModified = parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now()));
-      const hydratedDiary = JSON.parse(JSON.stringify(data));
-      Object.values(hydratedDiary).forEach(day=>{
-        PHOTO_CATS.forEach(cat=>{
-          (day[cat]||[]).forEach(e=>{
-            if(Array.isArray(e.photos)){
-              e.photos = e.photos.map(p => isPhotoRef(p) ? (photoCache.get(p) || null) : p).filter(Boolean);
-            }
-          });
-        });
-      });
-      // CHECKLIST for adding any new syncable local setting (do all 3, every time):
-      //   1. Its save*() function must end by calling markLocalChangeAndSync()
-      //   2. Add it to this envelope
-      //   3. Add its restore logic in BOTH branches of syncFromDriveOnLogin
-      //      (the plain "cloud is newer" pull, and the conflict-merge branch)
-      //   (tag groups like insulin dose/site/needle and food types/brands are
-      //   the exception — they're covered generically via tagStorage/
-      //   collectSyncableTagStorage, no per-tag-group wiring needed)
-      const envelope = { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
+      const envelope = buildSyncEnvelope();
+      const lastModified = envelope._meta.lastModified;
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
