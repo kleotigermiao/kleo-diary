@@ -6235,7 +6235,7 @@ document.getElementById('gptLinkMenuItem').addEventListener('click', async ()=>{
 
 // ---- Google Sign-In + Drive auto-sync ----
 const GOOGLE_CLIENT_ID = '203009591227-t04ag82ei8s1t4m8nkctjt26jglrc7io.apps.googleusercontent.com';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'kleo-diary-data.json';
 let gAccessToken = null;
 let gTokenClient = null;
