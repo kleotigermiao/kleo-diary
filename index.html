@@ -80,6 +80,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
 .ampm-am-group{background:#F5F2E8;}
 .ampm-pm-group{background:#EAF1EE;}
+.ampm-table tr.ampm-day-start td{border-top:3px solid var(--ink);}
 .ampm-legend{font-size:10.5px;color:var(--ink-soft);margin-top:10px;line-height:1.7;}
 .site-grid{
   display:grid;grid-template-columns:20px repeat(6,1fr);gap:5px;
@@ -116,7 +117,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   display:flex;flex:1;min-height:0;gap:0;align-items:stretch;padding-top:36px;
 }
 .inject-clock-col{
-  flex:0 0 50%;width:50%;display:flex;flex-direction:column;justify-content:center;padding-right:12px;
+  flex:0 0 50%;width:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-right:12px;text-align:center;
 }
 .inject-year{font-family:'Archivo Narrow',sans-serif;font-size:clamp(38px,9.5vw,84px);font-weight:700;color:var(--ink);line-height:1;}
 .inject-date{font-family:'Archivo Narrow',sans-serif;font-size:clamp(32px,7.8vw,68px);font-weight:700;color:var(--ink);line-height:1.15;margin-top:10px;}
@@ -3677,6 +3678,9 @@ document.querySelectorAll('.layout-btn').forEach(btn=>{
   });
 });
 let selectedMeterFilter = 'all';
+function meterFilterMatch(e){
+  return selectedMeterFilter==='all' || (e.meter||'alphatrak')===selectedMeterFilter;
+}
 document.querySelectorAll('.meter-filter-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.meter-filter-btn').forEach(b=>b.classList.remove('active'));
@@ -4024,7 +4028,7 @@ renderColCheckGrid();
 
 // ---- Weekly summary report ----
 function buildMiniDayChart(day){
-  const entries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
+  const entries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && meterFilterMatch(e));
   if(entries.length===0) return '<p class="no-data-msg" style="font-size:12px;margin:0;">沒有血糖記錄</p>';
   const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
   const toMinutes = t => { const [h,m]=t.split(':').map(Number); return h*60+m; };
@@ -4133,7 +4137,7 @@ function buildMiniDayChart(day){
   return svg;
 }
 function computeDayReportStats(dateStr, day, allDatesSorted, idx){
-  const glucoseEntries = (day.glucose||[]).filter(e=>typeof e.value==='number');
+  const glucoseEntries = (day.glucose||[]).filter(e=>typeof e.value==='number' && meterFilterMatch(e));
   const avgGlucose = glucoseEntries.length ? (glucoseEntries.reduce((a,e)=>a+e.value,0)/glucoseEntries.length) : null;
   const glucoseCount = glucoseEntries.length;
   const insulinTotal = (day.insulin||[]).reduce((sum,e)=>{
@@ -4191,7 +4195,7 @@ function clusterFeedingTimes(allTimes){
 function toMinutesOfDay(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
 function buildDaySessionsForAmpm(dateStr, day){
   const insulinEntries = (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time));
-  const glucoseEntries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number').sort((a,b)=>a.time.localeCompare(b.time));
+  const glucoseEntries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number' && meterFilterMatch(e)).sort((a,b)=>a.time.localeCompare(b.time));
   const amShot = insulinEntries.find(e=> toMinutesOfDay(e.time) < 14*60);
   const pmShot = insulinEntries.slice().reverse().find(e=> toMinutesOfDay(e.time) >= 14*60);
 
@@ -4313,14 +4317,14 @@ function renderAmpmTable(){
     const day = data[dateStr];
     if(!day) return;
     const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day);
-    const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number');
+    const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number' && meterFilterMatch(e));
     const hasAnyInsulin = (day.insulin||[]).length>0;
     if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin) return; // skip only if truly nothing logged that day
     function valCell(v, extraClass){
       if(v==null) return `<td class="${extraClass}"></td>`;
       return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
     }
-    function sessionRow(session, groupClass, label, rowspanRemarks){
+    function sessionRow(session, groupClass, label, rowspanRemarks, rowExtraClass){
       const cells = !session
         ? `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('')
         : (()=>{
@@ -4331,9 +4335,9 @@ function renderAmpmTable(){
           })();
       const dateCell = rowspanRemarks ? `<td class="ampm-date" rowspan="2">${dateStr}</td>` : '';
       const remarksCell = rowspanRemarks ? `<td class="ampm-remarks" rowspan="2" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>` : '';
-      return `<tr>${dateCell}<td class="${groupClass}" style="font-weight:700;">${label}</td>${cells}${remarksCell}</tr>`;
+      return `<tr class="${rowExtraClass||''}">${dateCell}<td class="${groupClass}" style="font-weight:700;">${label}</td>${cells}${remarksCell}</tr>`;
     }
-    html += sessionRow(amSession, 'ampm-am-group', 'AM', true);
+    html += sessionRow(amSession, 'ampm-am-group', 'AM', true, 'ampm-day-start');
     html += sessionRow(pmSession, 'ampm-pm-group', 'PM', false);
   });
   html += `</tbody></table>
@@ -4474,7 +4478,10 @@ function generateReport(){
   const showCat = key => reportVisibleCols.includes(key);
 
   const allGlucose = [];
-  dates.forEach(d=> (data[d].glucose||[]).forEach(e=> allGlucose.push({...e, date:d})));
+  dates.forEach(d=> (data[d].glucose||[]).forEach(e=> {
+    if(selectedMeterFilter!=='all' && (e.meter||'alphatrak')!==selectedMeterFilter) return;
+    allGlucose.push({...e, date:d});
+  }));
   allGlucose.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
 
   const allWeight = [];
@@ -4583,8 +4590,9 @@ function generateReport(){
       <div class="collapsible-body" id="${sectionId}">${bodyHtml}</div>
     </div>`;
   }
+  const meterFilterLabel = selectedMeterFilter==='alphatrak' ? '（只顯示AlphaTrak）' : (selectedMeterFilter==='petTest' ? '（只顯示PetTest）' : '');
   const glucoseChartHtml = showCat('glucose') ? collapsibleChart(
-    '血糖趨勢（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎實線=胰島素施打時間，滑鼠移上去可看時間）',
+    `血糖趨勢${meterFilterLabel}（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎實線=胰島素施打時間，滑鼠移上去可看時間）`,
     buildGlucoseChart(allGlucose, allInsulin),
     'glucoseChartBody'
   ) : '';
