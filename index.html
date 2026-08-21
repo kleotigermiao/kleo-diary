@@ -66,13 +66,13 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .more-menu-item:active{background:var(--line);}
 .nav-dropdown-wrap{position:relative;}
 .report-tab-btn.active{background:var(--ink);color:var(--paper-raised);}
-.ampm-table{border-collapse:collapse;font-size:10px;white-space:nowrap;table-layout:fixed;width:100%;}
+.ampm-table{border-collapse:collapse;font-size:8.5px;white-space:nowrap;table-layout:fixed;width:100%;}
 .ampm-table th, .ampm-table td{
-  border:1px solid var(--line);padding:3px 2px;text-align:center;
-  width:26px;min-width:26px;max-width:26px;overflow:hidden;text-overflow:ellipsis;
+  border:1px solid var(--line);padding:2px 1px;text-align:center;
+  width:20px;min-width:20px;max-width:20px;overflow:hidden;text-overflow:ellipsis;
 }
-.ampm-table th.ampm-date-col, .ampm-table td.ampm-date{width:62px;min-width:62px;max-width:62px;font-size:10px;}
-.ampm-table td.ampm-remarks, .ampm-table th.ampm-remarks-col{width:90px;min-width:90px;max-width:90px;}
+.ampm-table th.ampm-date-col, .ampm-table td.ampm-date{width:52px;min-width:52px;max-width:52px;font-size:9px;}
+.ampm-table td.ampm-remarks, .ampm-table th.ampm-remarks-col{width:70px;min-width:70px;max-width:70px;}
 .ampm-table th{background:#00000006;font-weight:600;position:sticky;top:0;}
 .ampm-table td.ampm-date{position:sticky;left:0;background:var(--paper);font-weight:600;text-align:left;z-index:1;}
 .ampm-table td.ampm-remarks{text-align:left;font-size:10.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
@@ -4306,11 +4306,16 @@ function renderAmpmTable(){
   const hourCols = Array.from({length:11}, (_,i)=>i+1);
   let html = buildTestingGapHtml() + `<table class="ampm-table"><thead>
     <tr>
-      <th class="ampm-date-col" rowspan="1">Date</th>
-      <th style="width:26px;min-width:26px;max-width:26px;">AM/PM</th>
-      <th>PS</th><th>Units</th>
-      ${hourCols.map(h=>`<th>+${h}</th>`).join('')}
-      <th class="ampm-remarks-col">Remarks</th>
+      <th class="ampm-date-col" rowspan="2">Date</th>
+      <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
+      <th class="ampm-pm-group" colspan="${2+hourCols.length}">PM</th>
+      <th class="ampm-remarks-col" rowspan="2">Remarks</th>
+    </tr>
+    <tr>
+      <th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
+      ${hourCols.map(h=>`<th class="ampm-am-group">+${h}</th>`).join('')}
+      <th class="ampm-pm-group">PS</th><th class="ampm-pm-group">Units</th>
+      ${hourCols.map(h=>`<th class="ampm-pm-group">+${h}</th>`).join('')}
     </tr>
   </thead><tbody>`;
   days.forEach(dateStr=>{
@@ -4324,21 +4329,19 @@ function renderAmpmTable(){
       if(v==null) return `<td class="${extraClass}"></td>`;
       return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
     }
-    function sessionRow(session, groupClass, label, rowspanRemarks, rowExtraClass){
-      const cells = !session
-        ? `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('')
-        : (()=>{
-            const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
-            return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
-              <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
-              ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
-          })();
-      const dateCell = rowspanRemarks ? `<td class="ampm-date" rowspan="2">${dateStr}</td>` : '';
-      const remarksCell = rowspanRemarks ? `<td class="ampm-remarks" rowspan="2" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>` : '';
-      return `<tr class="${rowExtraClass||''}">${dateCell}<td class="${groupClass}" style="font-weight:700;">${label}</td>${cells}${remarksCell}</tr>`;
+    function sessionCells(session, groupClass){
+      if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
+      const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
+      return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
+        <td class="${groupClass}${isSkip?' ampm-skip':''}">${session.dose!=null?session.dose:''}</td>
+        ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
     }
-    html += sessionRow(amSession, 'ampm-am-group', 'AM', true, 'ampm-day-start');
-    html += sessionRow(pmSession, 'ampm-pm-group', 'PM', false);
+    html += `<tr>
+      <td class="ampm-date">${dateStr}</td>
+      ${sessionCells(amSession,'ampm-am-group')}
+      ${sessionCells(pmSession,'ampm-pm-group')}
+      <td class="ampm-remarks" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>
+    </tr>`;
   });
   html += `</tbody></table>
     <div class="ampm-legend">
