@@ -109,33 +109,35 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   font-size:16px;color:var(--ink-soft);cursor:pointer;padding:6px;z-index:1;
 }
 .inject-layout{
-  display:flex;flex:1;min-height:0;gap:16px;align-items:stretch;padding-top:36px;
+  display:flex;flex:1;min-height:0;gap:0;align-items:stretch;padding-top:36px;
 }
 .inject-clock-col{
-  flex:1 1 34%;min-width:34%;display:flex;flex-direction:column;justify-content:center;
+  flex:0 0 45%;width:45%;display:flex;flex-direction:column;justify-content:center;padding-right:12px;
 }
-.inject-year{font-family:'Archivo Narrow',sans-serif;font-size:clamp(36px,8vw,72px);font-weight:700;color:var(--ink);line-height:1;}
-.inject-date{font-family:'Archivo Narrow',sans-serif;font-size:clamp(30px,6.5vw,58px);font-weight:700;color:var(--ink);line-height:1.15;margin-top:10px;}
-.inject-time{font-family:'IBM Plex Mono',monospace;font-size:clamp(44px,10vw,96px);font-weight:700;color:var(--ink);margin-top:18px;letter-spacing:1px;}
+.inject-year{font-family:'Archivo Narrow',sans-serif;font-size:clamp(38px,9.5vw,84px);font-weight:700;color:var(--ink);line-height:1;}
+.inject-date{font-family:'Archivo Narrow',sans-serif;font-size:clamp(32px,7.8vw,68px);font-weight:700;color:var(--ink);line-height:1.15;margin-top:10px;}
+.inject-time{font-family:'IBM Plex Mono',monospace;font-size:clamp(46px,12vw,110px);font-weight:700;color:var(--ink);margin-top:18px;letter-spacing:1px;}
 .inject-mid-col{
-  flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:space-between;
-  min-width:110px;
+  flex:0 0 10%;width:10%;display:flex;flex-direction:column;align-items:center;justify-content:space-between;
+  min-width:74px;
 }
 .inject-dose-box{
-  border:2px solid var(--ink);border-radius:8px;padding:8px 14px;min-width:110px;margin-top:4px;
+  border:2px solid var(--ink);border-radius:8px;padding:clamp(4px,0.8vw,8px) clamp(6px,1.2vw,14px);width:90%;margin-top:4px;
 }
 .inject-dose-box select{
-  border:none;background:none;font-size:18px;font-weight:700;color:var(--ink);
+  border:none;background:none;font-size:clamp(12px,1.6vw,18px);font-weight:700;color:var(--ink);
   font-family:'IBM Plex Mono',monospace;width:100%;text-align:center;
 }
 .inject-baseline-spacer{flex:1;}
 .inject-baseline-line{
-  width:130px;height:3px;background:var(--ink);margin-bottom:6vh;
+  width:90%;height:3px;background:var(--ink);margin-bottom:6vh;
 }
 .inject-grid-col{
-  flex:1 1 40%;display:flex;align-items:center;justify-content:flex-start;
+  flex:0 0 45%;width:45%;display:flex;align-items:center;justify-content:center;padding-left:12px;
 }
-.inject-site-grid-wrap .site-grid{max-width:100%;}
+.inject-site-grid-wrap{width:100%;}
+.inject-site-grid-wrap .site-grid{max-width:100%;width:100%;}
+.inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(11px,1.6vw,16px);}
 .ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
@@ -834,6 +836,12 @@ textarea{resize:vertical; min-height:64px;}
   <div class="row2" id="customRangeRow" style="display:none;">
     <div><label>起始日期</label><input type="date" id="rangeStart"></div>
     <div><label>結束日期</label><input type="date" id="rangeEnd"></div>
+  </div>
+  <label>血糖機（只影響血糖數值，不影響其他欄位）</label>
+  <div class="cat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:4px;">
+    <button class="cat-btn meter-filter-btn active" data-meter="all">全部</button>
+    <button class="cat-btn meter-filter-btn" data-meter="alphatrak">AlphaTrak</button>
+    <button class="cat-btn meter-filter-btn" data-meter="petTest">PetTest</button>
   </div>
   <label>版面</label>
   <div class="cat-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:4px;">
@@ -1537,15 +1545,18 @@ function gramsEatenInPastHours(dateStr, time, hoursBack){
   });
   return totalGrams;
 }
-function previousGlucoseReading(dateStr, time, excludeIdx){
+function previousGlucoseReading(dateStr, time, excludeIdx, meter){
   // Find the chronologically most recent glucose reading strictly before this
-  // one (same day earlier, excluding this exact entry by index; otherwise
-  // scan backward through previous days).
+  // one, from the SAME meter only (AlphaTrak and PetTest readings shouldn't
+  // be compared against each other for a rise/fall delta — different meters
+  // can read differently even for the exact same true value).
+  const sameMeter = e => (e.meter||'alphatrak') === (meter||'alphatrak');
   const sameDay = (data[dateStr] && data[dateStr].glucose) || [];
   let best = null, bestTime = null;
   sameDay.forEach((e,i)=>{
     if(i===excludeIdx) return;
     if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+    if(!sameMeter(e)) return;
     if(e.time < time && (bestTime===null || e.time>bestTime)){ best = e; bestTime = e.time; }
   });
   if(best) return best;
@@ -1555,6 +1566,7 @@ function previousGlucoseReading(dateStr, time, excludeIdx){
     let dayBest = null, dayBestTime = null;
     list.forEach(e=>{
       if(!/^\d{1,2}:\d{2}$/.test(e.time||'')) return;
+      if(!sameMeter(e)) return;
       if(dayBestTime===null || e.time>dayBestTime){ dayBest = e; dayBestTime = e.time; }
     });
     if(dayBest) return dayBest;
@@ -1596,7 +1608,7 @@ function renderRowHtml(dateStr, cat, e, idx){
     const trendArrow = TREND_ARROWS[e.trend] || '';
     const hoursSince = hoursSinceLastInsulin(dateStr, e.time);
     const hoursHtml = hoursSince!=null ? ` <span style="font-size:11px;color:var(--ink-soft);">(+${hoursSince.toFixed(1)}h)</span>` : '';
-    const prev = previousGlucoseReading(dateStr, e.time, idx);
+    const prev = previousGlucoseReading(dateStr, e.time, idx, e.meter);
     let deltaHtml = '';
     if(prev && typeof prev.value==='number' && prev.value>0){
       const delta = e.value - prev.value;
@@ -3593,6 +3605,8 @@ reportBtn.addEventListener('click', ()=>{
   document.getElementById('weeklySummaryView').style.display = 'none';
   document.getElementById('foodPatternView').style.display = 'none';
   document.getElementById('ampmTableView').style.display = 'none';
+  selectedMeterFilter = 'all';
+  document.querySelectorAll('.meter-filter-btn').forEach(b=>b.classList.toggle('active', b.dataset.meter==='all'));
   const today = todayStr();
   rangeEnd.value = today;
   const d = new Date();
@@ -3656,6 +3670,14 @@ document.querySelectorAll('.layout-btn').forEach(btn=>{
     btn.classList.add('active');
     selectedLayout = btn.dataset.layout;
     userPickedLayout = true;
+  });
+});
+let selectedMeterFilter = 'all';
+document.querySelectorAll('.meter-filter-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.meter-filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedMeterFilter = btn.dataset.meter;
   });
 });
 
@@ -3897,8 +3919,9 @@ function saveColOrder(order){
 }
 let reportColOrder = loadColOrder();
 function reportCellLines(day, catKey){
+  const meterMatches = e => selectedMeterFilter==='all' || (e.meter||'alphatrak')===selectedMeterFilter;
   if(catKey==='glucoseNote'){
-    const entries = (day.glucose||[]).filter(e=>e.note).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    const entries = (day.glucose||[]).filter(e=>e.note && meterMatches(e)).slice().sort((a,b)=>a.time.localeCompare(b.time));
     return entries.map(e=>`${e.time} ${e.note}`);
   }
   if(catKey==='insulinNote'){
@@ -3913,8 +3936,11 @@ function reportCellLines(day, catKey){
     const entries = (day.insulin||[]).filter(e=>e.needle).slice().sort((a,b)=>a.time.localeCompare(b.time));
     return entries.map(e=>`${e.time} ${e.needle}`);
   }
-  const entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
-  if(catKey==='glucose') return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}`);
+  let entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
+  if(catKey==='glucose'){
+    entries = entries.filter(meterMatches);
+    return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${e.meter==='petTest' ? ' (PetTest)' : ''}`);
+  }
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='respRate') return entries.map(e=>`${e.time} → ${e.value}次/分`);
   if(catKey==='urinalysis') return entries.map(e=>`${e.time} 酮${e.ketone||'--'}/糖${e.glucose||'--'}`);
