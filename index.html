@@ -3926,7 +3926,7 @@ function saveColOrder(order){
   try{ localStorage.setItem(REPORT_COL_ORDER_KEY, JSON.stringify(order)); }catch(e){}
 }
 let reportColOrder = loadColOrder();
-function reportCellLines(day, catKey){
+function reportCellLines(day, catKey, dateStr){
   const meterMatches = e => selectedMeterFilter==='all' || (e.meter||'alphatrak')===selectedMeterFilter;
   if(catKey==='glucoseNote'){
     const entries = (day.glucose||[]).filter(e=>e.note && meterMatches(e)).slice().sort((a,b)=>a.time.localeCompare(b.time));
@@ -3947,7 +3947,11 @@ function reportCellLines(day, catKey){
   let entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
   if(catKey==='glucose'){
     entries = entries.filter(meterMatches);
-    return entries.map(e=>`${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${e.meter==='petTest' ? ' (PetTest)' : ''}`);
+    return entries.map(e=>{
+      const hoursSince = dateStr ? hoursSinceLastInsulin(dateStr, e.time) : null;
+      const hoursHtml = hoursSince!=null ? ` (+${hoursSince.toFixed(1)}h)` : '';
+      return `${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${hoursHtml}${e.meter==='petTest' ? ' (PetTest)' : ''}`;
+    });
   }
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
   if(catKey==='respRate') return entries.map(e=>`${e.time} → ${e.value}次/分`);
@@ -4507,7 +4511,7 @@ function generateReport(){
       let rows = '';
       visibleCols.forEach(col=>{
         if(col.key==='notes') return;
-        reportCellLines(day, col.key).forEach(line=>{
+        reportCellLines(day, col.key, d).forEach(line=>{
           rows += `<div class="r-row">${col.icon} ${line}</div>`;
         });
       });
@@ -4522,7 +4526,7 @@ function generateReport(){
           const notesCell = day.notes ? escapeHtml(day.notes).replace(/\n/g,'<br>') : '';
           return `<td class="rt-notes">${notesCell}</td>`;
         }
-        return `<td>${reportCellLines(day, col.key).join('<br>')}</td>`;
+        return `<td>${reportCellLines(day, col.key, d).join('<br>')}</td>`;
       }).join('');
       return `<tr><td class="rt-date">${d}<br><span class="rt-weekday">${weekdayName(d)}</span></td>${cells}</tr>`;
     }).join('');
@@ -5598,7 +5602,7 @@ function buildReportCSV(){
     const day = data[d];
     const cells = visibleCols.map(c=>{
       if(c.key==='notes') return day.notes || '';
-      return reportCellLines(day, c.key).join(' ');
+      return reportCellLines(day, c.key, d).join(' ');
     });
     return [d, ...cells].map(csvEscape).join(',');
   });
