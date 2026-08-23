@@ -2401,6 +2401,22 @@ function openSheetForEdit(dateStr, cat, idx){
       const detailEl = document.getElementById('fDetail');
       if(detailEl) detailEl.value = entry.note || '';
     }
+    else if(cat==='urinalysis'){
+      const detailEl = document.getElementById('fDetail');
+      if(detailEl) detailEl.value = entry.note || '';
+      if(entry.ketone){
+        const ketoneBtn = document.querySelector(`.urinalysis-level-btn[data-field="ketone"][data-level="${CSS.escape(entry.ketone)}"]`);
+        if(ketoneBtn) ketoneBtn.classList.add('active');
+        const ketoneEl = document.getElementById('fKetoneLevel');
+        if(ketoneEl) ketoneEl.value = entry.ketone;
+      }
+      if(entry.glucose){
+        const glucBtn = document.querySelector(`.urinalysis-level-btn[data-field="glucose"][data-level="${CSS.escape(entry.glucose)}"]`);
+        if(glucBtn) glucBtn.classList.add('active');
+        const glucEl = document.getElementById('fUrineGlucoseLevel');
+        if(glucEl) glucEl.value = entry.glucose;
+      }
+    }
     else if(cat==='insulin') valEl.value = entry.dose;
     else if(cat==='water') valEl.value = entry.ml;
     else valEl.value = entry.note || '';
@@ -2553,6 +2569,7 @@ function siteRecencyColor(lastUsedDate){
   return '#3F7A5C';
 }
 // ---- Injection info screen (view-only, for opening via Shortcut and screenshotting) ----
+let injectScreenMarkedSite = null;
 function renderInjectScreen(){
   const el = document.getElementById('injectScreenView');
   const now = new Date();
@@ -2590,17 +2607,25 @@ function renderInjectScreen(){
         <div class="inject-baseline-line"></div>
       </div>
       <div class="inject-grid-col">
-        <div class="inject-site-grid-wrap">${buildSiteGridHtml(null)}</div>
+        <div class="inject-site-grid-wrap">${buildSiteGridHtml(injectScreenMarkedSite)}</div>
       </div>
     </div>
   `;
   document.getElementById('injectScreenCloseBtn').addEventListener('click', closeInjectScreen);
-  // grid is view-only here: no click handlers get wired (buildSiteGridHtml
-  // alone doesn't attach any), just make sure it doesn't look clickable
-  el.querySelectorAll('.site-grid-cell').forEach(btn=>{ btn.style.cursor = 'default'; btn.style.pointerEvents = 'none'; });
+  // Tapping a cell here is purely a visual marker for taking a photo — it
+  // does NOT save or log anything anywhere. Kept across the 30s auto-refresh
+  // via injectScreenMarkedSite, cleared again each time the screen is freshly opened.
+  el.querySelectorAll('.site-grid-cell').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const site = btn.dataset.site;
+      injectScreenMarkedSite = (injectScreenMarkedSite===site) ? null : site; // tap again to unmark
+      renderInjectScreen();
+    });
+  });
 }
 let injectScreenTimer = null;
 function openInjectScreen(){
+  injectScreenMarkedSite = null;
   document.getElementById('injectScreenView').style.display = 'flex';
   renderInjectScreen();
   if(injectScreenTimer) clearInterval(injectScreenTimer);
@@ -4356,8 +4381,10 @@ function renderAmpmTable(){
       if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
       const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
       const doseText = session.dose!=null ? String(session.dose) : '';
+      const unitMatch = doseText.match(/([\d.]+\s*u)\b/i);
+      const doseDisplay = isSkip ? doseText : (unitMatch ? unitMatch[1].replace(/\s+/g,'') : doseText);
       return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
-        <td class="${groupClass}${isSkip?' ampm-skip':''} ampm-dose-cell" data-full-dose="${escapeHtml(doseText)}">${doseText}</td>
+        <td class="${groupClass}${isSkip?' ampm-skip':''} ampm-dose-cell" data-full-dose="${escapeHtml(doseText)}">${escapeHtml(doseDisplay)}</td>
         ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
     }
     html += `<tr>
@@ -6882,6 +6909,7 @@ async function syncFromDriveOnLogin(){
         localStorage.setItem(LAST_SYNCED_KEY, String(remoteLastModified));
         render();
         updateAuthUI(true, '已從雲端更新為最新版本');
+        pushToPublicMirror(remoteEnvelope); // keep the GPT-readable copy current even on a pure pull
       } else {
         // This device's copy is newer or equal: push it up so the cloud catches up
         localStorage.setItem(LAST_SYNCED_KEY, String(localLastModified));
@@ -6950,13 +6978,17 @@ async function pushToPublicMirror(envelope){
   try{
     const fileId = await findOrCreatePublicMirrorFile();
     if(!fileId) return;
-    await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(envelope)
     });
+    if(!res.ok){
+      logSaveActivity(false, `public mirror push failed: HTTP ${res.status}`, 'gpt-link');
+    }
   }catch(e){
     console.error('push to public mirror failed (main sync still succeeded)', e);
+    logSaveActivity(false, `public mirror push threw: ${e && e.message}`, 'gpt-link');
   }
 }
 async function ensurePublicMirrorIsShared(){
