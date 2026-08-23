@@ -143,7 +143,14 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 }
 .inject-site-grid-wrap{width:100%;}
 .inject-site-grid-wrap .site-grid{max-width:100%;width:100%;}
-.inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(11px,1.6vw,16px);}
+.inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(13px,2vw,20px);font-weight:700;}
+.site-grid.site-grid-labeled{gap:clamp(6px,1vw,12px);}
+.site-grid-labeled .site-grid-cell{
+  color:#fff;font-weight:800;font-size:clamp(9px,1.3vw,15px);
+  display:flex;align-items:center;justify-content:center;
+  text-shadow:0 1px 2px rgba(0,0,0,0.45);
+  border-color:rgba(255,255,255,0.5);
+}
 .ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
   display:flex;gap:14px;padding:14px;margin-bottom:12px;
@@ -2607,7 +2614,7 @@ function renderInjectScreen(){
         <div class="inject-baseline-line"></div>
       </div>
       <div class="inject-grid-col">
-        <div class="inject-site-grid-wrap">${buildSiteGridHtml(injectScreenMarkedSite)}</div>
+        <div class="inject-site-grid-wrap">${buildSiteGridHtml(injectScreenMarkedSite, true)}</div>
       </div>
     </div>
   `;
@@ -2646,9 +2653,9 @@ if(window.location.search.includes('view=inject') || window.location.hash==='#in
     setTimeout(openInjectScreen, 400);
   });
 }
-function buildSiteGridHtml(selectedSite){
+function buildSiteGridHtml(selectedSite, showLabels){
   const usage = computeSiteUsageRecency();
-  let html = `<div class="site-grid">
+  let html = `<div class="site-grid${showLabels?' site-grid-labeled':''}">
     <div class="site-grid-corner"></div>
     ${INJECTION_GRID_COLS.map(c=>`<div class="site-grid-colhead${c===3?' site-grid-divider':''}">${c}</div>`).join('')}`;
   INJECTION_GRID_ROWS.forEach(r=>{
@@ -2659,7 +2666,7 @@ function buildSiteGridHtml(selectedSite){
       const color = siteRecencyColor(info ? info.lastUsedDate : null);
       const isSelected = selectedSite===label;
       const title = info ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次` : `${label}：從沒用過`;
-      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="background:${color};" title="${title}"></button>`;
+      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="background:${color};" title="${title}">${showLabels?label:''}</button>`;
     });
   });
   html += `</div>`;
