@@ -144,12 +144,18 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .inject-site-grid-wrap{width:100%;}
 .inject-site-grid-wrap .site-grid{max-width:100%;width:100%;}
 .inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(13px,2vw,20px);font-weight:700;}
-.site-grid.site-grid-labeled{gap:clamp(6px,1vw,12px);}
+.site-grid.site-grid-labeled{gap:clamp(4px,0.7vw,8px);}
 .site-grid-labeled .site-grid-cell{
+  aspect-ratio:1;border-radius:4px;
   color:#fff;font-weight:800;font-size:clamp(9px,1.3vw,15px);
   display:flex;align-items:center;justify-content:center;
   text-shadow:0 1px 2px rgba(0,0,0,0.45);
-  border-color:rgba(255,255,255,0.5);
+  border:2px solid rgba(255,255,255,0.5);
+}
+.site-grid-labeled .site-grid-cell.selected{
+  border-width:4px;
+  text-shadow:none;
+  box-shadow:0 0 0 3px var(--paper);
 }
 .ampm-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
 .week-day-row{
@@ -2666,7 +2672,14 @@ function buildSiteGridHtml(selectedSite, showLabels){
       const color = siteRecencyColor(info ? info.lastUsedDate : null);
       const isSelected = selectedSite===label;
       const title = info ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次` : `${label}：從沒用過`;
-      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="background:${color};" title="${title}">${showLabels?label:''}</button>`;
+      // Selected = inverted: white background, the recency color becomes bold
+      // text + a thick border instead — this has to be done as an inline
+      // style swap (not just a CSS class) since the base background is
+      // already set inline per-cell and would otherwise win over any class rule.
+      const cellStyle = isSelected
+        ? `background:#fff;color:${color};border-color:${color};`
+        : `background:${color};`;
+      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="${cellStyle}" title="${title}">${showLabels?label:''}</button>`;
     });
   });
   html += `</div>`;
