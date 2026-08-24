@@ -139,15 +139,18 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   width:90%;height:3px;background:var(--ink);margin-bottom:6vh;
 }
 .inject-grid-col{
-  flex:0 0 30%;width:30%;display:flex;align-items:center;justify-content:center;padding-left:12px;
+  flex:0 0 30%;width:30%;display:flex;align-items:stretch;justify-content:center;padding-left:12px;
 }
-.inject-site-grid-wrap{width:100%;}
-.inject-site-grid-wrap .site-grid{max-width:100%;width:100%;}
+.inject-site-grid-wrap{width:100%;height:100%;display:flex;align-items:stretch;}
+.inject-site-grid-wrap .site-grid{
+  width:100%;height:100%;
+  grid-template-rows:auto repeat(6,1fr);
+}
 .inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(13px,2vw,20px);font-weight:700;}
 .site-grid.site-grid-labeled{gap:clamp(4px,0.7vw,8px);}
 .site-grid-labeled .site-grid-cell{
-  aspect-ratio:1;border-radius:4px;
-  color:#fff;font-weight:800;font-size:clamp(9px,1.3vw,15px);
+  aspect-ratio:unset;border-radius:4px;
+  color:#fff;font-weight:800;font-size:clamp(11px,2vw,22px);
   display:flex;align-items:center;justify-content:center;
   text-shadow:0 1px 2px rgba(0,0,0,0.45);
   border:2px solid rgba(255,255,255,0.5);
@@ -764,6 +767,7 @@ textarea{resize:vertical; min-height:64px;}
         <div class="nav-dropdown" id="dataMenu">
           <button type="button" class="more-menu-item" id="galleryBtn">圖庫</button>
           <button type="button" class="more-menu-item" id="reportBtn">報表</button>
+          <button type="button" class="more-menu-item" id="searchBtn">搜尋文字</button>
         </div>
       </div>
 
@@ -2322,32 +2326,53 @@ function openSheetForEdit(dateStr, cat, idx){
     const mainPart = m ? m[1] : raw;
     const detailPart = m ? m[2] : '';
     const groups = mainPart.split('、').filter(Boolean);
+    // Collect everything per-type first (a type can span multiple groups when
+    // each brand has its own amount) before touching the UI, so we know the
+    // final brand count for each type before deciding how to fill amounts.
+    const byType = {}; // type -> [{brand, grams}, ...]  (brand may be '' if no brand was recorded)
     groups.forEach(group=>{
-      // each group looks like "TYPE：BRAND1+BRAND2 12g" or just "TYPE 12g" or "TYPE"
       const gramsMatch = group.match(/\s+([\d.]+)(g|顆)$/);
       const grams = gramsMatch ? gramsMatch[1] : '';
       const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
       const sepIdx = groupNoGrams.indexOf('：');
       const type = sepIdx>=0 ? groupNoGrams.slice(0,sepIdx) : groupNoGrams;
       const brandsStr = sepIdx>=0 ? groupNoGrams.slice(sepIdx+1) : '';
+      const brandNames = brandsStr ? brandsStr.split('+').filter(Boolean) : [];
+      if(!byType[type]) byType[type] = [];
+      if(brandNames.length<=1){
+        byType[type].push({brand: brandNames[0]||'', grams});
+      } else {
+        // Old-format entry: one shared amount across multiple brands joined
+        // with "+" — split it evenly across those brands for editing (best
+        // available approximation; the amounts can be corrected manually).
+        const g = parseFloat(grams);
+        const each = (!isNaN(g) && brandNames.length>0) ? (g/brandNames.length) : null;
+        brandNames.forEach(b=> byType[type].push({brand:b, grams: each!=null ? String(each) : ''}));
+      }
+    });
+    Object.keys(byType).forEach(type=>{
       const typeBtn = document.querySelector(`.food-type-btn[data-type="${CSS.escape(type)}"]`);
-      if(typeBtn && !typeBtn.classList.contains('active')){
-        typeBtn.click(); // triggers the normal toggle handler, which renders the brand section too
-      }
-      if(grams){
-        setTimeout(()=>{
+      if(typeBtn && !typeBtn.classList.contains('active')) typeBtn.click(); // renders the (still-empty) brand section
+      const entries = byType[type];
+      entries.forEach(({brand})=>{
+        if(!brand) return;
+        const brandBtn = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-btn[data-brand="${CSS.escape(brand)}"]`);
+        if(brandBtn && !brandBtn.classList.contains('active')) brandBtn.click(); // this calls renderAmountArea each time
+      });
+      // Now that all brands for this type are active and the amount area has
+      // settled into its final shape (single field or one-per-brand), fill
+      // in the amount(s).
+      setTimeout(()=>{
+        if(entries.length<=1){
           const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
-          if(gramsInput) gramsInput.value = grams;
-        }, 0);
-      }
-      if(brandsStr){
-        brandsStr.split('+').filter(Boolean).forEach(brandName=>{
-          setTimeout(()=>{
-            const brandBtn = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-btn[data-brand="${CSS.escape(brandName)}"]`);
-            if(brandBtn && !brandBtn.classList.contains('active')) brandBtn.click();
-          }, 0);
-        });
-      }
+          if(gramsInput && entries[0]) gramsInput.value = entries[0].grams;
+        } else {
+          entries.forEach(({brand, grams})=>{
+            const amtInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-amount[data-brand="${CSS.escape(brand)}"]`);
+            if(amtInput) amtInput.value = grams;
+          });
+        }
+      }, 0);
     });
     const detailEl = document.getElementById('fDetail');
     if(detailEl) detailEl.value = detailPart || '';
@@ -3190,18 +3215,80 @@ function setCategory(cat){
       document.querySelectorAll('.food-type-btn.active').forEach(btn=>{
         const type = btn.dataset.type;
         const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
-        const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
-        const amount = gramsInput ? gramsInput.value.trim() : '';
-        const brandStr = brands.length ? brands.join('+') : '';
-        let part = brandStr ? `${type}：${brandStr}` : type;
-        if(amount) part += ` ${amount}${foodTypeUnit(type)}`;
-        parts.push(part);
+        const unit = foodTypeUnit(type);
+        if(brands.length<=1){
+          const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
+          const amount = gramsInput ? gramsInput.value.trim() : '';
+          const brandStr = brands.length ? brands[0] : '';
+          let part = brandStr ? `${type}：${brandStr}` : type;
+          if(amount) part += ` ${amount}${unit}`;
+          parts.push(part);
+        } else {
+          // multiple brands selected — each gets its own amount input, so each
+          // becomes its own "type：brand amount" fragment instead of splitting
+          // one shared total evenly across brands (which silently assumed an
+          // even split that often doesn't match what was actually fed).
+          brands.forEach(b=>{
+            const amtInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-amount[data-brand="${CSS.escape(b)}"]`);
+            const amount = amtInput ? amtInput.value.trim() : '';
+            let part = `${type}：${b}`;
+            if(amount) part += ` ${amount}${unit}`;
+            parts.push(part);
+          });
+        }
       });
       document.getElementById('fVal').value = parts.join('、');
     }
+    function renderAmountArea(type){
+      const section = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"]`);
+      if(!section) return;
+      const area = section.querySelector('.food-amount-area');
+      if(!area) return;
+      const unit = foodTypeUnit(type);
+      const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
+      if(brands.length<=1){
+        area.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+            <label style="margin:0;flex-shrink:0;">${escapeHtml(type)} 份量 (${unit})</label>
+            <button type="button" class="unit-toggle-btn" data-type="${escapeHtml(type)}" style="margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--ink-soft);cursor:pointer;">單位：${unit}（點擊切換）</button>
+          </div>
+          <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 ${unit==='顆' ? '2' : '5'}">
+        `;
+        area.querySelector('.food-type-grams').addEventListener('input', composeFoodValue);
+        area.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
+          const units = loadFoodTypeUnits();
+          units[type] = units[type]==='顆' ? 'g' : '顆';
+          saveFoodTypeUnits(units);
+          renderAmountArea(type);
+          composeFoodValue();
+        });
+      } else {
+        // 2+ brands: one amount input per brand, since a shared total would
+        // otherwise be silently split evenly across brands.
+        area.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+            <label style="margin:0;">${escapeHtml(type)} 各品項份量 (${unit})</label>
+            <button type="button" class="unit-toggle-btn" data-type="${escapeHtml(type)}" style="margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--ink-soft);cursor:pointer;">單位：${unit}（點擊切換）</button>
+          </div>
+          ${brands.map(b=>`
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+              <label style="margin:0;flex-shrink:0;min-width:90px;">${escapeHtml(b)}</label>
+              <input type="text" inputmode="decimal" class="food-brand-amount" data-brand="${escapeHtml(b)}" placeholder="例如 ${unit==='顆' ? '1' : '5'}">
+            </div>
+          `).join('')}
+        `;
+        area.querySelectorAll('.food-brand-amount').forEach(inp=> inp.addEventListener('input', composeFoodValue));
+        area.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
+          const units = loadFoodTypeUnits();
+          units[type] = units[type]==='顆' ? 'g' : '顆';
+          saveFoodTypeUnits(units);
+          renderAmountArea(type);
+          composeFoodValue();
+        });
+      }
+    }
     function renderBrandSection(type){
       const brands = loadFoodBrands(type);
-      const unit = foodTypeUnit(type);
       const section = document.createElement('div');
       section.className = 'food-brand-section';
       section.dataset.type = type;
@@ -3214,32 +3301,10 @@ function setCategory(cat){
           <input type="text" class="new-food-brand-input" placeholder="新增${escapeHtml(type)}品項…" style="flex:1;">
           <button type="button" class="tag-add-btn add-food-brand-btn">新增</button>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
-          <label style="margin:0;flex-shrink:0;">${escapeHtml(type)} 份量 (${unit})</label>
-          <button type="button" class="unit-toggle-btn" data-type="${escapeHtml(type)}" style="margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--ink-soft);cursor:pointer;">單位：${unit}（點擊切換）</button>
-        </div>
-        <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 ${unit==='顆' ? '2' : '5'}">
+        <div class="food-amount-area"></div>
       `;
       document.getElementById('foodBrandSections').appendChild(section);
-      section.querySelector('.food-type-grams').addEventListener('input', composeFoodValue);
-      section.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
-        const units = loadFoodTypeUnits();
-        units[type] = units[type]==='顆' ? 'g' : '顆';
-        saveFoodTypeUnits(units);
-        // re-render this section fresh so labels/placeholder reflect the new unit
-        const amountVal = section.querySelector('.food-type-grams').value;
-        section.remove();
-        renderBrandSection(type);
-        const newSection = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"]`);
-        if(newSection){
-          newSection.querySelector('.food-type-grams').value = amountVal;
-          (selectedBrands[type]||new Set()).forEach(b=>{
-            const btn = newSection.querySelector(`.food-brand-btn[data-brand="${CSS.escape(b)}"]`);
-            if(btn) btn.classList.add('active');
-          });
-        }
-        composeFoodValue();
-      });
+      renderAmountArea(type);
       section.querySelectorAll('.food-brand-btn').forEach(bbtn=>{
         attachFoodBrandLongPress(bbtn, type);
         bbtn.addEventListener('click', ()=>{
@@ -3248,6 +3313,7 @@ function setCategory(cat){
           if(!selectedBrands[type]) selectedBrands[type] = new Set();
           if(bbtn.classList.contains('active')) selectedBrands[type].add(bbtn.dataset.brand);
           else selectedBrands[type].delete(bbtn.dataset.brand);
+          renderAmountArea(type);
           composeFoodValue();
         });
       });
@@ -3267,10 +3333,12 @@ function setCategory(cat){
           if(!selectedBrands[type]) selectedBrands[type] = new Set();
           if(newBtn.classList.contains('active')) selectedBrands[type].add(name);
           else selectedBrands[type].delete(name);
+          renderAmountArea(type);
           composeFoodValue();
         });
         if(!selectedBrands[type]) selectedBrands[type] = new Set();
         selectedBrands[type].add(name);
+        renderAmountArea(type);
         composeFoodValue();
       });
     }
@@ -3649,6 +3717,7 @@ let selectedLayout = window.innerWidth < 700 ? 'card' : 'table';
 let userPickedLayout = false;
 let lastReportRange = null;
 
+document.getElementById('searchBtn').addEventListener('click', showSearchModal);
 reportBtn.addEventListener('click', ()=>{
   weekOffset = 0;
   document.querySelectorAll('.report-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab==='table'));
@@ -5316,6 +5385,95 @@ let calViewYear, calViewMonth; // calViewMonth is 0-indexed
   calViewMonth = now.getMonth();
 })();
 
+function jumpToMainDate(dateStr){
+  if(!data[dateStr]){
+    data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+  }
+  document.getElementById('calendarView').style.display = 'none';
+  document.getElementById('reportView').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.querySelector('.topbar').style.display = 'block';
+  fabBtn.style.display = 'flex';
+  render();
+  setTimeout(()=>{
+    const card = document.querySelector(`.day-card[data-date="${dateStr}"]`);
+    if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 50);
+}
+// ---- Full-text search across all notes/text fields ----
+function searchAllText(keyword){
+  const kw = keyword.trim().toLowerCase();
+  if(!kw) return [];
+  const results = [];
+  const dates = Object.keys(data).sort().reverse();
+  dates.forEach(dateStr=>{
+    const day = data[dateStr];
+    if(!day) return;
+    if(day.notes && day.notes.toLowerCase().includes(kw)){
+      results.push({dateStr, cat:'noteEntries', time:'', text:day.notes, icon:'📝', label:'當天備註'});
+    }
+    ALL_DIARY_CATS.forEach(cat=>{
+      (day[cat]||[]).forEach(e=>{
+        const t = e.note;
+        if(t && t.toLowerCase().includes(kw)){
+          results.push({dateStr, cat, time:e.time||'', text:t, icon:ICONS[cat]||'📝', label:CAT_LABELS[cat]||cat});
+        }
+      });
+    });
+  });
+  return results;
+}
+function highlightMatch(text, keyword){
+  const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
+  if(idx<0) return escapeHtml(text);
+  const before = escapeHtml(text.slice(0, idx));
+  const match = escapeHtml(text.slice(idx, idx+keyword.length));
+  const after = escapeHtml(text.slice(idx+keyword.length));
+  return `${before}<mark style="background:#F5D949;padding:0 1px;">${match}</mark>${after}`;
+}
+function showSearchModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:480px;width:100%;max-height:80vh;overflow-y:auto;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">搜尋文字</h3>
+    <input type="text" id="searchKeywordInput" placeholder="例如：左眼發紅、掉毛…" style="margin-bottom:10px;">
+    <div id="searchResultsArea" style="font-size:12.5px;color:var(--ink-soft);">請輸入關鍵字開始搜尋（會搜尋所有記錄的備註內容）。</div>
+    <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+  const input = document.getElementById('searchKeywordInput');
+  const resultsArea = document.getElementById('searchResultsArea');
+  let searchTimer = null;
+  function runSearch(){
+    const kw = input.value.trim();
+    if(!kw){ resultsArea.innerHTML = '請輸入關鍵字開始搜尋（會搜尋所有記錄的備註內容）。'; return; }
+    const results = searchAllText(kw);
+    if(results.length===0){ resultsArea.innerHTML = `找不到包含「${escapeHtml(kw)}」的記錄。`; return; }
+    resultsArea.innerHTML = `<p style="margin:0 0 8px;">找到 ${results.length} 筆：</p>` + results.map(r=>`
+      <div class="search-result-item" data-date="${r.dateStr}" style="padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;">
+        <div style="font-size:11px;color:var(--ink-soft);">${r.dateStr} ${r.time}　${r.icon} ${escapeHtml(r.label)}</div>
+        <div style="font-size:13px;color:var(--ink);margin-top:2px;">${highlightMatch(r.text, kw)}</div>
+      </div>
+    `).join('');
+    resultsArea.querySelectorAll('.search-result-item').forEach(item=>{
+      item.addEventListener('click', ()=>{
+        close();
+        jumpToMainDate(item.dataset.date);
+      });
+    });
+  }
+  input.addEventListener('input', ()=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 250);
+  });
+  setTimeout(()=> input.focus(), 100);
+}
 function renderCalendar(){
   const label = document.getElementById('calMonthLabel');
   label.textContent = `${calViewYear} / ${String(calViewMonth+1).padStart(2,'0')}`;
@@ -5491,18 +5649,7 @@ function openCalDayMenu(dateStr){
   document.getElementById('dayFloatCloseBtn').addEventListener('click', close);
   document.getElementById('calJumpToMainBtn').addEventListener('click', ()=>{
     overlay.remove();
-    if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
-    }
-    document.getElementById('calendarView').style.display = 'none';
-    document.getElementById('main').style.display = 'block';
-    document.querySelector('.topbar').style.display = 'block';
-    fabBtn.style.display = 'flex';
-    render();
-    setTimeout(()=>{
-      const card = document.querySelector(`.day-card[data-date="${dateStr}"]`);
-      if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
-    }, 50);
+    jumpToMainDate(dateStr);
   });
   document.getElementById('calEventAddBtn').addEventListener('click', ()=>{
     const input = document.getElementById('calEventInput');
