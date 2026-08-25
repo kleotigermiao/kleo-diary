@@ -901,7 +901,7 @@ textarea{resize:vertical; min-height:64px;}
     <div id="weeklySummaryContent" style="padding:8px 16px 24px;"></div>
   </div>
   <div id="foodPatternView" style="display:none;padding:8px 16px 24px;"></div>
-  <div id="ampmTableView" style="display:none;padding:8px 16px 24px;overflow-x:auto;overflow-y:visible;"></div>
+  <div id="ampmTableView" style="display:none;padding:8px 16px 24px;overflow:auto;max-height:75vh;"></div>
 </div>
 
 <div id="galleryView" style="display:none;">
@@ -4331,16 +4331,17 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
     ...nextDayGlucose.map(e=>({...e, _min: toMinutesOfDay(e.time)+1440}))
   ].sort((a,b)=>a._min-b._min);
 
-  function findPreShotBg(shotMin, entries){
+  function entryKey(g){ return `${g.time}|${g.value}`; }
+  function findPreShotEntry(shotMin, entries){
     let best = null, bestDiff = Infinity;
     entries.forEach(g=>{
       const gMin = g._min!=null ? g._min : toMinutesOfDay(g.time);
       const diff = shotMin - gMin;
-      if(diff>=0 && diff<bestDiff){ best = g.value; bestDiff = diff; }
+      if(diff>=0 && diff<bestDiff){ best = g; bestDiff = diff; }
     });
     return best;
   }
-  function buildSession(shot, windowStartMin, windowEndMin, fallbackAnchorMin, entries){
+  function buildSession(shot, windowStartMin, windowEndMin, fallbackAnchorMin, entries, excludeKey){
     // If there's no real injection yet for this half of the day, still show
     // whatever glucose readings exist by anchoring hour-buckets to a nominal
     // reference time instead — otherwise readings taken before any shot has
@@ -4354,6 +4355,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
         const gMin = g._min!=null ? g._min : toMinutesOfDay(g.time);
         if(gMin < windowStartMin || gMin >= windowEndMin) return;
         if(gMin <= anchorMin) return; // pre-shot readings go in PS, not the hourly buckets
+        if(excludeKey && entryKey(g)===excludeKey) return; // this exact reading is already being used as the OTHER session's pre-shot value — don't also double-count it here
         const hDiff = Math.floor((gMin-anchorMin)/60); // "+N" = N full hours have elapsed since the shot, matching the reference sheet's convention
         if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null){ hours[hDiff] = g.value; anyReading = true; }
       });
@@ -4370,13 +4372,19 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
       });
     }
     if(!hasRealShot && !anyReading) return null; // truly nothing to show for this half of the day
-    return { preBg: hasRealShot ? findPreShotBg(anchorMin, entries) : null, dose: shot ? shot.dose : null, time: shot ? shot.time : null, hours };
+    const preShotEntry = hasRealShot ? findPreShotEntry(anchorMin, entries) : null;
+    return { preBg: preShotEntry ? preShotEntry.value : null, dose: shot ? shot.dose : null, time: shot ? shot.time : null, hours };
   }
   const pmShotMin = pmShot ? toMinutesOfDay(pmShot.time) : 1440;
   // PM window extends until the next day's AM shot (if known), or a generous
   // 24h cap otherwise — this is what lets post-midnight readings count.
   const pmWindowEnd = nextDayAmShot ? toMinutesOfDay(nextDayAmShot.time)+1440 : pmShotMin+1440;
-  const amSession = buildSession(amShot, 0, pmShotMin, 8*60, glucoseEntries.map(e=>({...e, _min:toMinutesOfDay(e.time)})));
+  const amGlucoseEntries = glucoseEntries.map(e=>({...e, _min:toMinutesOfDay(e.time)}));
+  // Whichever reading becomes PM's pre-shot value must not ALSO get counted
+  // into AM's hourly buckets (this was happening whenever a reading fell just
+  // before the PM shot but still technically inside the AM session's window).
+  const pmPreShotEntry = pmShot ? findPreShotEntry(pmShotMin, glucoseEntriesExtended) : null;
+  const amSession = buildSession(amShot, 0, pmShotMin, 8*60, amGlucoseEntries, pmPreShotEntry ? entryKey(pmPreShotEntry) : null);
   const pmSession = buildSession(pmShot, pmShotMin, pmWindowEnd, 20*60, glucoseEntriesExtended);
 
   const remarkParts = [];
