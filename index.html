@@ -2605,7 +2605,13 @@ function computeSiteUsageRecency(){
   });
   return usage;
 }
-const REACTION_EMOJIS = {1:'😫', 2:'☹️', 3:'🙂', 4:'😃', 5:'😆'};
+const REACTION_LEVELS = [
+  {level:1, emoji:'😌', label:'完全沒反應（沒叫也沒動）'},
+  {level:2, emoji:'😐', label:'叫了一聲，沒其他動作'},
+  {level:3, emoji:'😦', label:'叫了還轉頭看，但沒動'},
+  {level:4, emoji:'😾', label:'大叫+馬上起身'}
+];
+const REACTION_EMOJIS = {1:'😌', 2:'😐', 3:'😦', 4:'😾'};
 function computeSiteReactionAverage(){
   const sums = {}; // site -> {total, count}
   Object.keys(data).forEach(dateStr=>{
@@ -3093,13 +3099,11 @@ function setCategory(cat){
         <input type="text" id="newNeedleInput" placeholder="新增型號…" style="flex:1;">
         <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
       </div>
-      <label style="margin-top:14px;">牠的反應（必選）</label>
-      <div class="option-grid" id="reactionGrid" style="grid-template-columns:repeat(5,1fr);">
-        <button type="button" class="option-btn reaction-btn" data-reaction="5">😆</button>
-        <button type="button" class="option-btn reaction-btn" data-reaction="4">😃</button>
-        <button type="button" class="option-btn reaction-btn" data-reaction="3">🙂</button>
-        <button type="button" class="option-btn reaction-btn" data-reaction="2">☹️</button>
-        <button type="button" class="option-btn reaction-btn" data-reaction="1">😫</button>
+      <label style="margin-top:14px;">牠的反應（必選，1=良好綠燈 → 4=不佳紅燈）</label>
+      <div class="option-grid" id="reactionGrid" style="grid-template-columns:1fr;">
+        ${REACTION_LEVELS.map(r=>`<button type="button" class="option-btn reaction-btn" data-reaction="${r.level}" style="text-align:left;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:20px;">${r.emoji}</span><span>${escapeHtml(r.label)}</span>
+        </button>`).join('')}
       </div>
       <input type="hidden" id="fReaction">
       <label>備註（可選）</label>
