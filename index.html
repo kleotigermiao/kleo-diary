@@ -118,7 +118,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   display:flex;flex:1;min-height:0;gap:0;align-items:stretch;padding-top:36px;
 }
 .inject-clock-col{
-  flex:0 0 50%;width:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-right:12px;text-align:center;
+  flex:0 0 40%;width:40%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-right:12px;text-align:center;
 }
 .inject-year{font-family:'Archivo Narrow',sans-serif;font-size:clamp(38px,9.5vw,84px);font-weight:700;color:var(--ink);line-height:1;}
 .inject-date{font-family:'Archivo Narrow',sans-serif;font-size:clamp(32px,7.8vw,68px);font-weight:700;color:var(--ink);line-height:1.15;margin-top:10px;}
@@ -139,7 +139,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   width:90%;height:3px;background:var(--ink);margin-bottom:6vh;
 }
 .inject-grid-col{
-  flex:0 0 30%;width:30%;display:flex;align-items:stretch;justify-content:center;padding-left:12px;
+  flex:0 0 40%;width:40%;display:flex;align-items:stretch;justify-content:center;padding-left:12px;
 }
 .inject-site-grid-wrap{width:100%;height:100%;display:flex;align-items:stretch;}
 .inject-site-grid-wrap .site-grid{
@@ -4406,16 +4406,12 @@ function ampmValueColor(v){
   return '#7B1FA2';                  // BG < 4.4 (Take Action!)
 }
 function buildTestingGapHtml(){
-  // Which 4-hour block of the day has the fewest glucose readings over the
+  // Which 1-hour block of the day has the fewest glucose readings over the
   // last 14 days? Helps decide when to prioritize testing.
-  const blocks = [
-    {label:'00:00-04:00', start:0, end:4*60},
-    {label:'04:00-08:00', start:4*60, end:8*60},
-    {label:'08:00-12:00', start:8*60, end:12*60},
-    {label:'12:00-16:00', start:12*60, end:16*60},
-    {label:'16:00-20:00', start:16*60, end:20*60},
-    {label:'20:00-24:00', start:20*60, end:24*60},
-  ];
+  const blocks = Array.from({length:24}, (_,h)=>({
+    label:`${String(h).padStart(2,'0')}:00-${String((h+1)%24).padStart(2,'0')}:00`,
+    start: h*60, end: (h+1)*60
+  }));
   const counts = blocks.map(()=>0);
   const recentDays = getLastNDates(14);
   let totalReadings = 0;
