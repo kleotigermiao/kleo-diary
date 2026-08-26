@@ -2606,12 +2606,12 @@ function computeSiteUsageRecency(){
   return usage;
 }
 const REACTION_LEVELS = [
-  {level:1, emoji:'😌', label:'完全沒反應（沒叫也沒動）'},
-  {level:2, emoji:'😐', label:'叫了一聲，沒其他動作'},
-  {level:3, emoji:'😦', label:'叫了還轉頭看，但沒動'},
-  {level:4, emoji:'😾', label:'大叫+馬上起身'}
+  {level:1, emoji:'😽', label:'完全沒反應（沒叫也沒動）'},
+  {level:2, emoji:'😺', label:'叫了一聲，沒其他動作'},
+  {level:3, emoji:'😿', label:'叫了還轉頭看，但沒動'},
+  {level:4, emoji:'🙀', label:'大叫+馬上起身'}
 ];
-const REACTION_EMOJIS = {1:'😌', 2:'😐', 3:'😦', 4:'😾'};
+const REACTION_EMOJIS = {1:'😽', 2:'😺', 3:'😿', 4:'🙀'};
 function computeSiteReactionAverage(){
   const sums = {}; // site -> {total, count}
   Object.keys(data).forEach(dateStr=>{
