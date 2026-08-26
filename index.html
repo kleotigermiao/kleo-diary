@@ -143,7 +143,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 }
 .inject-site-grid-wrap{width:100%;height:100%;display:flex;align-items:stretch;}
 .inject-site-grid-wrap .site-grid{
-  width:100%;height:100%;
+  width:100%;height:100%;max-width:none;
   grid-template-rows:auto repeat(6,1fr);
 }
 .inject-site-grid-wrap .site-grid-colhead, .inject-site-grid-wrap .site-grid-rowhead{font-size:clamp(13px,2vw,20px);font-weight:700;}
@@ -2320,6 +2320,13 @@ function openSheetForEdit(dateStr, cat, idx){
         b.classList.toggle('active', b.dataset.val===entry.needle);
       });
     }
+    if(entry.reaction){
+      const reactionEl = document.getElementById('fReaction');
+      if(reactionEl) reactionEl.value = entry.reaction;
+      document.querySelectorAll('.reaction-btn').forEach(b=>{
+        b.classList.toggle('active', b.dataset.reaction===String(entry.reaction));
+      });
+    }
   } else if(cat==='food'){
     const raw = entry.note || '';
     const m = raw.match(/^(.*?)(?:（(.*)）)?$/);
@@ -2598,6 +2605,24 @@ function computeSiteUsageRecency(){
   });
   return usage;
 }
+const REACTION_EMOJIS = {1:'😫', 2:'☹️', 3:'🙂', 4:'😃', 5:'😆'};
+function computeSiteReactionAverage(){
+  const sums = {}; // site -> {total, count}
+  Object.keys(data).forEach(dateStr=>{
+    (data[dateStr].insulin||[]).forEach(e=>{
+      if(e.site && /^[A-F][1-6]$/.test(e.site) && e.reaction){
+        if(!sums[e.site]) sums[e.site] = {total:0, count:0};
+        sums[e.site].total += e.reaction;
+        sums[e.site].count += 1;
+      }
+    });
+  });
+  const averages = {};
+  Object.keys(sums).forEach(site=>{
+    averages[site] = sums[site].total / sums[site].count;
+  });
+  return averages;
+}
 function siteRecencyColor(lastUsedDate){
   if(!lastUsedDate) return '#3F7A5C'; // never used
   const daysSince = Math.floor((new Date(todayStr()+'T00:00:00') - new Date(lastUsedDate+'T00:00:00')) / 86400000);
@@ -2655,11 +2680,13 @@ function renderInjectScreen(){
   // via injectScreenMarkedSite, cleared again each time the screen is freshly opened.
   el.querySelectorAll('.site-grid-cell').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
       const site = btn.dataset.site;
       injectScreenMarkedSite = (injectScreenMarkedSite===site) ? null : site; // tap again to unmark
       renderInjectScreen();
     });
   });
+  wireSiteGridLongPress(el);
 }
 let injectScreenTimer = null;
 function openInjectScreen(){
@@ -2686,6 +2713,7 @@ if(window.location.search.includes('view=inject') || window.location.hash==='#in
 }
 function buildSiteGridHtml(selectedSite, showLabels){
   const usage = computeSiteUsageRecency();
+  const reactionAvgs = computeSiteReactionAverage();
   let html = `<div class="site-grid${showLabels?' site-grid-labeled':''}">
     <div class="site-grid-corner"></div>
     ${INJECTION_GRID_COLS.map(c=>`<div class="site-grid-colhead${c===3?' site-grid-divider':''}">${c}</div>`).join('')}`;
@@ -2696,7 +2724,12 @@ function buildSiteGridHtml(selectedSite, showLabels){
       const info = usage[label];
       const color = siteRecencyColor(info ? info.lastUsedDate : null);
       const isSelected = selectedSite===label;
-      const title = info ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次` : `${label}：從沒用過`;
+      const avgReaction = reactionAvgs[label];
+      const reactionEmoji = avgReaction!=null ? REACTION_EMOJIS[Math.round(avgReaction)] : null;
+      const cellText = showLabels ? (reactionEmoji || label) : '';
+      const title = info
+        ? `${label}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次${avgReaction!=null ? `，平均反應 ${reactionEmoji}（${avgReaction.toFixed(1)}）` : ''}`
+        : `${label}：從沒用過`;
       // Selected = inverted: white background, the recency color becomes bold
       // text + a thick border instead — this has to be done as an inline
       // style swap (not just a CSS class) since the base background is
@@ -2704,15 +2737,47 @@ function buildSiteGridHtml(selectedSite, showLabels){
       const cellStyle = isSelected
         ? `background:#fff;color:${color};border-color:${color};`
         : `background:${color};`;
-      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="${cellStyle}" title="${title}">${showLabels?label:''}</button>`;
+      html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="${cellStyle}" title="${title}">${cellText}</button>`;
     });
   });
   html += `</div>`;
   return html;
 }
+function buildSiteInfoText(site){
+  const usage = computeSiteUsageRecency();
+  const reactionAvgs = computeSiteReactionAverage();
+  const info = usage[site];
+  const avgReaction = reactionAvgs[site];
+  const reactionEmoji = avgReaction!=null ? REACTION_EMOJIS[Math.round(avgReaction)] : null;
+  return info
+    ? `${site}：上次 ${info.lastUsedDate}，共用過 ${info.count} 次${avgReaction!=null ? `，平均反應 ${reactionEmoji}（${avgReaction.toFixed(1)}）` : ''}`
+    : `${site}：從沒用過`;
+}
+function wireSiteGridLongPress(container){
+  // The HTML title attribute only shows on mouse hover — it never triggers on
+  // mobile touch/long-press, so this is a real long-press handler that works
+  // on both touch and desktop.
+  container.querySelectorAll('.site-grid-cell').forEach(btn=>{
+    let pressTimer = null;
+    const startPress = ()=>{
+      btn.dataset.longPressed = '';
+      pressTimer = setTimeout(()=>{
+        btn.dataset.longPressed = '1';
+        alert(buildSiteInfoText(btn.dataset.site));
+      }, 550);
+    };
+    const cancelPress = ()=> clearTimeout(pressTimer);
+    btn.addEventListener('pointerdown', startPress);
+    btn.addEventListener('pointerup', cancelPress);
+    btn.addEventListener('pointerleave', cancelPress);
+    btn.addEventListener('pointercancel', cancelPress);
+    btn.addEventListener('contextmenu', (e)=>{ e.preventDefault(); alert(buildSiteInfoText(btn.dataset.site)); });
+  });
+}
 function wireSiteGridPicker(){
   document.querySelectorAll('.site-grid-cell').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
       const site = btn.dataset.site;
       document.getElementById('fSite').value = site;
       document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>b.classList.remove('active'));
@@ -2720,6 +2785,7 @@ function wireSiteGridPicker(){
       wireSiteGridPicker();
     });
   });
+  wireSiteGridLongPress(document.getElementById('siteGridPicker') || document);
 }
 function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
   document.querySelectorAll('#'+gridId+' .option-btn').forEach(btn=>{
@@ -3027,6 +3093,15 @@ function setCategory(cat){
         <input type="text" id="newNeedleInput" placeholder="新增型號…" style="flex:1;">
         <button type="button" id="addNeedleBtn" class="tag-add-btn">新增</button>
       </div>
+      <label style="margin-top:14px;">牠的反應（必選）</label>
+      <div class="option-grid" id="reactionGrid" style="grid-template-columns:repeat(5,1fr);">
+        <button type="button" class="option-btn reaction-btn" data-reaction="5">😆</button>
+        <button type="button" class="option-btn reaction-btn" data-reaction="4">😃</button>
+        <button type="button" class="option-btn reaction-btn" data-reaction="3">🙂</button>
+        <button type="button" class="option-btn reaction-btn" data-reaction="2">☹️</button>
+        <button type="button" class="option-btn reaction-btn" data-reaction="1">😫</button>
+      </div>
+      <input type="hidden" id="fReaction">
       <label>備註（可選）</label>
       <textarea id="fDetail" placeholder="例如新開封胰島素、換位置…" style="height:44px;"></textarea>
       <input type="hidden" id="fSite">
@@ -3038,6 +3113,13 @@ function setCategory(cat){
     wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
     wireAddTag('newSiteInput','addSiteBtn','siteTagGrid', siteTags, INSULIN_SITE_KEY, 'fSite');
     wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
+    document.querySelectorAll('.reaction-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.reaction-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('fReaction').value = btn.dataset.reaction;
+      });
+    });
     wireSiteGridPicker();
   } else if(cat==='water'){
     const currentBase = loadWaterBase();
@@ -3563,6 +3645,14 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
+  const effectiveCat = editContext ? editContext.cat : currentCat;
+  if(effectiveCat==='insulin'){
+    const reactionEl = document.getElementById('fReaction');
+    if(!reactionEl || !reactionEl.value){
+      alert('請選擇牠這次打針的反應（必選）');
+      return;
+    }
+  }
   const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
   if(isDayNoteEdit){
@@ -3598,7 +3688,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(cat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
-      updated = {time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave};
+      const reactionEl = document.getElementById('fReaction');
+      updated = {time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseInt(reactionEl.value) : undefined, photos: photosToSave};
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -3654,7 +3745,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(currentCat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
-      data[dateStr].insulin.push({time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, photos: photosToSave});
+      const reactionEl = document.getElementById('fReaction');
+      data[dateStr].insulin.push({time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseInt(reactionEl.value) : undefined, photos: photosToSave});
       consumeSupplyOnInsulin(numRaw);
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
@@ -4009,6 +4101,7 @@ const REPORT_COLUMNS = [
   {key:'insulinNote', label:'胰島素備註', icon:'📝'},
   {key:'insulinSite', label:'胰島素位置', icon:'📍'},
   {key:'insulinNeedle', label:'針管型號', icon:'💉'},
+  {key:'insulinReaction', label:'注射反應', icon:'😊'},
   {key:'urine', label:'排尿', icon:'🚽'},
   {key:'stool', label:'排便', icon:'💩'},
   {key:'vomit', label:'嘔吐', icon:'🤮'},
@@ -4058,6 +4151,10 @@ function reportCellLines(day, catKey, dateStr){
   if(catKey==='insulinNeedle'){
     const entries = (day.insulin||[]).filter(e=>e.needle).slice().sort((a,b)=>a.time.localeCompare(b.time));
     return entries.map(e=>`${e.time} ${e.needle}`);
+  }
+  if(catKey==='insulinReaction'){
+    const entries = (day.insulin||[]).filter(e=>e.reaction && e.site).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    return entries.map(e=>`${e.time} ${e.site} ${REACTION_EMOJIS[e.reaction]||e.reaction}`);
   }
   let entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
   if(catKey==='glucose'){
