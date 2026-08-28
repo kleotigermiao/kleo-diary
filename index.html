@@ -1937,16 +1937,19 @@ function buildRemindersBanner(){
   upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev.text)}</div>`));
   return `<div class="reminders-banner">${lines.join('')}</div>`;
 }
+let renderedDaysLimit = 30; // how many of the most recent days are currently rendered
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
     data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
-  const dates = Object.keys(data).sort().reverse();
-  if(dates.length===0){
+  const allDates = Object.keys(data).sort().reverse();
+  if(allDates.length===0){
     main.innerHTML = buildRemindersBanner() + `<div class="empty"><div class="glyph">🐾</div><p>還沒有記錄。點右下角的「+」開始記下 Kleo 今天的狀況。</p></div>`;
     return;
   }
+  const dates = allDates.slice(0, renderedDaysLimit);
+  const hasMore = allDates.length > renderedDaysLimit;
   main.innerHTML = buildRemindersBanner() + dates.map((dateStr, idx)=>{
     const day = data[dateStr];
     const rowsHtml = renderDayRows(dateStr, day);
@@ -1965,16 +1968,23 @@ function render(){
         <span class="date">${formatDateLabel(dateStr)}</span>
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
       </div>
-      ${buildStatusSummary(dateStr, day, dates, idx)}
+      ${buildStatusSummary(dateStr, day, allDates, idx)}
       <div class="second-row-wrap">
-        ${buildCatScoreWidget(dateStr, day, dates, idx)}
+        ${buildCatScoreWidget(dateStr, day, allDates, idx)}
         ${buildCustomStatusPanel(dateStr, day)}
       </div>
       ${foodStatsHtml}
       ${kcalProgressHtml}
       <div class="section">${rowsHtml}${notesHtml}</div>
     </div>`;
-  }).join('');
+  }).join('') + (hasMore ? `<button type="button" id="loadMoreDaysBtn" class="sync-btn" style="display:block;width:calc(100% - 32px);margin:16px auto;padding:12px;">載入更早的記錄（還有 ${allDates.length - renderedDaysLimit} 天）</button>` : '');
+
+  if(hasMore){
+    document.getElementById('loadMoreDaysBtn').addEventListener('click', ()=>{
+      renderedDaysLimit += 30;
+      render();
+    });
+  }
 
   main.querySelectorAll('.reminder-line').forEach(line=>{
     line.addEventListener('click', ()=>{
@@ -4398,7 +4408,7 @@ function clusterFeedingTimes(allTimes){
   if(allTimes.length===0) return [];
   const minutes = allTimes.map(t=>{ const [h,m]=t.split(':').map(Number); return h*60+m; }).sort((a,b)=>a-b);
   const clusters = [];
-  const GAP = 75; // minutes: times within this gap of each other are considered "the same feeding slot"
+  const GAP = 30; // minutes: times within this gap of each other are considered "the same feeding slot"
   let current = [minutes[0]];
   for(let i=1;i<minutes.length;i++){
     if(minutes[i]-current[current.length-1]<=GAP) current.push(minutes[i]);
@@ -5493,6 +5503,11 @@ let calViewYear, calViewMonth; // calViewMonth is 0-indexed
 function jumpToMainDate(dateStr){
   if(!data[dateStr]){
     data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+  }
+  const allDates = Object.keys(data).sort().reverse();
+  const targetIdx = allDates.indexOf(dateStr);
+  if(targetIdx>=0 && targetIdx>=renderedDaysLimit){
+    renderedDaysLimit = targetIdx+1; // make sure the target day is actually rendered
   }
   document.getElementById('calendarView').style.display = 'none';
   document.getElementById('reportView').style.display = 'none';
