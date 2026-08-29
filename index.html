@@ -1072,7 +1072,11 @@ async function initPhotoCache(){
 // One-time (and safe-to-repeat) migration: move any raw base64 photos still
 // embedded directly in `data` (old format, or freshly imported/restored data)
 // into IndexedDB, replacing them with lightweight reference ids.
+const PHOTOS_CLEAN_FLAG = 'kleo-photos-migration-clean';
 async function migrateEmbeddedPhotos(){
+  if(localStorage.getItem(PHOTOS_CLEAN_FLAG)==='1'){
+    return 0; // already confirmed clean on a previous load — skip the full-dataset rescan
+  }
   let migrated = 0;
   const puts = [];
   Object.values(data).forEach(day=>{
@@ -1104,6 +1108,7 @@ async function migrateEmbeddedPhotos(){
     await Promise.all(puts);
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){ console.error('post-migration save failed', e); }
   }
+  localStorage.setItem(PHOTOS_CLEAN_FLAG, '1'); // nothing left to migrate as of this scan
   return migrated;
 }
 
@@ -2242,7 +2247,7 @@ function openSheet(){
   document.querySelector('#sheet h2').textContent = '新增記錄';
   document.getElementById('saveBtn').textContent = '儲存';
   document.getElementById('catGrid').style.display = 'grid';
-  setCategory('glucose');
+  setCategory('note');
   sheet.classList.add('open');
   backdrop.classList.add('open');
 }
@@ -4442,13 +4447,20 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
     ...nextDayGlucose.map(e=>({...e, _min: toMinutesOfDay(e.time)+1440}))
   ].sort((a,b)=>a._min-b._min);
 
+  const PS_GRACE_MIN = 15; // a reading within this many minutes AFTER the shot still counts as "pre-shot" (same real-world moment, just logged a bit later)
   function entryKey(g){ return `${g.time}|${g.value}`; }
   function findPreShotEntry(shotMin, entries){
+    // Closest reading to the shot time, preferring one at-or-before the shot,
+    // but still allowing a small grace window after it (readings taken right
+    // at injection time sometimes get logged a few minutes after the
+    // insulin entry itself, due to data-entry order, not the real event order).
     let best = null, bestDiff = Infinity;
     entries.forEach(g=>{
       const gMin = g._min!=null ? g._min : toMinutesOfDay(g.time);
-      const diff = shotMin - gMin;
-      if(diff>=0 && diff<bestDiff){ best = g; bestDiff = diff; }
+      const diff = shotMin - gMin; // positive = before the shot, negative = after
+      if(diff < -PS_GRACE_MIN) return; // too far after the shot to be "pre-shot"
+      const absDiff = Math.abs(diff);
+      if(absDiff<bestDiff){ best = g; bestDiff = absDiff; }
     });
     return best;
   }
@@ -4465,9 +4477,9 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
       entries.forEach(g=>{
         const gMin = g._min!=null ? g._min : toMinutesOfDay(g.time);
         if(gMin < windowStartMin || gMin >= windowEndMin) return;
-        if(gMin <= anchorMin) return; // pre-shot readings go in PS, not the hourly buckets
+        if(gMin <= anchorMin + PS_GRACE_MIN) return; // pre-shot readings (including the small grace window) go in PS, not the hourly buckets
         if(excludeKey && entryKey(g)===excludeKey) return; // this exact reading is already being used as the OTHER session's pre-shot value — don't also double-count it here
-        const hDiff = Math.floor((gMin-anchorMin)/60); // "+N" = N full hours have elapsed since the shot, matching the reference sheet's convention
+        const hDiff = Math.floor((gMin-anchorMin)/60) + 1; // "+N" = this reading falls within the Nth hour after the shot (0-59min after = +1, 60-119min after = +2, etc), matching the reference sheet's convention
         if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null){ hours[hDiff] = g.value; anyReading = true; }
       });
     } else {
@@ -4508,13 +4520,13 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
 }
 function ampmValueColor(v){
   // Matches the BG range key from the reference Feline Diabetes Support Group sheet
-  if(v>27.7) return '#7B1F1F';       // BG > 27.7
-  if(v>=22.2) return '#C0392B';      // 22.2 - 27.7
-  if(v>=16.7) return '#D6622C';      // 16.7 - 22.1
-  if(v>=11.1) return '#D9A441';      // 11.1 - 16.6
-  if(v>=5.6) return '#3F7A5C';       // 5.6 - 11.0 (target)
-  if(v>=4.4) return '#3B6E8F';       // 4.4 - 5.5
-  return '#7B1FA2';                  // BG < 4.4 (Take Action!)
+  if(v>27.7) return '#1A1A1A';       // BG > 27.7 (black)
+  if(v>=22.2) return '#E53935';      // 22.2 - 27.7 (red)
+  if(v>=16.7) return '#D81B93';      // 16.7 - 22.1 (magenta/pink)
+  if(v>=11.1) return '#F5B400';      // 11.1 - 16.6 (gold)
+  if(v>=5.6) return '#2E7D32';       // 5.6 - 11.0 (target, green)
+  if(v>=4.4) return '#1E88E5';       // 4.4 - 5.5 (blue)
+  return '#FB8C00';                  // BG < 4.4 (Take Action!, orange)
 }
 function buildTestingGapHtml(){
   // Which 1-hour block of the day has the fewest glucose readings over the
@@ -4602,13 +4614,13 @@ function renderAmpmTable(){
     <div class="ampm-legend">
       <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
       <b>顏色說明：</b>
-      <span class="swatch" style="background:#7B1F1F;"></span>&gt;27.7　
-      <span class="swatch" style="background:#C0392B;"></span>22.2-27.7　
-      <span class="swatch" style="background:#D6622C;"></span>16.7-22.1　
-      <span class="swatch" style="background:#D9A441;"></span>11.1-16.6　
-      <span class="swatch" style="background:#3F7A5C;"></span>5.6-11.0（目標範圍）　
-      <span class="swatch" style="background:#3B6E8F;"></span>4.4-5.5　
-      <span class="swatch" style="background:#7B1FA2;"></span>&lt;4.4（該處理了！）
+      <span class="swatch" style="background:#1A1A1A;"></span>&gt;27.7　
+      <span class="swatch" style="background:#E53935;"></span>22.2-27.7　
+      <span class="swatch" style="background:#D81B93;"></span>16.7-22.1　
+      <span class="swatch" style="background:#F5B400;"></span>11.1-16.6　
+      <span class="swatch" style="background:#2E7D32;"></span>5.6-11.0（目標範圍）　
+      <span class="swatch" style="background:#1E88E5;"></span>4.4-5.5　
+      <span class="swatch" style="background:#FB8C00;"></span>&lt;4.4（該處理了！）
     </div>`;
   el.innerHTML = html;
   el.querySelectorAll('.ampm-remarks').forEach(td=>{
@@ -6063,6 +6075,7 @@ async function restoreFromZipFile(file){
 
     saveLocalHistorySnapshot('匯入前的備份');
     const {addedDays, addedEntries} = mergeImportedData(incoming);
+    localStorage.removeItem(PHOTOS_CLEAN_FLAG); // imported entries haven't been checked yet
     await migrateEmbeddedPhotos();
     if(save()){
       render();
@@ -6086,6 +6099,7 @@ const importJsonFileInput = document.getElementById('importJsonFileInput');
 async function applyImportedJson(parsed, sourceLabel){
   saveLocalHistorySnapshot('匯入前的備份');
   const {addedDays, addedEntries} = mergeImportedData(parsed);
+  localStorage.removeItem(PHOTOS_CLEAN_FLAG); // imported entries haven't been checked yet
   await migrateEmbeddedPhotos();
   if(save()){
     render();
@@ -7024,6 +7038,7 @@ async function syncFromDriveOnLogin(){
         saveLocalHistorySnapshot('多裝置衝突合併前的本機備份');
         const mergedData = mergeDiaryData(data, remoteEnvelope.diary);
         data = mergedData;
+        localStorage.removeItem(PHOTOS_CLEAN_FLAG); // merged-in remote entries haven't been checked by this device yet
         await migrateEmbeddedPhotos();
         const newTs = Date.now();
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -7151,6 +7166,7 @@ async function syncFromDriveOnLogin(){
         // one-way door.
         saveLocalHistorySnapshot('雲端資料蓋掉本機前的備份');
         data = remoteEnvelope.diary;
+        localStorage.removeItem(PHOTOS_CLEAN_FLAG); // remote data hasn't been checked by this device yet
         await migrateEmbeddedPhotos(); // move any embedded base64 photos from the cloud copy into IndexedDB
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         // IMPORTANT: everything below applies remote's already-authoritative
