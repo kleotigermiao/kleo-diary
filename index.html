@@ -1117,14 +1117,15 @@ async function load(){
     const raw = localStorage.getItem(STORAGE_KEY);
     data = raw ? JSON.parse(raw) : {};
   }catch(e){ data = {}; }
+  render(); // show the diary immediately — don't make the user wait for every accumulated photo to load first
   try{
     await initPhotoCache();
     const migratedCount = await migrateEmbeddedPhotos();
     if(migratedCount>0) console.log(`已將 ${migratedCount} 張照片搬到 IndexedDB，釋放本機儲存空間`);
+    render(); // now that photos are available, refresh so thumbnails actually show up
   }catch(e){
     console.error('IndexedDB photo storage unavailable, falling back to embedded photos:', e);
   }
-  render();
 }
 const SAVE_LOG_KEY = 'kleo-save-log-v1';
 function logSaveActivity(success, errorMsg, extra){
@@ -4479,7 +4480,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
         if(gMin < windowStartMin || gMin >= windowEndMin) return;
         if(gMin <= anchorMin + PS_GRACE_MIN) return; // pre-shot readings (including the small grace window) go in PS, not the hourly buckets
         if(excludeKey && entryKey(g)===excludeKey) return; // this exact reading is already being used as the OTHER session's pre-shot value — don't also double-count it here
-        const hDiff = Math.floor((gMin-anchorMin)/60) + 1; // "+N" = this reading falls within the Nth hour after the shot (0-59min after = +1, 60-119min after = +2, etc), matching the reference sheet's convention
+        const hDiff = Math.round((gMin-anchorMin)/60); // matches the "(+Xh)" badge shown next to each glucose entry in the main diary list — keeping both displays consistent
         if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null){ hours[hDiff] = g.value; anyReading = true; }
       });
     } else {
