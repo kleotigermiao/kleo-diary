@@ -1025,31 +1025,53 @@ function openPhotoDB(){
         db.createObjectStore(PHOTO_STORE);
       }
     };
-    req.onsuccess = (e)=>{ photoDbInstance = e.target.result; resolve(photoDbInstance); };
+    req.onsuccess = (e)=>{
+      const db = e.target.result;
+      // If the browser closes this connection behind our back (backgrounding,
+      // idle timeout, another tab requesting a version change, etc), the
+      // cached reference would otherwise silently go stale and every future
+      // call would fail with "the database connection is closing". Clearing
+      // it here means the next call just transparently reopens a fresh one.
+      db.onclose = ()=>{ if(photoDbInstance===db) photoDbInstance = null; };
+      db.onversionchange = ()=>{ db.close(); if(photoDbInstance===db) photoDbInstance = null; };
+      photoDbInstance = db;
+      resolve(photoDbInstance);
+    };
     req.onerror = (e)=> reject(e.target.error);
   });
 }
+async function withPhotoDbRetry(operation){
+  try{
+    const db = await openPhotoDB();
+    return await operation(db);
+  }catch(e){
+    const msg = (e && e.message) || '';
+    if(msg.includes('closing') || msg.includes('closed') || (e && e.name==='InvalidStateError')){
+      photoDbInstance = null; // stale connection — force a fresh one and retry exactly once
+      const db = await openPhotoDB();
+      return await operation(db);
+    }
+    throw e;
+  }
+}
 async function idbPutPhoto(id, base64){
-  const db = await openPhotoDB();
-  return new Promise((resolve, reject)=>{
+  return withPhotoDbRetry(db => new Promise((resolve, reject)=>{
     const tx = db.transaction(PHOTO_STORE, 'readwrite');
     tx.objectStore(PHOTO_STORE).put(base64, id);
     tx.oncomplete = ()=>resolve();
     tx.onerror = (e)=>reject(e.target.error);
-  });
+  }));
 }
 async function idbDeletePhoto(id){
-  const db = await openPhotoDB();
-  return new Promise((resolve, reject)=>{
+  return withPhotoDbRetry(db => new Promise((resolve, reject)=>{
     const tx = db.transaction(PHOTO_STORE, 'readwrite');
     tx.objectStore(PHOTO_STORE).delete(id);
     tx.oncomplete = ()=>resolve();
     tx.onerror = (e)=>reject(e.target.error);
-  });
+  }));
 }
 async function idbGetAllPhotos(){
-  const db = await openPhotoDB();
-  return new Promise((resolve, reject)=>{
+  return withPhotoDbRetry(db => new Promise((resolve, reject)=>{
     const tx = db.transaction(PHOTO_STORE, 'readonly');
     const store = tx.objectStore(PHOTO_STORE);
     let keys = [], vals = [];
@@ -1061,7 +1083,7 @@ async function idbGetAllPhotos(){
       resolve(map);
     };
     tx.onerror = (e)=>reject(e.target.error);
-  });
+  }));
 }
 function isPhotoRef(p){ return typeof p === 'string' && p.indexOf('idb:')===0; }
 function makePhotoId(){ return 'idb:' + Date.now() + '-' + Math.random().toString(36).slice(2,9); }
