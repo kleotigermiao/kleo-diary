@@ -813,6 +813,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn" data-cat="respRate"><span class="ic">🫁</span>呼吸率</button>
     <button class="cat-btn" data-cat="urinalysis"><span class="ic">🧪</span>尿酮尿糖</button>
     <button class="cat-btn" data-cat="note"><span class="ic">📝</span>備註</button>
+    <button type="button" class="cat-btn" id="quickEntryCatBtn"><span class="ic">🎙️</span>快速輸入</button>
   </div>
 
   <div class="row2">
@@ -2519,6 +2520,10 @@ function closeSheetFn(){
 }
 fabBtn.addEventListener('click', openSheet);
 closeSheetBtn.addEventListener('click', closeSheetFn);
+document.getElementById('quickEntryCatBtn').addEventListener('click', ()=>{
+  closeSheetFn();
+  showQuickEntryModal();
+});
 backdrop.addEventListener('click', closeSheetFn);
 
 document.getElementById('catGrid').addEventListener('click', (e)=>{
@@ -5585,6 +5590,155 @@ function highlightMatch(text, keyword){
   const match = escapeHtml(text.slice(idx, idx+keyword.length));
   const after = escapeHtml(text.slice(idx+keyword.length));
   return `${before}<mark style="background:#F5D949;padding:0 1px;">${match}</mark>${after}`;
+}
+// ---- Quick entry: parse one dictated/typed sentence into multiple structured
+// entries locally (no external AI, no sync/security tradeoffs). Always shown
+// to the person for confirmation before anything is actually saved, since
+// pattern-matching on natural language will sometimes guess wrong. ----
+function parseQuickEntryText(text){
+  let remaining = text;
+  const items = [];
+  const consume = (match)=>{ remaining = remaining.replace(match, ' '); };
+
+  // 血糖 (glucose): a number near "血糖" or "mmol"
+  let m = remaining.match(/血糖\s*([\d]{1,2}(?:\.\d+)?)/);
+  if(!m) m = remaining.match(/([\d]{1,2}(?:\.\d+)?)\s*mmol/i);
+  if(m){
+    items.push({cat:'glucose', icon:'🩸', label:'血糖', preview:`${m[1]} mmol/L`, data:{value:parseFloat(m[1])}});
+    consume(m[0]);
+  }
+
+  // 胰島素 (insulin): a number followed by "u"/"單位", optionally with a site code like B4
+  m = remaining.match(/(?:打了|打針|胰島素)?\s*([\d.]+)\s*u\b/i);
+  if(m){
+    const siteMatch = remaining.match(/\b([A-Fa-f][1-6])\b/);
+    const site = siteMatch ? siteMatch[1].toUpperCase() : null;
+    items.push({cat:'insulin', icon:'💉', label:'胰島素', preview:`${m[1]}u${site ? '，位置 '+site : ''}（反應需另外補選）`, data:{dose:`${m[1]}u`, site}});
+    consume(m[0]);
+    if(siteMatch) consume(siteMatch[0]);
+  }
+
+  // 飲食 (food): amount + g/顆 + optional type keyword
+  const foodTypeWords = {'乾糧':'乾糧','罐頭':'罐頭','零食':'零食','濕食':'罐頭'};
+  m = remaining.match(/(吃了|餵了|吃|餵)?\s*([\d.]+)\s*(g|克|公克|顆)\s*(乾糧|罐頭|零食|濕食)?/);
+  if(m && (m[4] || /吃|餵/.test(remaining))){
+    const unit = (m[3]==='顆') ? '顆' : 'g';
+    const type = m[4] ? (foodTypeWords[m[4]]||m[4]) : '飲食';
+    items.push({cat:'food', icon:'🍽️', label:'飲食', preview:`${type} ${m[2]}${unit}（品牌需另外補選）`, data:{type, amount:m[2], unit}});
+    consume(m[0]);
+  }
+
+  // 飲水 (water): amount + ml/毫升
+  m = remaining.match(/(喝了|喝水|飲水)?\s*([\d.]+)\s*(ml|毫升)/i);
+  if(m){
+    items.push({cat:'water', icon:'💧', label:'飲水', preview:`${m[2]} ml`, data:{ml:parseFloat(m[2])}});
+    consume(m[0]);
+  }
+
+  // 體重 (weight): number + kg/公斤
+  m = remaining.match(/體重\s*([\d.]+)\s*(kg|公斤)?/);
+  if(!m) m = remaining.match(/([\d.]+)\s*(kg|公斤)/);
+  if(m){
+    items.push({cat:'weight', icon:'⚖️', label:'體重', preview:`${m[1]} kg`, data:{value:parseFloat(m[1])}});
+    consume(m[0]);
+  }
+
+  // Keyword-only categories (no number needed)
+  const keywordCats = [
+    {cat:'vomit', icon:'🤮', label:'嘔吐', re:/吐了|嘔吐/},
+    {cat:'stool', icon:'💩', label:'排便', re:/排便|大便|拉屎|便便/},
+    {cat:'urine', icon:'🚽', label:'排尿', re:/排尿|尿尿|小便/},
+  ];
+  keywordCats.forEach(kc=>{
+    const km = remaining.match(kc.re);
+    if(km){
+      items.push({cat:kc.cat, icon:kc.icon, label:kc.label, preview:'已偵測到，時間用現在', data:{}});
+      consume(km[0]);
+    }
+  });
+
+  const leftoverNote = remaining.replace(/[，,、。\s]+/g,' ').trim();
+  return { items, leftoverNote };
+}
+
+function showQuickEntryModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:480px;width:100%;max-height:80vh;overflow-y:auto;';
+  box.innerHTML = `
+    <h3 style="margin:0 0 6px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">快速輸入</h3>
+    <p style="margin:0 0 10px;font-size:12px;color:var(--ink-soft);">用手機的語音聽寫，或直接打字，講一句話，例如「血糖15.2，吃了30克乾糧，喝水20ml」</p>
+    <textarea id="quickEntryInput" placeholder="血糖15.2，吃了30克乾糧，喝水20ml…" style="height:80px;"></textarea>
+    <button type="button" id="quickEntryParseBtn" class="tag-add-btn" style="width:100%;margin-top:10px;">分析</button>
+    <div id="quickEntryResults" style="margin-top:14px;"></div>
+    <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  box.querySelector('.modal-close-btn').addEventListener('click', close);
+
+  let parsedItems = [];
+  document.getElementById('quickEntryParseBtn').addEventListener('click', ()=>{
+    const text = document.getElementById('quickEntryInput').value.trim();
+    const resultsArea = document.getElementById('quickEntryResults');
+    if(!text){ resultsArea.innerHTML = ''; return; }
+    const { items, leftoverNote } = parseQuickEntryText(text);
+    parsedItems = items;
+    if(items.length===0){
+      resultsArea.innerHTML = `<p style="font-size:12.5px;color:var(--ink-soft);">沒有偵測到可辨識的記錄，會直接存成一筆備註。</p>`;
+    } else {
+      resultsArea.innerHTML = `<p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">偵測到以下內容，確認沒問題再按下面「確認新增」（可以點 ✕ 移除辨識錯誤的項目）：</p>` +
+        items.map((it,i)=>`
+          <div class="quick-entry-item" data-idx="${i}" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);">
+            <span style="font-size:18px;">${it.icon}</span>
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;color:var(--ink);">${escapeHtml(it.label)}</div>
+              <div style="font-size:12px;color:var(--ink-soft);">${escapeHtml(it.preview)}</div>
+            </div>
+            <button type="button" class="quick-entry-remove" data-idx="${i}" style="background:none;border:none;color:var(--ink-soft);font-size:16px;cursor:pointer;">✕</button>
+          </div>
+        `).join('');
+      if(leftoverNote){
+        resultsArea.innerHTML += `<p style="font-size:12px;color:var(--ink-soft);margin-top:8px;">剩餘沒辨識到的文字會存成備註：「${escapeHtml(leftoverNote)}」</p>`;
+      }
+    }
+    resultsArea.innerHTML += `<button type="button" id="quickEntryConfirmBtn" class="tag-add-btn" style="width:100%;margin-top:12px;">確認新增（共 ${items.length>0?items.length:1} 筆）</button>`;
+    resultsArea.querySelectorAll('.quick-entry-remove').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.dataset.idx);
+        parsedItems = parsedItems.filter((_,i)=>i!==idx);
+        btn.closest('.quick-entry-item').remove();
+      });
+    });
+    document.getElementById('quickEntryConfirmBtn').addEventListener('click', ()=>{
+      const today = todayStr();
+      if(!data[today]) data[today] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      const time = nowTime();
+      if(parsedItems.length===0){
+        data[today].noteEntries.push({time, note:text});
+      } else {
+        parsedItems.forEach(it=>{
+          if(it.cat==='glucose') data[today].glucose.push({time, value:it.data.value});
+          else if(it.cat==='insulin') data[today].insulin.push({time, dose:it.data.dose, site:it.data.site||undefined});
+          else if(it.cat==='food') data[today].food.push({time, note:`${it.data.type}：${it.data.amount}${it.data.unit}`});
+          else if(it.cat==='water') data[today].water.push({time, ml:it.data.ml});
+          else if(it.cat==='weight') data[today].weight.push({time, value:it.data.value});
+          else if(it.cat==='vomit') data[today].vomit.push({time});
+          else if(it.cat==='stool') data[today].stool.push({time});
+          else if(it.cat==='urine') data[today].urine.push({time});
+        });
+        const { leftoverNote } = parseQuickEntryText(text);
+        if(leftoverNote) data[today].noteEntries.push({time, note:leftoverNote});
+      }
+      markLocalChangeAndSync();
+      render();
+      close();
+    });
+  });
+  setTimeout(()=> document.getElementById('quickEntryInput').focus(), 100);
 }
 function showSearchModal(){
   const overlay = document.createElement('div');
