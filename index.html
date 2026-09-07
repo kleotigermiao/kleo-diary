@@ -4456,11 +4456,32 @@ function clusterFeedingTimes(allTimes){
 }
 // ---- AM/PM session table (Feline Diabetes Support Group style) ----
 function toMinutesOfDay(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
-function buildDaySessionsForAmpm(dateStr, day, nextDayData){
+function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
   const insulinEntries = (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time));
   const glucoseEntries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number' && meterFilterMatch(e)).sort((a,b)=>a.time.localeCompare(b.time));
   const amShot = insulinEntries.find(e=> toMinutesOfDay(e.time) < 14*60);
   const pmShot = insulinEntries.slice().reverse().find(e=> toMinutesOfDay(e.time) >= 14*60);
+
+  // If YESTERDAY had a PM shot (or PM SKIP) with no AM shot yet today, its PM
+  // session window extends into today's early morning — any of today's
+  // readings that fall inside that window already "belong" to yesterday's PM
+  // row and must not ALSO show up in today's own AM fallback listing.
+  const claimedByPrevDayPM = new Set();
+  if(prevDayData){
+    const prevInsulin = (prevDayData.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time));
+    const prevPmShot = prevInsulin.slice().reverse().find(e=> toMinutesOfDay(e.time) >= 14*60);
+    if(prevPmShot){
+      const prevPmShotMin = toMinutesOfDay(prevPmShot.time);
+      const todayAmShotForWindow = insulinEntries.find(e=> toMinutesOfDay(e.time) < 14*60);
+      const prevPmWindowEnd = todayAmShotForWindow ? toMinutesOfDay(todayAmShotForWindow.time)+1440 : prevPmShotMin+1440;
+      glucoseEntries.forEach(e=>{
+        const gMinOffset = toMinutesOfDay(e.time)+1440; // today's time, on yesterday's timeline
+        if(gMinOffset>=prevPmShotMin && gMinOffset<prevPmWindowEnd){
+          claimedByPrevDayPM.add(`${e.time}|${e.value}`);
+        }
+      });
+    }
+  }
 
   // A PM session legitimately runs past midnight (e.g. shot at 20:28, readings
   // still being logged at 00:08+ the next calendar day) — those readings are
@@ -4519,6 +4540,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData){
       entries.forEach(g=>{
         const gMin = g._min!=null ? g._min : toMinutesOfDay(g.time);
         if(gMin < windowStartMin || gMin >= windowEndMin) return;
+        if(claimedByPrevDayPM.has(`${g.time}|${g.value}`)) return; // already shown under yesterday's PM row
         if(slot<=11){ hours[slot] = g.value; slot++; anyReading = true; }
       });
     }
@@ -4613,7 +4635,9 @@ function renderAmpmTable(){
     if(!day) return;
     const nextDate = new Date(dateStr+'T00:00:00'); nextDate.setDate(nextDate.getDate()+1);
     const nextDateStr = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0')+'-'+String(nextDate.getDate()).padStart(2,'0');
-    const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day, data[nextDateStr]);
+    const prevDate = new Date(dateStr+'T00:00:00'); prevDate.setDate(prevDate.getDate()-1);
+    const prevDateStr = prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0')+'-'+String(prevDate.getDate()).padStart(2,'0');
+    const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day, data[nextDateStr], data[prevDateStr]);
     const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number' && meterFilterMatch(e));
     const hasAnyInsulin = (day.insulin||[]).length>0;
     if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin) return; // skip only if truly nothing logged that day
