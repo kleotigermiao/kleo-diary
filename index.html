@@ -4521,6 +4521,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
     const hasRealShot = !!shot;
     const anchorMin = hasRealShot ? toMinutesOfDay(shot.time) : fallbackAnchorMin;
     const hours = {};
+    const discarded = []; // {time, value} of readings bumped out of a hour-slot by a lower duplicate
     let anyReading = false;
     if(hasRealShot){
       entries.forEach(g=>{
@@ -4529,7 +4530,12 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
         if(gMin <= anchorMin + PS_GRACE_MIN) return; // pre-shot readings (including the small grace window) go in PS, not the hourly buckets
         if(excludeKey && entryKey(g)===excludeKey) return; // this exact reading is already being used as the OTHER session's pre-shot value — don't also double-count it here
         const hDiff = Math.round((gMin-anchorMin)/60); // matches the "(+Xh)" badge shown next to each glucose entry in the main diary list — keeping both displays consistent
-        if(hDiff>=1 && hDiff<=11 && hours[hDiff]==null){ hours[hDiff] = g.value; anyReading = true; }
+        if(hDiff>=1 && hDiff<=11){
+          if(hours[hDiff]==null){ hours[hDiff] = g.value; }
+          else if(g.value<hours[hDiff]){ discarded.push({time:g.time, value:hours[hDiff]}); hours[hDiff] = g.value; }
+          else{ discarded.push({time:g.time, value:g.value}); }
+          anyReading = true;
+        }
       });
     } else {
       // No real shot to anchor hour-buckets to — just list this window's
@@ -4546,7 +4552,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
     }
     if(!hasRealShot && !anyReading) return null; // truly nothing to show for this half of the day
     const preShotEntry = hasRealShot ? findPreShotEntry(anchorMin, entries) : null;
-    return { preBg: preShotEntry ? preShotEntry.value : null, dose: shot ? shot.dose : null, time: shot ? shot.time : null, hours };
+    return { preBg: preShotEntry ? preShotEntry.value : null, dose: shot ? shot.dose : null, time: shot ? shot.time : null, hours, discarded };
   }
   const pmShotMin = pmShot ? toMinutesOfDay(pmShot.time) : 1440;
   // PM window extends until the next day's AM shot (if known), or a generous
@@ -4563,6 +4569,14 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
   const remarkParts = [];
   if(amShot) remarkParts.push(`AM injection ${amShot.time}` + (amShot.dose && amShot.dose.toLowerCase()==='skip' ? ' (SKIP)' : ''));
   if(pmShot) remarkParts.push(`PM injection ${pmShot.time}` + (pmShot.dose && pmShot.dose.toLowerCase()==='skip' ? ' (SKIP)' : ''));
+  [amSession, pmSession].forEach(s=>{
+    if(s && s.discarded){
+      s.discarded.forEach(d=> remarkParts.push(`${d.time} BG ${d.value} (same-hour dup, lower value kept)`));
+    }
+  });
+  (day.urinalysis||[]).forEach(u=>{
+    if(u.ketone || u.glucose) remarkParts.push(`Urine ${u.time}: ketone ${u.ketone||'--'}, glucose ${u.glucose||'--'}`);
+  });
   if(day.notes) remarkParts.push(day.notes.split('\n')[0]);
   (day.noteEntries||[]).forEach(n=>{ if(n.note) remarkParts.push(n.note); });
 
