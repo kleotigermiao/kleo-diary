@@ -4593,36 +4593,70 @@ function ampmValueColor(v){
   return '#FB8C00';                  // BG < 4.4 (Take Action!, orange)
 }
 function buildTestingGapHtml(){
-  // Which 1-hour block of the day has the fewest glucose readings over the
-  // last 14 days? Helps decide when to prioritize testing.
-  const blocks = Array.from({length:24}, (_,h)=>({
-    label:`${String(h).padStart(2,'0')}:00-${String((h+1)%24).padStart(2,'0')}:00`,
-    start: h*60, end: (h+1)*60
-  }));
-  const counts = blocks.map(()=>0);
+  // Rank which AM/PM +N slots are most worth prioritizing for testing, using
+  // the SAME hour-offset framework as the AM/PM table itself (not wall-clock
+  // time blocks) — combining clinical monitoring value with how sparse the
+  // actual data is there, so a slot that's simply "rarely tested" (like +1)
+  // doesn't automatically outrank a slot that's both sparse AND clinically
+  // more important for catching a late nadir or prolonged insulin effect
+  // (typically +7 to +10).
   const recentDays = getLastNDates(14);
+  const amCounts = Array(12).fill(0), pmCounts = Array(12).fill(0); // index 1..11
   let totalReadings = 0;
   recentDays.forEach(dateStr=>{
     const day = data[dateStr];
     if(!day) return;
-    (day.glucose||[]).forEach(e=>{
-      if(!/^\d{1,2}:\d{2}$/.test(e.time||'') || typeof e.value!=='number') return;
-      const min = toMinutesOfDay(e.time);
-      const idx = blocks.findIndex(b=> min>=b.start && min<b.end);
-      if(idx>=0){ counts[idx]++; totalReadings++; }
-    });
+    const nextDate = new Date(dateStr+'T00:00:00'); nextDate.setDate(nextDate.getDate()+1);
+    const nextDateStr = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0')+'-'+String(nextDate.getDate()).padStart(2,'0');
+    const prevDate = new Date(dateStr+'T00:00:00'); prevDate.setDate(prevDate.getDate()-1);
+    const prevDateStr = prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0')+'-'+String(prevDate.getDate()).padStart(2,'0');
+    const { amSession, pmSession } = buildDaySessionsForAmpm(dateStr, day, data[nextDateStr], data[prevDateStr]);
+    if(amSession) for(let h=1; h<=11; h++){ if(amSession.hours[h]!=null){ amCounts[h]++; totalReadings++; } }
+    if(pmSession) for(let h=1; h<=11; h++){ if(pmSession.hours[h]!=null){ pmCounts[h]++; totalReadings++; } }
   });
   if(totalReadings===0) return '';
-  const minCount = Math.min(...counts);
-  const gapBlocks = blocks.filter((b,i)=>counts[i]===minCount);
-  const gapLabel = gapBlocks.map(b=>b.label).join('、');
+
+  // Clinical value weight per hour-offset: Kleo's history of late nadirs and
+  // prolonged insulin effect means the mid-to-late hours matter most.
+  function clinicalWeight(h){
+    if(h>=7 && h<=10) return 3; // late-nadir / prolong detection zone
+    if(h>=4 && h<=6) return 2;  // downtrend trajectory
+    if(h===11) return 2;        // tail end, still relevant for prolong
+    return 1;                   // +1~+3, early absorption phase
+  }
+  function reasonFor(h, session){
+    const sLabel = session==='am' ? 'AM' : 'PM';
+    if(h>=7 && h<=10) return `${sLabel} +${h}：Kleo過去曾有late nadir/prolong的時段，這個時間點特別值得確認`;
+    if(h>=4 && h<=6) return `${sLabel} +${h}：有助判斷血糖下降的走勢`;
+    if(h===11) return `${sLabel} +${h}：確認是否有prolong的效果`;
+    return `${sLabel} +${h}：目前資料偏少`;
+  }
+
+  const TARGET_SAMPLES = 3; // a slot with at least this many readings over 14 days is considered reasonably covered
+  const candidates = [];
+  for(let h=1; h<=11; h++){
+    const amGap = Math.max(0, TARGET_SAMPLES - amCounts[h]);
+    const pmGap = Math.max(0, TARGET_SAMPLES - pmCounts[h]);
+    const w = clinicalWeight(h);
+    // AM/PM imbalance bonus: if one side is notably better covered than the
+    // other at this same hour, nudge the weaker side up in priority.
+    const amImbalanceBonus = pmCounts[h] > amCounts[h]+2 ? 1 : 0;
+    const pmImbalanceBonus = amCounts[h] > pmCounts[h]+2 ? 1 : 0;
+    if(amGap>0) candidates.push({session:'am', h, score: w*amGap + amImbalanceBonus, count:amCounts[h]});
+    if(pmGap>0) candidates.push({session:'pm', h, score: w*pmGap + pmImbalanceBonus, count:pmCounts[h]});
+  }
+  if(candidates.length===0){
+    return `<div class="supply-card" style="margin-bottom:14px;">
+      <div class="supply-title">✅ 建議優先監測時段（最近14天）</div>
+      <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">各時段的資料都算完整，暫時沒有特別需要加強的時段。</div>
+    </div>`;
+  }
+  candidates.sort((a,b)=> b.score-a.score);
+  const top = candidates.slice(0,6);
   return `<div class="supply-card" style="margin-bottom:14px;">
-    <div class="supply-title">📉 建議補測時段（最近14天）</div>
-    <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
-      最少血糖記錄的時段是 <b>${gapLabel}</b>（這14天只有 ${minCount} 筆），建議下次多在這個時段測一下，讓一天的血糖曲線更完整。
-    </div>
-    <div style="font-size:10.5px;color:var(--ink-soft);margin-top:6px;">
-      ${blocks.map((b,i)=>`${b.label}: ${counts[i]}筆`).join('　')}
+    <div class="supply-title">🎯 建議優先監測時段（最近14天）</div>
+    <div style="font-size:12.5px;color:var(--ink);margin-top:6px;line-height:1.8;">
+      ${top.map(c=>`• ${reasonFor(c.h, c.session)}（這14天只有 ${c.count} 筆）`).join('<br>')}
     </div>
   </div>`;
 }
@@ -6959,7 +6993,16 @@ googleAuthBtn.addEventListener('click', ()=>{
 
 async function driveApiFetch(url, options={}){
   const headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + gAccessToken });
-  return fetch(url, Object.assign({}, options, { headers }));
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=> controller.abort(), 20000); // 20s — a hung request should surface as an explicit error, not sit forever with no feedback
+  try{
+    return await fetch(url, Object.assign({}, options, { headers, signal: controller.signal }));
+  }catch(e){
+    if(e.name==='AbortError') throw new Error('請求逾時（20秒內沒有回應），請檢查網路連線');
+    throw e;
+  }finally{
+    clearTimeout(timeoutId);
+  }
 }
 
 async function searchDriveFiles(){
@@ -7541,14 +7584,20 @@ function buildSyncEnvelope(){
   return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
 }
 function pushToDrive(immediate){
-  if(!gAccessToken || !driveFileId) return;
+  if(!gAccessToken || !driveFileId){
+    // This used to fail completely silently — no error, no log, nothing —
+    // which is exactly the kind of gap that could make a sync look like it
+    // "did nothing" with zero clue why. Now at least it's visible.
+    logSaveActivity(false, `push skipped: ${!gAccessToken?'no access token':'no drive file id'}`, 'push-precondition');
+    return;
+  }
   if(isSyncing && !immediate) return;
   clearTimeout(drivePushTimer);
   const doPush = async ()=>{
     try{
       const envelope = buildSyncEnvelope();
       const lastModified = envelope._meta.lastModified;
-      const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+      const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media&fields=modifiedTime,size`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(envelope)
@@ -7561,14 +7610,26 @@ function pushToDrive(immediate){
         // and overwrote the newer local data with it.
         const errText = await res.text().catch(()=>'');
         console.error('push to drive rejected by server:', res.status, errText);
+        logSaveActivity(false, `push rejected: HTTP ${res.status} ${errText}`.slice(0,200), 'push');
         updateAuthUI(true, `⚠️ 同步失敗（${res.status}），本機資料仍保留，請稍後點「重新整理」再試`);
         return;
       }
+      // Confirm the write actually landed by reading back what Drive itself
+      // reports — the request returning 200 only means Google accepted the
+      // bytes, not necessarily that this exact write is what's now live.
+      let confirmedTime = null;
+      try{
+        const resultJson = await res.json();
+        confirmedTime = resultJson && resultJson.modifiedTime;
+      }catch(e){ /* response body parsing failed — still treat the 2xx as success below, just without a confirmed timestamp to show */ }
       localStorage.setItem(LAST_SYNCED_KEY, String(lastModified));
-      updateAuthUI(true, '已同步 ' + new Date().toLocaleTimeString('zh-TW'));
+      logSaveActivity(true, undefined, `push confirmed, remote modifiedTime=${confirmedTime||'unknown'}`);
+      const timeLabel = confirmedTime ? new Date(confirmedTime).toLocaleTimeString('zh-TW') : new Date().toLocaleTimeString('zh-TW');
+      updateAuthUI(true, '已同步 ' + timeLabel + (confirmedTime ? '（雲端已確認）' : ''));
       pushToPublicMirror(envelope); // fire-and-forget: keep the GPT-readable copy current too
     }catch(e){
       console.error('push to drive failed', e);
+      logSaveActivity(false, `push threw: ${e && e.message}`, 'push');
       updateAuthUI(true, '⚠️ 同步失敗（網路問題），本機資料仍保留，請稍後再試');
     }
   };
