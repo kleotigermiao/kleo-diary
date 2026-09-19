@@ -4594,6 +4594,19 @@ function ampmValueColor(v){
   if(v>=4.4) return '#1E88E5';       // 4.4 - 5.5 (blue)
   return '#FB8C00';                  // BG < 4.4 (Take Action!, orange)
 }
+const USUAL_AM_SHOT_KEY = 'kleo-usual-am-shot-time';
+const USUAL_PM_SHOT_KEY = 'kleo-usual-pm-shot-time';
+function loadUsualShotTime(key, fallback){
+  const v = localStorage.getItem(key);
+  return (v && /^\d{1,2}:\d{2}$/.test(v)) ? v : fallback;
+}
+function addHoursToTime(timeStr, hoursToAdd){
+  const [h,m] = timeStr.split(':').map(Number);
+  let totalMin = h*60+m + Math.round(hoursToAdd*60);
+  totalMin = ((totalMin % 1440) + 1440) % 1440;
+  const outH = Math.floor(totalMin/60), outM = totalMin%60;
+  return `${String(outH).padStart(2,'0')}:${String(outM).padStart(2,'0')}`;
+}
 function buildTestingGapHtml(){
   // Rank which AM/PM +N slots are most worth prioritizing for testing, using
   // the SAME hour-offset framework as the AM/PM table itself (not wall-clock
@@ -4618,6 +4631,13 @@ function buildTestingGapHtml(){
   });
   if(totalReadings===0) return '';
 
+  const usualAmShot = loadUsualShotTime(USUAL_AM_SHOT_KEY, '08:00');
+  const usualPmShot = loadUsualShotTime(USUAL_PM_SHOT_KEY, '20:00');
+  function approxClockTime(h, session){
+    const base = session==='am' ? usualAmShot : usualPmShot;
+    return addHoursToTime(base, h);
+  }
+
   // Clinical value weight per hour-offset: Kleo's history of late nadirs and
   // prolonged insulin effect means the mid-to-late hours matter most.
   function clinicalWeight(h){
@@ -4628,10 +4648,11 @@ function buildTestingGapHtml(){
   }
   function reasonFor(h, session){
     const sLabel = session==='am' ? 'AM' : 'PM';
-    if(h>=7 && h<=10) return `${sLabel} +${h}：Kleo過去曾有late nadir/prolong的時段，這個時間點特別值得確認`;
-    if(h>=4 && h<=6) return `${sLabel} +${h}：有助判斷血糖下降的走勢`;
-    if(h===11) return `${sLabel} +${h}：確認是否有prolong的效果`;
-    return `${sLabel} +${h}：目前資料偏少`;
+    const clockLabel = `約${approxClockTime(h, session)}`;
+    if(h>=7 && h<=10) return `${sLabel} +${h}（${clockLabel}）：Kleo過去曾有late nadir/prolong的時段，這個時間點特別值得確認`;
+    if(h>=4 && h<=6) return `${sLabel} +${h}（${clockLabel}）：有助判斷血糖下降的走勢`;
+    if(h===11) return `${sLabel} +${h}（${clockLabel}）：確認是否有prolong的效果`;
+    return `${sLabel} +${h}（${clockLabel}）：目前資料偏少`;
   }
 
   const TARGET_SAMPLES = 3; // a slot with at least this many readings over 14 days is considered reasonably covered
@@ -4647,10 +4668,12 @@ function buildTestingGapHtml(){
     if(amGap>0) candidates.push({session:'am', h, score: w*amGap + amImbalanceBonus, count:amCounts[h]});
     if(pmGap>0) candidates.push({session:'pm', h, score: w*pmGap + pmImbalanceBonus, count:pmCounts[h]});
   }
+  const settingsLinkHtml = `<div style="margin-top:8px;"><button type="button" id="editUsualShotTimesBtn" style="background:none;border:none;color:var(--ink-soft);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">設定慣用打針時間（目前 AM ${usualAmShot} / PM ${usualPmShot}）</button></div>`;
   if(candidates.length===0){
     return `<div class="supply-card" style="margin-bottom:14px;">
       <div class="supply-title">✅ 建議優先監測時段（最近14天）</div>
       <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">各時段的資料都算完整，暫時沒有特別需要加強的時段。</div>
+      ${settingsLinkHtml}
     </div>`;
   }
   candidates.sort((a,b)=> b.score-a.score);
@@ -4660,6 +4683,8 @@ function buildTestingGapHtml(){
     <div style="font-size:12.5px;color:var(--ink);margin-top:6px;line-height:1.8;">
       ${top.map(c=>`• ${reasonFor(c.h, c.session)}（這14天只有 ${c.count} 筆）`).join('<br>')}
     </div>
+    <div style="font-size:10.5px;color:var(--ink-soft);margin-top:6px;">時間是根據您設定的慣用打針時間換算的參考值，實際仍以當天真正打針時間為準。</div>
+    ${settingsLinkHtml}
   </div>`;
 }
 function renderAmpmTable(){
@@ -4739,6 +4764,20 @@ function renderAmpmTable(){
       alert(full);
     });
   });
+  const editBtn = document.getElementById('editUsualShotTimesBtn');
+  if(editBtn){
+    editBtn.addEventListener('click', ()=>{
+      const curAm = loadUsualShotTime(USUAL_AM_SHOT_KEY, '08:00');
+      const curPm = loadUsualShotTime(USUAL_PM_SHOT_KEY, '20:00');
+      const newAm = prompt('慣用的早上打針時間（HH:MM）：', curAm);
+      if(newAm===null) return; // cancelled
+      const newPm = prompt('慣用的晚上打針時間（HH:MM）：', curPm);
+      if(newPm===null) return; // cancelled
+      if(/^\d{1,2}:\d{2}$/.test(newAm.trim())) localStorage.setItem(USUAL_AM_SHOT_KEY, newAm.trim());
+      if(/^\d{1,2}:\d{2}$/.test(newPm.trim())) localStorage.setItem(USUAL_PM_SHOT_KEY, newPm.trim());
+      renderAmpmTable();
+    });
+  }
 }
 function renderFoodPatternView(){
   const el = document.getElementById('foodPatternView');
@@ -7541,13 +7580,39 @@ async function pushToPublicMirror(envelope){
   try{
     const fileId = await findOrCreatePublicMirrorFile();
     if(!fileId) return;
-    const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    let res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(envelope)
     });
+    if(res.status===404){
+      // The cached file id points at something that no longer exists (e.g.
+      // the mirror file got deleted on Drive) — without this, every future
+      // sync would keep failing against the same stale id forever. Clear the
+      // cache, create a fresh file, and retry once.
+      logSaveActivity(false, 'public mirror file missing (404) — recreating', 'gpt-link');
+      localStorage.removeItem('kleo-public-mirror-file-id');
+      publicMirrorFileId = null;
+      const newFileId = await findOrCreatePublicMirrorFile();
+      if(newFileId){
+        try{
+          await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${newFileId}/permissions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'reader', type: 'anyone' })
+          });
+        }catch(e){ /* if this fails, the content still gets written below; the person can re-run "取得GPT讀取連結" to fix sharing */ }
+        res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${newFileId}?uploadType=media`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(envelope)
+        });
+      }
+    }
     if(!res.ok){
       logSaveActivity(false, `public mirror push failed: HTTP ${res.status}`, 'gpt-link');
+    } else {
+      logSaveActivity(true, undefined, 'gpt-link mirror updated');
     }
   }catch(e){
     console.error('push to public mirror failed (main sync still succeeded)', e);
