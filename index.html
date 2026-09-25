@@ -780,6 +780,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="calendarBtn">日曆</button>
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
           <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
+          <button type="button" class="more-menu-item" id="feedingPlanMenuItem">餵食計畫</button>
           <button type="button" class="more-menu-item" id="injectScreenMenuItem">打針畫面</button>
         </div>
       </div>
@@ -1813,13 +1814,54 @@ function computeFoodKcalSoFar(day){
   });
   return {totalKcal, anyKnown, missingBrands: Array.from(missingBrands)};
 }
+const FEEDING_PLAN_KEY = 'kleo-feeding-plan-v1';
+function loadFeedingPlan(){
+  try{
+    const raw = localStorage.getItem(FEEDING_PLAN_KEY);
+    const plan = raw ? JSON.parse(raw) : [];
+    return Array.isArray(plan) ? plan.sort((a,b)=>(a.time||'').localeCompare(b.time||'')) : [];
+  }catch(e){ return []; }
+}
+function saveFeedingPlan(plan){
+  localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(plan));
+  markLocalChangeAndSync();
+}
+function feedingPlanEventKcal(ev){
+  const brandKcal = loadFoodBrandKcal();
+  const perUnit = brandKcal[ev.type+'::'+ev.brand];
+  if(perUnit==null) return null;
+  return perUnit * (parseFloat(ev.amount)||0);
+}
+function feedingPlanTotalKcal(plan){
+  let total = 0, anyMissing = false;
+  plan.forEach(ev=>{
+    const k = feedingPlanEventKcal(ev);
+    if(k==null) anyMissing = true; else total += k;
+  });
+  return { total, anyMissing };
+}
 function computeExpectedKcalSoFar(dailyTarget){
+  const plan = loadFeedingPlan();
+  if(plan.length>0){
+    const now = new Date();
+    const nowMin = now.getHours()*60+now.getMinutes();
+    let cumulative = 0;
+    plan.forEach(ev=>{
+      const [h,m] = (ev.time||'0:0').split(':').map(Number);
+      if(h*60+m <= nowMin){
+        const k = feedingPlanEventKcal(ev);
+        if(k!=null) cumulative += k;
+      }
+    });
+    return cumulative;
+  }
   const now = new Date();
   const minutesSinceMidnight = now.getHours()*60 + now.getMinutes();
   return dailyTarget * (minutesSinceMidnight/1440);
 }
 function buildKcalProgressHtml(day, dateStr){
-  const target = loadDailyKcalTarget();
+  const plan = loadFeedingPlan();
+  const target = plan.length>0 ? feedingPlanTotalKcal(plan).total : loadDailyKcalTarget();
   if(!target || target<=0) return '';
   if(!day.food || day.food.length===0) return ''; // nothing logged that day — nothing to report
   const {totalKcal, anyKnown, missingBrands} = computeFoodKcalSoFar(day);
@@ -1894,7 +1936,8 @@ function buildKcalProgressHtml(day, dateStr){
   </div>`;
   return `<div class="kcal-progress${isOver?' over':''}">
     ${missingWarningHtml}
-    <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target} kcal</div>
+    <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target.toFixed(0)} kcal${plan.length>0?'（照餵食計畫）':''}</div>
+    <div style="margin:-4px 0 6px;"><button type="button" class="edit-feeding-plan-link" style="background:none;border:none;color:var(--ink-soft);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">${plan.length>0?'編輯餵食計畫':'設定餵食計畫'}</button></div>
     <div class="kcal-bar-track">
       <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
       <div class="kcal-bar-period" style="left:${period1Pct}%;" title="00:00-08:00 分界"></div>
@@ -2070,6 +2113,9 @@ function render(){
     btn.addEventListener('click', ()=>{
       openSheetForEditNote(btn.dataset.date);
     });
+  });
+  main.querySelectorAll('.edit-feeding-plan-link').forEach(btn=>{
+    btn.addEventListener('click', showFeedingPlanModal);
   });
   main.querySelectorAll('.quick-add').forEach(item=>{
     item.addEventListener('click', ()=>{
@@ -6803,6 +6849,79 @@ function clearPhotosOlderThan(days){
   });
   return removed;
 }
+function showFeedingPlanModal(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:480px;width:100%;max-height:82vh;overflow-y:auto;';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = ()=> overlay.remove();
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+
+  let plan = loadFeedingPlan().map(ev=>Object.assign({}, ev)); // working copy
+  const types = loadFoodTypes();
+
+  function render(){
+    const { total, anyMissing } = feedingPlanTotalKcal(plan);
+    box.innerHTML = `
+      <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">餵食計畫</h3>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--ink-soft);">設定固定的每日餵食時間表，熱量進度會照這個時間表計算「目前該吃到多少」，餐點數量不限。</p>
+      <div id="feedingPlanRows"></div>
+      <button type="button" id="addFeedingPlanRowBtn" class="tag-add-btn" style="width:100%;margin-top:8px;">+ 新增餐點</button>
+      <div style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
+        全部餐點加總：<b>${total.toFixed(0)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}
+      </div>
+      <button type="button" id="saveFeedingPlanBtn" class="tag-add-btn" style="width:100%;margin-top:12px;">儲存計畫</button>
+      <button type="button" id="clearFeedingPlanBtn" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清空計畫（改回手動目標）</button>
+      <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
+    `;
+    const rowsEl = document.getElementById('feedingPlanRows');
+    plan.forEach((ev, i)=>{
+      const brands = ev.type ? loadFoodBrands(ev.type) : [];
+      const unit = ev.type ? foodTypeUnit(ev.type) : 'g';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap;';
+      row.innerHTML = `
+        <input type="text" class="fp-time" value="${escapeHtml(ev.time||'')}" placeholder="HH:MM" style="width:64px;">
+        <select class="fp-type" style="width:78px;">
+          <option value="">類型</option>
+          ${types.map(t=>`<option value="${escapeHtml(t)}"${t===ev.type?' selected':''}>${escapeHtml(t)}</option>`).join('')}
+        </select>
+        <select class="fp-brand" style="width:110px;">
+          <option value="">品牌</option>
+          ${brands.map(b=>`<option value="${escapeHtml(b)}"${b===ev.brand?' selected':''}>${escapeHtml(b)}</option>`).join('')}
+        </select>
+        <input type="text" inputmode="decimal" class="fp-amount" value="${ev.amount!=null?ev.amount:''}" placeholder="${unit}" style="width:54px;">
+        <button type="button" class="fp-remove" style="background:none;border:none;color:var(--ink-soft);font-size:16px;cursor:pointer;">✕</button>
+      `;
+      rowsEl.appendChild(row);
+      row.querySelector('.fp-time').addEventListener('input', e=>{ ev.time = e.target.value.trim(); });
+      row.querySelector('.fp-type').addEventListener('change', e=>{ ev.type = e.target.value; ev.brand = ''; render(); });
+      row.querySelector('.fp-brand').addEventListener('change', e=>{ ev.brand = e.target.value; render(); });
+      row.querySelector('.fp-amount').addEventListener('input', e=>{ ev.amount = e.target.value.trim(); render(); });
+      row.querySelector('.fp-remove').addEventListener('click', ()=>{ plan.splice(i,1); render(); });
+    });
+    document.getElementById('addFeedingPlanRowBtn').addEventListener('click', ()=>{
+      plan.push({time:'', type:'', brand:'', amount:''});
+      render();
+    });
+    document.getElementById('saveFeedingPlanBtn').addEventListener('click', ()=>{
+      const cleaned = plan.filter(ev=>ev.time && ev.type && ev.brand && ev.amount).sort((a,b)=>a.time.localeCompare(b.time));
+      saveFeedingPlan(cleaned);
+      window.render();
+      close();
+    });
+    document.getElementById('clearFeedingPlanBtn').addEventListener('click', ()=>{
+      if(!confirm('確定要清空餵食計畫嗎？之後會改回用手動設定的每日目標。')) return;
+      saveFeedingPlan([]);
+      window.render();
+      close();
+    });
+    box.querySelector('.modal-close-btn').addEventListener('click', close);
+  }
+  render();
+}
 function showKcalSettingsModal(){
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
@@ -6922,6 +7041,7 @@ document.getElementById('checkStorageMenuItem').addEventListener('click', showSt
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
 document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
+document.getElementById('feedingPlanMenuItem').addEventListener('click', showFeedingPlanModal);
 document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 document.getElementById('gptLinkMenuItem').addEventListener('click', async ()=>{
