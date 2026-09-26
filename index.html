@@ -6801,17 +6801,17 @@ function showStorageModal(){
   (async ()=>{
     const resultEl = document.getElementById('modalStorageResult');
     try{
+      const raw = localStorage.getItem(STORAGE_KEY) || '';
+      const lsSizeMB = (new Blob([raw]).size/1024/1024).toFixed(2);
+      let lines = [`日記文字資料（localStorage）：約 ${lsSizeMB} MB（這項通常上限只有 5-10 MB，跟下面的配額是分開算的，「quota exceeded」報錯多半是這裡滿了）`];
       if(navigator.storage && navigator.storage.estimate){
         const est = await navigator.storage.estimate();
         const usedMB = (est.usage/1024/1024).toFixed(1);
         const quotaMB = (est.quota/1024/1024).toFixed(0);
         const pct = est.quota>0 ? Math.round(est.usage/est.quota*100) : 0;
-        resultEl.textContent = `已用約 ${usedMB} MB／瀏覽器配額約 ${quotaMB} MB（約${pct}%）。`;
-      } else {
-        const raw = localStorage.getItem(STORAGE_KEY) || '';
-        const sizeMB = (new Blob([raw]).size/1024/1024).toFixed(1);
-        resultEl.textContent = `這個瀏覽器不支援精確查詢，但目前App資料本身約 ${sizeMB} MB。`;
+        lines.push(`整體瀏覽器儲存（主要是照片，IndexedDB）：已用約 ${usedMB} MB／配額約 ${quotaMB} MB（約${pct}%）`);
       }
+      resultEl.innerHTML = lines.join('<br><br>');
     }catch(e){
       resultEl.textContent = '查詢失敗：' + e.message;
     }
