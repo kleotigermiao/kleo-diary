@@ -781,6 +781,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
           <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
           <button type="button" class="more-menu-item" id="feedingPlanMenuItem">餵食計畫</button>
+          <button type="button" class="more-menu-item" id="batchLockMenuItem">🔒 批次鎖定／解鎖</button>
           <button type="button" class="more-menu-item" id="injectScreenMenuItem">打針畫面</button>
         </div>
       </div>
@@ -2024,6 +2025,70 @@ function setDayLocked(dateStr, locked){
   data[dateStr]._lockStateUpdatedAt = Date.now();
   if(save({action: locked ? 'lock-day' : 'unlock-day', date: dateStr})) render();
 }
+function setDaysLockedBatch(dateList, locked){
+  const valid = dateList.filter(dateStr=>data[dateStr]);
+  if(valid.length===0){ alert('沒有符合條件的日期可處理。'); return; }
+  const ts = Date.now();
+  valid.forEach(dateStr=>{
+    data[dateStr]._locked = !!locked;
+    data[dateStr]._lockStateUpdatedAt = ts;
+  });
+  if(save({action: locked ? 'batch-lock-days' : 'batch-unlock-days', count: valid.length})){
+    render();
+    alert(`${locked?'已鎖定':'已解鎖'} ${valid.length} 天。`);
+  }
+}
+function openBatchLockDialog(){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--paper);border-radius:14px;padding:18px;max-width:360px;width:100%;';
+  box.innerHTML = `<h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:17px;color:var(--ink);">🔒 批次鎖定／解鎖</h3>
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:14px;">只處理已存在的日記日期；同步進來的紀錄仍可合併到已鎖定日期。</div>
+    <label style="display:block;font-size:12px;margin-bottom:4px;">開始日期</label>
+    <input type="date" id="batchLockStart" style="width:100%;box-sizing:border-box;padding:9px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;">
+    <label style="display:block;font-size:12px;margin-bottom:4px;">結束日期</label>
+    <input type="date" id="batchLockEnd" style="width:100%;box-sizing:border-box;padding:9px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <button type="button" id="batchDoLock" class="sync-btn" style="flex:1;padding:10px;">🔒 鎖定範圍</button>
+      <button type="button" id="batchDoUnlock" class="sync-btn" style="flex:1;padding:10px;">🔓 解鎖範圍</button>
+    </div>
+    <button type="button" id="batchLockBeforeToday" class="sync-btn" style="width:100%;padding:10px;margin-bottom:8px;">🔒 鎖定昨天以前全部資料</button>
+    <button type="button" id="batchLockCancel" style="width:100%;padding:9px;border:none;background:none;color:var(--ink-soft);cursor:pointer;">取消</button>`;
+  overlay.appendChild(box); document.body.appendChild(overlay);
+  const close=()=>overlay.remove();
+  overlay.addEventListener('click',e=>{if(e.target===overlay) close();});
+  box.querySelector('#batchLockCancel').addEventListener('click',close);
+  function rangeDates(){
+    const start=box.querySelector('#batchLockStart').value;
+    const end=box.querySelector('#batchLockEnd').value;
+    if(!start || !end){ alert('請選擇開始日期和結束日期。'); return null; }
+    if(start>end){ alert('開始日期不能晚於結束日期。'); return null; }
+    return Object.keys(data).filter(d=>d>=start && d<=end).sort();
+  }
+  box.querySelector('#batchDoLock').addEventListener('click',()=>{
+    const dates=rangeDates(); if(!dates) return;
+    const targets=dates.filter(d=>!isDayLocked(d));
+    if(targets.length===0){ alert('這個日期範圍內的資料都已經鎖定。'); return; }
+    if(!confirm(`確定要鎖定 ${targets.length} 天的資料嗎？`)) return;
+    close(); setDaysLockedBatch(targets,true);
+  });
+  box.querySelector('#batchDoUnlock').addEventListener('click',()=>{
+    const dates=rangeDates(); if(!dates) return;
+    const targets=dates.filter(d=>isDayLocked(d));
+    if(targets.length===0){ alert('這個日期範圍內沒有已鎖定的資料。'); return; }
+    if(!confirm(`確定要解鎖 ${targets.length} 天的資料嗎？`)) return;
+    close(); setDaysLockedBatch(targets,false);
+  });
+  box.querySelector('#batchLockBeforeToday').addEventListener('click',()=>{
+    const today=todayStr();
+    const targets=Object.keys(data).filter(d=>d<today && !isDayLocked(d)).sort();
+    if(targets.length===0){ alert('昨天以前的資料都已經鎖定。'); return; }
+    if(!confirm(`確定要鎖定昨天以前全部資料嗎？
+共 ${targets.length} 天；今天不會被鎖定。`)) return;
+    close(); setDaysLockedBatch(targets,true);
+  });
+}
 let renderedDaysLimit = 30; // how many of the most recent days are currently rendered
 function render(){
   const main = document.getElementById('main');
@@ -2199,6 +2264,8 @@ document.querySelectorAll('.nav-dropdown .more-menu-item').forEach(btn=>{
 document.getElementById('refreshBtn').addEventListener('click', ()=>{
   window.location.reload();
 });
+
+document.getElementById('batchLockMenuItem').addEventListener('click', openBatchLockDialog);
 
 function openSlotPicker(dateStr, slotIdx){
   const assignedElsewhere = customStatusSlots.filter((c,i)=>i!==slotIdx && c);
