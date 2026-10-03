@@ -1883,11 +1883,11 @@ function buildKcalProgressHtml(day, dateStr){
     const targetPct = TARGET_FIXED_PCT;
     let captionHtml;
     if(onTarget) captionHtml = `剛好符合當天目標`;
-    else if(isOver) captionHtml = `當天總共超吃 <b>${diff.toFixed(0)} kcal</b>`;
-    else captionHtml = `當天總共少吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
+    else if(isOver) captionHtml = `當天總共超吃 <b>${diff.toFixed(1)} kcal</b>`;
+    else captionHtml = `當天總共少吃 <b>${Math.abs(diff).toFixed(1)} kcal</b>`;
     return `<div class="kcal-progress${isOver?' over':''}">
       ${missingWarningHtml}
-      <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(0)} / ${target} kcal</div>
+      <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(1)} / ${(+target).toFixed(1)} kcal</div>
       <div class="kcal-bar-track">
         <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
         <div class="kcal-bar-target" style="left:${targetPct}%;" title="當日目標"></div>
@@ -1927,8 +1927,8 @@ function buildKcalProgressHtml(day, dateStr){
   const period2Pct = TARGET_FIXED_PCT*2/3;
   let captionHtml;
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
-  else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(0)} kcal</b>`;
-  else captionHtml = `目前時段還缺 <b>${diff.toFixed(0)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
+  else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(1)} kcal</b>`;
+  else captionHtml = `目前時段還缺 <b>${diff.toFixed(1)} kcal</b>${suggestionStr ? '<br>'+suggestionStr : ''}`;
   const gramsRecently = gramsEatenInPastHours(dateStr || todayStr(), nowTime(), 6);
   const recentFoodOk = gramsRecently >= 10;
   const preInjectionHtml = `<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:${recentFoodOk?'#E3F2E9':'#FCE4EC'};font-size:11.5px;color:${recentFoodOk?'#2E6B4F':'#B23A48'};">
@@ -1936,7 +1936,7 @@ function buildKcalProgressHtml(day, dateStr){
   </div>`;
   return `<div class="kcal-progress${isOver?' over':''}">
     ${missingWarningHtml}
-    <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(0)} / ${target.toFixed(0)} kcal${plan.length>0?'（照餵食計畫）':''}</div>
+    <div class="kcal-bar-label">🔥 熱量進度：${totalKcal.toFixed(1)} / ${target.toFixed(1)} kcal${plan.length>0?'（照餵食計畫）':''}</div>
     <div style="margin:-4px 0 6px;"><button type="button" class="edit-feeding-plan-link" style="background:none;border:none;color:var(--ink-soft);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">${plan.length>0?'編輯餵食計畫':'設定餵食計畫'}</button></div>
     <div class="kcal-bar-track">
       <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
@@ -6869,14 +6869,19 @@ function showFeedingPlanModal(){
       <p style="margin:0 0 12px;font-size:12px;color:var(--ink-soft);">設定固定的每日餵食時間表，熱量進度會照這個時間表計算「目前該吃到多少」，餐點數量不限。</p>
       <div id="feedingPlanRows"></div>
       <button type="button" id="addFeedingPlanRowBtn" class="tag-add-btn" style="width:100%;margin-top:8px;">+ 新增餐點</button>
-      <div style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
-        全部餐點加總：<b>${total.toFixed(0)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}
+      <div id="feedingPlanTotalBox" style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
+        全部餐點加總：<b>${total.toFixed(1)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}
       </div>
       <button type="button" id="saveFeedingPlanBtn" class="tag-add-btn" style="width:100%;margin-top:12px;">儲存計畫</button>
       <button type="button" id="clearFeedingPlanBtn" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清空計畫（改回手動目標）</button>
       <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
     `;
     const rowsEl = document.getElementById('feedingPlanRows');
+    const totalBoxEl = document.getElementById('feedingPlanTotalBox');
+    function refreshTotalOnly(){
+      const { total, anyMissing } = feedingPlanTotalKcal(plan);
+      totalBoxEl.innerHTML = `全部餐點加總：<b>${total.toFixed(1)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}`;
+    }
     plan.forEach((ev, i)=>{
       const brands = ev.type ? loadFoodBrands(ev.type) : [];
       const unit = ev.type ? foodTypeUnit(ev.type) : 'g';
@@ -6896,10 +6901,12 @@ function showFeedingPlanModal(){
         <button type="button" class="fp-remove" style="background:none;border:none;color:var(--ink-soft);font-size:16px;cursor:pointer;">✕</button>
       `;
       rowsEl.appendChild(row);
-      row.querySelector('.fp-time').addEventListener('input', e=>{ ev.time = e.target.value.trim(); });
+      const timeInput = row.querySelector('.fp-time');
+      timeInput.addEventListener('focus', ()=>{ timeInput.select(); });
+      timeInput.addEventListener('input', e=>{ autoFormatTimeInput(e.target); ev.time = e.target.value.trim(); });
       row.querySelector('.fp-type').addEventListener('change', e=>{ ev.type = e.target.value; ev.brand = ''; render(); });
-      row.querySelector('.fp-brand').addEventListener('change', e=>{ ev.brand = e.target.value; render(); });
-      row.querySelector('.fp-amount').addEventListener('input', e=>{ ev.amount = e.target.value.trim(); render(); });
+      row.querySelector('.fp-brand').addEventListener('change', e=>{ ev.brand = e.target.value; refreshTotalOnly(); });
+      row.querySelector('.fp-amount').addEventListener('input', e=>{ ev.amount = e.target.value.trim(); refreshTotalOnly(); });
       row.querySelector('.fp-remove').addEventListener('click', ()=>{ plan.splice(i,1); render(); });
     });
     document.getElementById('addFeedingPlanRowBtn').addEventListener('click', ()=>{
