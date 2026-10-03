@@ -1728,7 +1728,7 @@ function parseFoodEntryGroups(note){
   const mainPart = m ? m[1] : raw;
   const groups = mainPart.split('、').filter(Boolean);
   return groups.map(group=>{
-    const gramsMatch = group.match(/\s+([\d.]+)(g|顆)$/);
+    const gramsMatch = group.match(/\s*([\d.]+)(g|顆)$/);
     const grams = gramsMatch ? parseFloat(gramsMatch[1]) : null;
     const unit = gramsMatch ? gramsMatch[2] : 'g';
     const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
@@ -2425,7 +2425,7 @@ function openSheetForEdit(dateStr, cat, idx){
     // final brand count for each type before deciding how to fill amounts.
     const byType = {}; // type -> [{brand, grams}, ...]  (brand may be '' if no brand was recorded)
     groups.forEach(group=>{
-      const gramsMatch = group.match(/\s+([\d.]+)(g|顆)$/);
+      const gramsMatch = group.match(/\s*([\d.]+)(g|顆)$/);
       const grams = gramsMatch ? gramsMatch[1] : '';
       const groupNoGrams = gramsMatch ? group.slice(0, gramsMatch.index) : group;
       const sepIdx = groupNoGrams.indexOf('：');
@@ -2459,11 +2459,17 @@ function openSheetForEdit(dateStr, cat, idx){
       setTimeout(()=>{
         if(entries.length<=1){
           const gramsInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-type-grams`);
-          if(gramsInput && entries[0]) gramsInput.value = entries[0].grams;
+          if(gramsInput && entries[0]){
+            gramsInput.value = entries[0].grams;
+            gramsInput.dispatchEvent(new Event('input', {bubbles:true}));
+          }
         } else {
           entries.forEach(({brand, grams})=>{
             const amtInput = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-amount[data-brand="${CSS.escape(brand)}"]`);
-            if(amtInput) amtInput.value = grams;
+            if(amtInput){
+              amtInput.value = grams;
+              amtInput.dispatchEvent(new Event('input', {bubbles:true}));
+            }
           });
         }
       }, 0);
