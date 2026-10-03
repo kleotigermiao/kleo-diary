@@ -2030,7 +2030,7 @@ function render(){
     const foodStats = computeFoodStats(day);
     const foodStatsKeys = Object.keys(foodStats);
     const foodStatsHtml = foodStatsKeys.length>0
-      ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k]}${foodTypeUnit(k)}`).join('　')}</div>`
+      ? `<div class="food-stats-widget">🍽️ 今日飲食統計：${foodStatsKeys.map(k=>`${escapeHtml(k)} ${foodStats[k].toFixed(1)}${foodTypeUnit(k)}`).join('　')}</div>`
       : '';
     const kcalProgressHtml = buildKcalProgressHtml(day, dateStr);
     const notesHtml = `<div class="notes-row">
