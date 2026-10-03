@@ -2011,6 +2011,19 @@ function buildRemindersBanner(){
   upcoming.sort((a,b)=>a.diffDays-b.diffDays).forEach(u=> lines.push(`<div class="reminder-line" data-date="${u.dateStr}">📌 <b>${u.diffDays}天後（${u.dateStr}）</b>：${escapeHtml(u.ev.text)}</div>`));
   return `<div class="reminders-banner">${lines.join('')}</div>`;
 }
+// ---- Daily data lock ----
+function isDayLocked(dateStr){
+  return !!(data[dateStr] && data[dateStr]._locked);
+}
+function lockedDayWarning(dateStr){
+  alert(`⚠️ ${dateStr} 已鎖定，無法新增、修改或刪除紀錄。\n如需修改，請先解鎖該日資料。`);
+}
+function setDayLocked(dateStr, locked){
+  if(!data[dateStr]) return;
+  data[dateStr]._locked = !!locked;
+  data[dateStr]._lockStateUpdatedAt = Date.now();
+  if(save({action: locked ? 'lock-day' : 'unlock-day', date: dateStr})) render();
+}
 let renderedDaysLimit = 30; // how many of the most recent days are currently rendered
 function render(){
   const main = document.getElementById('main');
@@ -2041,6 +2054,7 @@ function render(){
       <div class="day-head">
         <span class="date">${formatDateLabel(dateStr)}</span>
         <span class="weekday">${weekdayName(dateStr)} · ${dateStr}</span>
+        <button type="button" class="day-lock-btn" data-date="${dateStr}" data-locked="${isDayLocked(dateStr)?'1':'0'}" title="${isDayLocked(dateStr)?'解鎖當日資料':'鎖定當日資料'}" style="margin-left:auto;border:1px solid var(--line);background:${isDayLocked(dateStr)?'#FFF3CD':'transparent'};border-radius:8px;padding:4px 8px;cursor:pointer;font-size:13px;">${isDayLocked(dateStr)?'🔒 已鎖定':'🔓 鎖定'}</button>
       </div>
       ${buildStatusSummary(dateStr, day, allDates, idx)}
       <div class="second-row-wrap">
@@ -2069,6 +2083,17 @@ function render(){
       }
     });
   });
+  main.querySelectorAll('.day-lock-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const dateStr = btn.dataset.date;
+      const locked = isDayLocked(dateStr);
+      const msg = locked
+        ? `確定要解鎖 ${dateStr} 嗎？解鎖後可再次新增、修改或刪除這一天的資料。`
+        : `確定要鎖定 ${dateStr} 嗎？鎖定後這一天將無法新增、修改或刪除任何紀錄。`;
+      if(!confirm(msg)) return;
+      setDayLocked(dateStr, !locked);
+    });
+  });
   main.querySelectorAll('.merge-flag-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const {date, cat, idx} = btn.dataset;
@@ -2082,6 +2107,7 @@ function render(){
   main.querySelectorAll('.del').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const {date, cat, idx} = btn.dataset;
+      if(isDayLocked(date)){ lockedDayWarning(date); return; }
       if(!confirm('確定要刪除這筆記錄嗎？刪除後無法復原。')) return;
       const dataBackupBeforeDelete = JSON.parse(JSON.stringify(data));
       const removedEntry = data[date][cat][parseInt(idx)];
@@ -2340,6 +2366,7 @@ function openQuickAdd(dateStr, cat){
   backdrop.classList.add('open');
 }
 function openSheetForEditNote(dateStr){
+  if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
   savedScrollY = window.scrollY;
   editContext = {date: dateStr, cat: 'note', isDayNote: true};
   fDate.value = dateStr;
@@ -2357,6 +2384,7 @@ function openSheetForEditNote(dateStr){
 }
 
 function openSheetForEdit(dateStr, cat, idx){
+  if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
   savedScrollY = window.scrollY;
   editContext = {date: dateStr, cat, idx};
   const entry = data[dateStr][cat][idx];
@@ -3747,6 +3775,10 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
   const effectiveCat = editContext ? editContext.cat : currentCat;
+  // Enforce the lock at the write layer as well as the UI. This also blocks
+  // moving an existing record into a locked date.
+  if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
+  if(editContext && editContext.date && isDayLocked(editContext.date)){ lockedDayWarning(editContext.date); return; }
   if(effectiveCat==='insulin'){
     const reactionEl = document.getElementById('fReaction');
     if(!reactionEl || !reactionEl.value){
@@ -5880,6 +5912,7 @@ function showQuickEntryModal(){
     });
     document.getElementById('quickEntryConfirmBtn').addEventListener('click', ()=>{
       const today = todayStr();
+      if(isDayLocked(today)){ lockedDayWarning(today); return; }
       if(!data[today]) data[today] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
       const time = nowTime();
       if(parsedItems.length===0){
@@ -7263,6 +7296,8 @@ function mergeDiaryData(localD, remoteD){
         flaggedDay[cat] = (r[cat]||[]).map(e=> e._reviewed ? Object.assign({}, e) : Object.assign({}, e, {_mergeFlag:true}));
       });
       flaggedDay.notes = r.notes || '';
+      flaggedDay._locked = !!r._locked;
+      flaggedDay._lockStateUpdatedAt = r._lockStateUpdatedAt || 0;
       merged[dateStr] = flaggedDay;
       return;
     }
@@ -7359,6 +7394,13 @@ function mergeDiaryData(localD, remoteD){
     const mergedSegments = [...lSegments];
     rSegments.forEach(seg=>{ if(!mergedSegments.includes(seg)) mergedSegments.push(seg); });
     day.notes = mergedSegments.join(SEP);
+    // Lock/unlock is synced metadata. Whichever device changed the lock state
+    // most recently wins, so an intentional unlock also propagates correctly.
+    const lLockTs = l._lockStateUpdatedAt || 0;
+    const rLockTs = r._lockStateUpdatedAt || 0;
+    const lockSource = rLockTs > lLockTs ? r : l;
+    day._locked = !!lockSource._locked;
+    day._lockStateUpdatedAt = Math.max(lLockTs, rLockTs);
     merged[dateStr] = day;
   });
   return merged;
