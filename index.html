@@ -1823,8 +1823,10 @@ function loadFeedingPlan(){
     return Array.isArray(plan) ? plan.sort((a,b)=>(a.time||'').localeCompare(b.time||'')) : [];
   }catch(e){ return []; }
 }
+const FEEDING_PLAN_UPDATED_KEY = 'kleo-feeding-plan-updated-at';
 function saveFeedingPlan(plan){
   localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(plan));
+  localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(Date.now()));
   markLocalChangeAndSync();
 }
 function feedingPlanEventKcal(ev){
@@ -7695,6 +7697,16 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.tagStorage){
           mergeSyncableTagStorage(remoteEnvelope.tagStorage);
         }
+        if(remoteEnvelope.feedingPlan){
+          const localPlanTs = parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0');
+          const remotePlanTs = remoteEnvelope.feedingPlanUpdatedAt || 0;
+          if(remotePlanTs > localPlanTs){
+            localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(remoteEnvelope.feedingPlan));
+            localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remotePlanTs));
+          }
+        }
+        applyRemoteLockStates(remoteEnvelope.lockStates);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         render();
         isSyncing = false;
         pushToDrive(true);
@@ -7746,6 +7758,12 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.tagStorage){
           restoreSyncableTagStorage(remoteEnvelope.tagStorage);
         }
+        if(remoteEnvelope.feedingPlan){
+          localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(remoteEnvelope.feedingPlan));
+          localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remoteEnvelope.feedingPlanUpdatedAt || remoteLastModified));
+        }
+        applyRemoteLockStates(remoteEnvelope.lockStates);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         // Now that all remote data has been applied, mark this device as
         // caught up exactly to remote's timestamp — this must be the LAST
         // write to these bookkeeping keys.
@@ -7870,6 +7888,29 @@ async function ensurePublicMirrorIsShared(){
   });
   return fileId;
 }
+function collectDayLockStates(sourceDiary){
+  const out = {};
+  Object.keys(sourceDiary || {}).forEach(dateStr=>{
+    const day = sourceDiary[dateStr];
+    if(day && (day._lockStateUpdatedAt || day._locked)){
+      out[dateStr] = { locked: !!day._locked, updatedAt: day._lockStateUpdatedAt || 0 };
+    }
+  });
+  return out;
+}
+function applyRemoteLockStates(remoteStates){
+  if(!remoteStates) return;
+  Object.keys(remoteStates).forEach(dateStr=>{
+    const remote = remoteStates[dateStr] || {};
+    const localDay = ensureDay(dateStr);
+    const localTs = localDay._lockStateUpdatedAt || 0;
+    const remoteTs = remote.updatedAt || 0;
+    if(remoteTs > localTs){
+      localDay._locked = !!remote.locked;
+      localDay._lockStateUpdatedAt = remoteTs;
+    }
+  });
+}
 function buildSyncEnvelope(){
   const lastModified = parseInt(localStorage.getItem('kleo-last-modified') || String(Date.now()));
   const hydratedDiary = JSON.parse(JSON.stringify(data));
@@ -7890,7 +7931,7 @@ function buildSyncEnvelope(){
   //   (tag groups like insulin dose/site/needle and food types/brands are
   //   the exception — they're covered generically via tagStorage/
   //   collectSyncableTagStorage, no per-tag-group wiring needed)
-  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), todos, tagStorage: collectSyncableTagStorage() };
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
 }
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId){
