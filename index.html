@@ -1926,8 +1926,26 @@ function buildKcalProgressHtml(day, dateStr){
   const fillPct = Math.min(100, (totalKcal/barScale)*100);
   const markerPct = Math.min(100, (expected/barScale)*100);
   const targetPct = TARGET_FIXED_PCT;
-  const period1Pct = TARGET_FIXED_PCT/3;
-  const period2Pct = TARGET_FIXED_PCT*2/3;
+  // When a feeding plan exists, show its real scheduled meal points on the
+  // calorie scale instead of the old fixed three-period dividers.  Each meal
+  // marker sits at that meal's cumulative planned kcal, so it lines up with
+  // the actual calorie progress represented by this bar.
+  let feedingPlanMarkersHtml = '';
+  if(plan.length>0){
+    let plannedCumulative = 0;
+    feedingPlanMarkersHtml = plan.map(ev=>{
+      const k = feedingPlanEventKcal(ev);
+      if(k!=null) plannedCumulative += k;
+      const pct = Math.min(100, (plannedCumulative/barScale)*100);
+      const label = escapeHtml(ev.time || '');
+      return `<div class="kcal-bar-period" style="left:${pct}%;" title="餵食計畫 ${label}｜累積 ${plannedCumulative.toFixed(1)} kcal"></div>`;
+    }).join('');
+  } else {
+    // No feeding plan: retain the old visual thirds as a fallback only.
+    const period1Pct = TARGET_FIXED_PCT/3;
+    const period2Pct = TARGET_FIXED_PCT*2/3;
+    feedingPlanMarkersHtml = `<div class="kcal-bar-period" style="left:${period1Pct}%;" title="00:00-08:00 分界"></div><div class="kcal-bar-period" style="left:${period2Pct}%;" title="08:00-16:00 分界"></div>`;
+  }
   let captionHtml;
   if(onTrack) captionHtml = `剛好符合目前時段進度`;
   else if(isOver) captionHtml = `目前時段已超吃 <b>${Math.abs(diff).toFixed(1)} kcal</b>`;
@@ -1943,12 +1961,11 @@ function buildKcalProgressHtml(day, dateStr){
     <div style="margin:-4px 0 6px;"><button type="button" class="edit-feeding-plan-link" style="background:none;border:none;color:var(--ink-soft);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">${plan.length>0?'編輯餵食計畫':'設定餵食計畫'}</button></div>
     <div class="kcal-bar-track">
       <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
-      <div class="kcal-bar-period" style="left:${period1Pct}%;" title="00:00-08:00 分界"></div>
-      <div class="kcal-bar-period" style="left:${period2Pct}%;" title="08:00-16:00 分界"></div>
+      ${feedingPlanMarkersHtml}
       <div class="kcal-bar-marker" style="left:${markerPct}%;" title="目前時段應達到的進度"></div>
       <div class="kcal-bar-target" style="left:${targetPct}%;" title="今日總目標"></div>
     </div>
-    <div class="kcal-bar-legend"><span>● 目前進度線</span><span>┆ 三段時間分界</span><span>┊ 今日總目標</span></div>
+    <div class="kcal-bar-legend"><span>● 目前進度線</span><span>${plan.length>0?'┆ 餵食計畫時間點':'┆ 三段時間分界'}</span><span>┊ 今日總目標</span></div>
     <div class="kcal-bar-caption">${captionHtml}</div>
     ${preInjectionHtml}
   </div>`;
@@ -7559,12 +7576,26 @@ function showDedupeModal(){
 async function syncFromDriveOnLogin(){
   if(isSyncing) return; // prevent overlapping sync calls from racing each other
   isSyncing = true;
+  let syncPhase = '初始化';
   try{
+    syncPhase = '載入本機資料';
     if(loadPromise) await loadPromise; // make sure local data + photo cache finished initializing first
+    syncPhase = '尋找 Google Drive 同步檔案';
     const justCreated = await findOrCreateDriveFile();
+    syncPhase = '讀取 Google Drive 雲端資料';
     const res = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
     const fetchOk = res.ok;
-    const remoteEnvelope = fetchOk ? await res.json().catch(()=>null) : null;
+    let remoteEnvelope = null;
+    if(fetchOk){
+      syncPhase = '解析 Google Drive 雲端資料';
+      try{ remoteEnvelope = await res.json(); }
+      catch(parseErr){
+        logSaveActivity(false, `sync parse failed: ${parseErr && parseErr.message}`, 'pull-parse');
+        throw new Error(`雲端資料解析失敗：${parseErr && parseErr.message ? parseErr.message : 'unknown error'}`);
+      }
+    } else {
+      logSaveActivity(false, `sync read rejected: HTTP ${res.status}`, 'pull-read');
+    }
     const localLastModified = parseInt(localStorage.getItem('kleo-last-modified') || '0');
     const lastSyncedModified = parseInt(localStorage.getItem(LAST_SYNCED_KEY) || '0');
 
@@ -7794,11 +7825,15 @@ async function syncFromDriveOnLogin(){
       // overwrite real data with whatever is (or isn't) on this device. Stop and
       // surface an error instead of guessing.
       console.error('Drive sync: existing file found but could not be read (fetchOk=' + fetchOk + '). Refusing to push to avoid overwriting cloud data.');
-      updateAuthUI(true, '同步時發生錯誤，本次未覆蓋雲端資料，請稍後點「重新整理」再試一次');
+      const detail = fetchOk ? '雲端檔案內容無法辨識' : `Google Drive 讀取失敗（HTTP ${res.status}）`;
+      logSaveActivity(false, detail, 'pull-read');
+      updateAuthUI(true, `⚠️ ${detail}；本機資料未被覆蓋`);
     }
   }catch(e){
-    console.error('Drive sync error', e);
-    updateAuthUI(true, '同步時發生錯誤');
+    console.error('Drive sync error during ' + syncPhase, e);
+    const msg = e && e.message ? e.message : '未知錯誤';
+    logSaveActivity(false, `${syncPhase}: ${msg}`.slice(0,200), 'pull-exception');
+    updateAuthUI(true, `⚠️ 同步失敗｜${syncPhase}：${msg}`);
   }
   isSyncing = false;
 }
