@@ -4570,8 +4570,14 @@ function computeDayReportStats(dateStr, day, allDatesSorted, idx){
   const avgGlucose = glucoseEntries.length ? (glucoseEntries.reduce((a,e)=>a+e.value,0)/glucoseEntries.length) : null;
   const glucoseCount = glucoseEntries.length;
   const insulinTotal = (day.insulin||[]).reduce((sum,e)=>{
-    const m = (e.dose||'').match(/([\d.]+)/);
-    return sum + (m?parseFloat(m[1]):0);
+    const doseText = String(e.dose || '');
+    // A record may contain a caliper measurement before the actual dose:
+    // '1.52mm 1.13u'. Only count numbers explicitly followed by U/單位.
+    const doses = [...doseText.matchAll(/(\d+(?:\.\d+)?)\s*(?:u|U|單位)(?![a-zA-Z])/g)];
+    if(doses.length) return sum + Number(doses[doses.length-1][1]);
+    // Legacy records that contain only a plain numeric dose (no caliper).
+    const plain = doseText.trim().match(/^(\d+(?:\.\d+)?)$/);
+    return sum + (plain ? Number(plain[1]) : 0);
   },0);
   const lowCount = glucoseEntries.filter(e=>e.value<3.9).length;
   const highCount = glucoseEntries.filter(e=>e.value>13.9).length;
@@ -5041,7 +5047,7 @@ function renderWeeklySummary(){
       <div class="week-day-stats">
         ${statBox(stats.avgGlucose!=null?stats.avgGlucose.toFixed(1):'--', 'mmol/L', '平均血糖')}
         ${statBox(stats.glucoseCount, '次', '血糖讀數')}
-        ${statBox(stats.insulinTotal>0?stats.insulinTotal.toFixed(1):'0', '單位', '胰島素總量')}
+        ${statBox(stats.insulinTotal>0?stats.insulinTotal.toFixed(2).replace(/\.?0+$/, ''):'0', '單位', '胰島素總量')}
         ${statBox(stats.lowCount, '次', '低血糖(<3.9)')}
         ${statBox(stats.highCount, '次', '高血糖(>13.9)')}
         ${statBox(stats.totalKcal>0?stats.totalKcal.toFixed(0):'--', 'kcal', '飲食熱量')}
@@ -5052,6 +5058,72 @@ function renderWeeklySummary(){
     </div>`;
   }).join('');
 }
+
+// Carb estimates from owner-provided DMB values and product maximum moisture.
+// Moisture maxima are not measured moisture: chart values are estimates only.
+const KLEO_CARB_FOODS = [
+  {label:'RAWZ 96% Salmon', patterns:['rawz','salmon'], dmb:2.27, moisture:78},
+  {label:'Tiki Hanalei Luau Salmon', patterns:['hanalei','salmon'], dmb:5.00, moisture:80},
+  {label:'Tiki Hawaiian Grill Ahi Tuna', patterns:['ahi tuna'], dmb:7.73, moisture:78},
+  {label:'BLUE Wilderness Salmon', patterns:['blue','salmon'], dmb:6.82, moisture:78},
+  {label:'YA LID Zero Mature', patterns:['ya lid zero'], dmb:4.44, moisture:10}
+];
+function kleoCarbMatch(brand){
+  const b=String(brand||'').toLowerCase();
+  return KLEO_CARB_FOODS.find(f=>f.patterns.every(p=>b.includes(p))) || null;
+}
+function buildCarbGlucoseInsulinChart(dates){
+  const food=[], bg=[], shots=[], missing=new Set();
+  const ts=(d,t)=>/^\d{1,2}:\d{2}$/.test(t||'')?new Date(d+'T'+t+':00').getTime():NaN;
+  dates.forEach(d=>{
+    const day=data[d]||{};
+    (day.food||[]).forEach(e=>{
+      const t=ts(d,e.time); if(!Number.isFinite(t))return;
+      parseFoodEntryGroups(e.note).forEach(g=>{
+        if(g.grams==null || !Number.isFinite(g.grams) || g.grams<0)return;
+        if(g.unit==='顆'){missing.add('以顆計的零食');return;}
+        if(g.brands.length!==1){missing.add(g.brands.length?'混合品牌':'未指定品牌');return;}
+        const f=kleoCarbMatch(g.brands[0]);
+        if(!f){missing.add(g.brands[0]);return;}
+        food.push({t,carb:g.grams*(1-f.moisture/100)*f.dmb/100,grams:g.grams,label:f.label,date:d,time:e.time});
+      });
+    });
+    (day.glucose||[]).forEach(e=>{const t=ts(d,e.time);if(Number.isFinite(t)&&Number.isFinite(Number(e.value))&&(e.meter||'alphatrak')==='alphatrak')bg.push({t,v:Number(e.value),time:e.time,date:d});});
+    (day.insulin||[]).forEach(e=>{const t=ts(d,e.time);if(Number.isFinite(t))shots.push({t,dose:String(e.dose||''),date:d,time:e.time});});
+  });
+  if(!food.length&&!bg.length&&!shots.length)return '<p class="no-data-msg">選取期間沒有可繪製的紀錄。</p>';
+  const times=[...food,...bg,...shots].map(x=>x.t), lo=Math.min(...times),hi=Math.max(...times),span=Math.max(hi-lo,3600000);
+  const W=960,H=440,L=64,R=65,T=38,B=62,plotW=W-L-R;
+  const topH=210,lowerTop=282,lowerH=94;
+  const x=t=>L+(t-lo)/span*plotW;
+  const maxBG=Math.max(20,...bg.map(e=>e.v));
+  const yBG=v=>T+topH-(v/maxBG)*topH;
+  const maxCarb=Math.max(.1,...food.map(e=>e.carb));
+  const yCarb=v=>lowerTop+lowerH-v/maxCarb*lowerH;
+  const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  let svg=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;min-width:600px;font-family:Arial,sans-serif" role="img" aria-label="碳水攝取、AlphaTrak 血糖與胰島素時間對照">`;
+  for(let i=0;i<=4;i++){
+    const v=maxBG*i/4,y=yBG(v);
+    svg+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="#dbe3df"/><text x="${L-8}" y="${y+4}" text-anchor="end" font-size="12" fill="#53665c">${v.toFixed(1)}</text>`;
+  }
+  svg+=`<text x="${L}" y="18" font-size="13" fill="#355e70">AT3 血糖 mmol/L</text><text x="${L}" y="${lowerTop-11}" font-size="13" fill="#3f7959">估算碳水 g／次</text>`;
+  for(let i=0;i<=4;i++){
+    const t=lo+span*i/4,d=new Date(t),label=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    svg+=`<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${lowerTop+lowerH}" stroke="#e4e9e5" stroke-dasharray="3,4"/><text x="${x(t)}" y="${H-34}" font-size="11" text-anchor="middle" fill="#58665c">${label}</text>`;
+  }
+  bg.sort((a,b)=>a.t-b.t);
+  // Do not connect readings separated by more than 18 hours.
+  let path='';bg.forEach((e,i)=>{path+=(i===0||e.t-bg[i-1].t>18*3600000?'M':'L')+x(e.t).toFixed(2)+' '+yBG(e.v).toFixed(2)+' ';});
+  svg+=`<path d="${path}" fill="none" stroke="#3176a5" stroke-width="2"/>`;
+  bg.forEach(e=>svg+=`<circle cx="${x(e.t)}" cy="${yBG(e.v)}" r="4" fill="#3176a5"><title>${esc(e.date+' '+e.time+' AT3 '+e.v+' mmol/L')}</title></circle>`);
+  food.forEach(e=>{const xx=x(e.t),yy=yCarb(e.carb);svg+=`<rect x="${xx-4}" y="${yy}" width="8" height="${lowerTop+lowerH-yy}" fill="#3f996c" opacity=".8"><title>${esc(e.date+' '+e.time+' '+e.label+' '+e.grams+'g，估算碳水 '+e.carb.toFixed(3)+'g')}</title></rect>`;});
+  shots.forEach(e=>{const xx=x(e.t);svg+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${lowerTop+lowerH}" stroke="#c45446" stroke-dasharray="5,4" stroke-width="1.5"><title>${esc(e.date+' '+e.time+' 胰島素 '+e.dose)}</title></line><circle cx="${xx}" cy="${T+6}" r="5" fill="#c45446"><title>${esc(e.date+' '+e.time+' 胰島素 '+e.dose)}</title></circle>`;});
+  svg+='</svg>';
+  const total=food.reduce((a,e)=>a+e.carb,0);
+  const unknown=missing.size?`<div style="font-size:12px;margin-top:7px;color:#9a5a2e">未計入：${esc([...missing].join('、'))}（缺碳水資料或無法確定分配量）</div>`:'';
+  return `<div style="overflow-x:auto">${svg}</div><div style="font-size:12px;color:var(--ink-soft);line-height:1.7">藍線：AT3 血糖｜綠柱：每次估算碳水｜紅虛線：胰島素（移至標記可看時間與劑量）。已知食品估算碳水合計 ${total.toFixed(2)}g。DMB 使用你提供的數值，水分依標示上限估算；YA 以 10% 水分估算。未涵蓋食品不當作 0g。</div>${unknown}`;
+}
+
 function generateReport(){
   const {start, end} = getRangeDates();
   if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
@@ -5191,6 +5263,7 @@ function generateReport(){
     </div>
     ${glucoseStatsHtml}
     ${symptomStatsHtml}
+    ${collapsibleChart("碳水攝取 × AT3 血糖 × 胰島素對照（估算）", buildCarbGlucoseInsulinChart(dates), "carbGlucoseChartBody")}
     ${glucoseChartHtml}
     ${weightChartHtml}
     ${daysHtml}
