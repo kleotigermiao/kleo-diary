@@ -2837,10 +2837,10 @@ function computeSiteReactionAverage(){
 function siteRecencyColor(lastUsedDate){
   if(!lastUsedDate) return '#3F7A5C'; // never used
   const daysSince = Math.floor((new Date(todayStr()+'T00:00:00') - new Date(lastUsedDate+'T00:00:00')) / 86400000);
-  if(daysSince<3) return '#C0392B';
-  if(daysSince<7) return '#D6622C';
-  if(daysSince<14) return '#D9A441';
-  return '#3F7A5C';
+  // Visual rotation aid, not a medical minimum waiting period.
+  if(daysSince<2) return '#B91C1C'; // 0–1 days: avoid if alternatives exist
+  if(daysSince<4) return '#F59E0B'; // 2–3 days: secondary choice
+  return '#16804A'; // 4+ days: preferred for rotation
 }
 // ---- Injection info screen (view-only, for opening via Shortcut and screenshotting) ----
 let injectScreenMarkedSite = null;
