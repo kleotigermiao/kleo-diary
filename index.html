@@ -1964,6 +1964,87 @@ function buildKcalProgressHtml(day, dateStr){
     <div class="kcal-bar-caption">${captionHtml}</div>
   </div>`;
 }
+
+// Planned meals are visual placeholders, not food entries until confirmed.
+function plannedMealKey(ev, index){
+  return [index, ev.time||'', ev.type||'', ev.brand||'', String(ev.amount||'')].join('|');
+}
+function plannedMealItems(dateStr, day){
+  const plan=loadFeedingPlan(), checks=day._feedingPlanChecks||{};
+  const today=todayStr();
+  if(dateStr!==today && !Object.keys(checks).length) return [];
+  return plan.map((ev,index)=>{
+    const key=plannedMealKey(ev,index), state=checks[key];
+    if(state==='cancelled' || state==='confirmed') return null;
+    const note=`${ev.type}：${ev.brand} ${ev.amount}${foodTypeUnit(ev.type)}`;
+    // Do not propose duplicating an already manually logged meal.
+    if((day.food||[]).some(e=>e.time===ev.time && (e.note||'').trim()===note)) return null;
+    return {key,ev,note};
+  }).filter(Boolean);
+}
+function buildPlannedMealHtml(dateStr, day){
+  if(isDayLocked(dateStr)) return '';
+  const meals=plannedMealItems(dateStr,day);
+  if(!meals.length) return '';
+  return `<div class="planned-meals" style="margin:5px 0 9px;">
+    ${meals.map(({key,ev,note})=>`<div class="planned-meal-row" data-date="${escapeHtml(dateStr)}" data-key="${escapeHtml(key)}"
+      style="display:flex;align-items:center;gap:8px;padding:9px 10px;margin:4px 0;border-radius:9px;background:var(--paper-raised);border:1px dashed var(--line);color:var(--ink-soft);font-size:12px;">
+      <span>◷ ${escapeHtml(ev.time)}　${escapeHtml(note)}</span>
+      <button type="button" class="planned-meal-open" data-date="${escapeHtml(dateStr)}" data-key="${escapeHtml(key)}"
+        style="margin-left:auto;flex-shrink:0;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);padding:5px 8px;cursor:pointer;">待確認</button>
+    </div>`).join('')}
+  </div>`;
+}
+function openPlannedMealDialog(dateStr,key){
+  const day=data[dateStr], match=plannedMealItems(dateStr,day).find(x=>x.key===key);
+  if(!match) return;
+  if(isDayLocked(dateStr)){lockedDayWarning(dateStr);return;}
+  const {ev}=match;
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:350;display:flex;align-items:center;justify-content:center;padding:18px;';
+  overlay.innerHTML=`<div style="width:100%;max-width:390px;background:var(--paper);padding:18px;border-radius:14px;color:var(--ink);">
+    <h3 style="margin:0 0 12px;">確認計畫餵食</h3>
+    <p style="font-size:13px;margin:0 0 12px;">${escapeHtml(match.note)}</p>
+    <label style="font-size:12px;">實際時間</label>
+    <input class="planned-time" type="time" value="${escapeHtml(ev.time)}" style="display:block;width:100%;box-sizing:border-box;margin:5px 0 10px;padding:8px;">
+    <label style="font-size:12px;">實際數量（${escapeHtml(foodTypeUnit(ev.type))}）</label>
+    <input class="planned-amount" type="number" min="0" step="any" value="${escapeHtml(String(ev.amount))}" style="display:block;width:100%;box-sizing:border-box;margin:5px 0 12px;padding:8px;">
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <button class="planned-confirm sync-btn" style="flex:1;padding:10px;">✓ 確認並記錄</button>
+      <button class="planned-cancel sync-btn" style="flex:1;padding:10px;">未執行</button>
+      <button class="planned-close sync-btn" style="padding:10px;">返回</button>
+    </div>
+    <p style="font-size:11px;color:var(--ink-soft);margin:10px 0 0;">修改時間或數量後按確認，即以實際資料記帳。未確認不計入統計。</p>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close=()=>overlay.remove();
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  overlay.querySelector('.planned-close').onclick=close;
+  const finish=(status)=>{
+    if(isDayLocked(dateStr)){lockedDayWarning(dateStr);return;}
+    const time=overlay.querySelector('.planned-time').value;
+    const amount=Number(overlay.querySelector('.planned-amount').value);
+    if(status==='confirmed' && (!/^\d\d:\d\d$/.test(time)||!Number.isFinite(amount)||amount<=0)){
+      alert('請輸入有效時間及大於 0 的數量。');return;
+    }
+    const backup=JSON.stringify(day);
+    day._feedingPlanChecks=day._feedingPlanChecks||{};
+    day._feedingPlanChecks[key]=status;
+    if(status==='confirmed'){
+      const note=`${ev.type}：${ev.brand} ${amount}${foodTypeUnit(ev.type)}`;
+      day.food=day.food||[];
+      if(!day.food.some(e=>e.time===time && (e.note||'')===note))
+        day.food.push({time,note,_plannedMealKey:key});
+    }
+    if(!save({action:'planned-meal-'+status,date:dateStr})){
+      data[dateStr]=JSON.parse(backup);return;
+    }
+    close();render();
+  };
+  overlay.querySelector('.planned-confirm').onclick=()=>finish('confirmed');
+  overlay.querySelector('.planned-cancel').onclick=()=>finish('cancelled');
+}
+
 function renderDayRows(dateStr, day){
   const cats = ['mood','appetite','food','water','glucose','weight','respRate','urinalysis','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
@@ -2118,6 +2199,7 @@ function render(){
   main.innerHTML = buildRemindersBanner() + dates.map((dateStr, idx)=>{
     const day = data[dateStr];
     const rowsHtml = renderDayRows(dateStr, day);
+    const plannedMealsHtml = buildPlannedMealHtml(dateStr,day);
     const foodStats = computeFoodStats(day);
     const foodStatsKeys = Object.keys(foodStats);
     const foodStatsHtml = foodStatsKeys.length>0
@@ -2141,7 +2223,7 @@ function render(){
       </div>
       ${foodStatsHtml}
       ${kcalProgressHtml}
-      <div class="section">${rowsHtml}${notesHtml}</div>
+      <div class="section">${rowsHtml}${plannedMealsHtml}${notesHtml}</div>
     </div>`;
   }).join('') + (hasMore ? `<button type="button" id="loadMoreDaysBtn" class="sync-btn" style="display:block;width:calc(100% - 32px);margin:16px auto;padding:12px;">載入更早的記錄（還有 ${allDates.length - renderedDaysLimit} 天）</button>` : '');
 
@@ -2200,6 +2282,9 @@ function render(){
       }
       render();
     });
+  });
+  main.querySelectorAll('.planned-meal-open').forEach(btn=>{
+    btn.addEventListener('click',()=>openPlannedMealDialog(btn.dataset.date,btn.dataset.key));
   });
   main.querySelectorAll('.edit').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -2834,13 +2919,36 @@ function computeSiteReactionAverage(){
   });
   return averages;
 }
-function siteRecencyColor(lastUsedDate){
-  if(!lastUsedDate) return '#3F7A5C'; // never used
-  const daysSince = Math.floor((new Date(todayStr()+'T00:00:00') - new Date(lastUsedDate+'T00:00:00')) / 86400000);
-  // Visual rotation aid, not a medical minimum waiting period.
-  if(daysSince<2) return '#B91C1C'; // 0–1 days: avoid if alternatives exist
-  if(daysSince<4) return '#F59E0B'; // 2–3 days: secondary choice
-  return '#16804A'; // 4+ days: preferred for rotation
+// Rank each half separately, so a Libre on one side cannot consume
+// the two preferred (green) positions on the other side.
+function preferredInjectionSites(usage){
+  const preferred=new Set();
+  for(const cols of [[1,2,3],[4,5,6]]){
+    const sites=[];
+    INJECTION_GRID_ROWS.forEach(r=>cols.forEach(c=>sites.push(`${r}${c}`)));
+    sites.sort((a,b)=>{
+      const aa=usage[a], bb=usage[b];
+      const da=aa?.lastUsedDate||'', db=bb?.lastUsedDate||'';
+      if(da!==db) return da<db?-1:1; // never used comes first
+      const ca=aa?.count||0, cb=bb?.count||0;
+      if(ca!==cb) return ca-cb; // tie: prefer less-used location
+      return a.localeCompare(b);
+    });
+    // Only mark sites with >=4 days rest (or never used) as preferred.
+    sites.filter(site=>{
+      const date=usage[site]?.lastUsedDate;
+      return !date || injectionSiteDaysSince(date)>=4;
+    }).slice(0,2).forEach(site=>preferred.add(site));
+  }
+  return preferred;
+}
+function injectionSiteDaysSince(date){
+  return Math.floor((new Date(todayStr()+'T00:00:00')-new Date(date+'T00:00:00'))/86400000);
+}
+function siteRecencyColor(lastUsedDate,isPreferred){
+  if(isPreferred) return '#16804A'; // top 2 longest-rested per side
+  if(lastUsedDate && injectionSiteDaysSince(lastUsedDate)<4) return '#B91C1C';
+  return '#F59E0B'; // other available sites, >=4 days or never used
 }
 // ---- Injection info screen (view-only, for opening via Shortcut and screenshotting) ----
 let injectScreenMarkedSite = null;
@@ -2924,6 +3032,7 @@ if(window.location.search.includes('view=inject') || window.location.hash==='#in
 }
 function buildSiteGridHtml(selectedSite, showLabels){
   const usage = computeSiteUsageRecency();
+  const preferred = preferredInjectionSites(usage);
   const reactionAvgs = computeSiteReactionAverage();
   let html = `<div class="site-grid${showLabels?' site-grid-labeled':''}">
     <div class="site-grid-corner"></div>
@@ -2933,7 +3042,7 @@ function buildSiteGridHtml(selectedSite, showLabels){
     INJECTION_GRID_COLS.forEach(c=>{
       const label = `${r}${c}`;
       const info = usage[label];
-      const color = siteRecencyColor(info ? info.lastUsedDate : null);
+      const color = siteRecencyColor(info ? info.lastUsedDate : null, preferred.has(label));
       const isSelected = selectedSite===label;
       const avgReaction = reactionAvgs[label];
       const reactionEmoji = avgReaction!=null ? REACTION_EMOJIS[Math.round(avgReaction)] : null;
@@ -3293,10 +3402,9 @@ function setCategory(cat){
       <label style="margin-top:0;">用身體位置圖選（顏色代表多久沒用這個位置，跟上面是同一個欄位，兩種選一種就好）</label>
       <div id="siteGridPicker">${buildSiteGridHtml()}</div>
       <div class="site-grid-legend">
-        <span><i style="background:#3F7A5C;"></i>≥14天沒用/從沒用過</span>
-        <span><i style="background:#D9A441;"></i>7-13天</span>
-        <span><i style="background:#D6622C;"></i>3-6天</span>
-        <span><i style="background:#C0392B;"></i>0-2天內用過</span>
+        <span><i style="background:#16804A;"></i>每側最久未用的前2格（至少休息4天）</span>
+        <span><i style="background:#F59E0B;"></i>其他休息≥4天的位置</span>
+        <span><i style="background:#B91C1C;"></i>0–3天內用過</span>
       </div>
       <label>針管型號（可選）</label>
       <div class="option-grid" id="needleTagGrid">${renderTagButtons(needleTags)}</div>
