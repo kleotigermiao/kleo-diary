@@ -5148,6 +5148,57 @@ function renderAmpmTable(){
     });
   }
 }
+function buildAmPmFoodComparison(){
+  // Fourteen completed 08:00–08:00 days; PM crosses midnight.
+  const dates=getLastNDates(15);
+  const start=dates[0], end=dates[14];
+  const kcalMap=loadFoodBrandKcal();
+  const buckets={AM:{dry:0,wet:0,other:0,kcal:0,carb:0,missingKcal:0,missingCarb:0,feeds:0},PM:{dry:0,wet:0,other:0,kcal:0,carb:0,missingKcal:0,missingCarb:0,feeds:0}};
+  const unknownCarb=new Set();
+  dates.forEach(date=>{
+    const day=data[date]||{};
+    (day.food||[]).forEach(e=>{
+      if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
+      const minute=Number(e.time.slice(0,2))*60+Number(e.time.slice(-2));
+      const cycle=minute>=480 && minute<1200?'AM':'PM';
+      // 00:00–07:59 belongs to previous day's PM cycle.
+      const cycleDate=minute<480?new Date(date+'T12:00:00'):null;
+      if(cycleDate)cycleDate.setDate(cycleDate.getDate()-1);
+      const key=cycleDate?cycleDate.getFullYear()+'-'+String(cycleDate.getMonth()+1).padStart(2,'0')+'-'+String(cycleDate.getDate()).padStart(2,'0'):date;
+      if(key<start || key>=end)return;
+      const b=buckets[cycle];b.feeds++;
+      parseFoodEntryGroups(e.note).forEach(g=>{
+        if(g.grams==null || !Number.isFinite(g.grams) || g.grams<0)return;
+        const category=g.type==='乾糧'?'dry':g.type==='罐頭'?'wet':'other';
+        if(g.unit==='g')b[category]+=g.grams;
+        const names=g.brands;
+        const values=names.map(name=>Number(kcalMap[g.type+'::'+name]));
+        if(names.length && values.every(v=>Number.isFinite(v)&&v>0))b.kcal+=g.grams*values.reduce((a,v)=>a+v,0)/values.length;
+        else b.missingKcal++;
+        if(g.unit==='g' && names.length===1){
+          const food=kleoCarbMatch(names[0]);
+          if(food)b.carb+=g.grams*(1-food.moisture/100)*food.dmb/100;
+          else {b.missingCarb++;unknownCarb.add(names[0]);}
+        }else{b.missingCarb++;names.forEach(n=>unknownCarb.add(n));}
+      });
+    });
+  });
+  const f=(v,n=1)=>v.toFixed(n);
+  const cell=(b,k,unit,n=1)=>`${f(b[k]/14,n)}${unit}`;
+  const row=(label,key,unit,n=1)=>`<tr><td>${label}</td><td>${cell(buckets.AM,key,unit,n)}</td><td>${cell(buckets.PM,key,unit,n)}</td></tr>`;
+  const missingK=buckets.AM.missingKcal+buckets.PM.missingKcal;
+  const missingC=buckets.AM.missingCarb+buckets.PM.missingCarb;
+  return `<div class="supply-card">
+    <div class="supply-title">☀️🌙 AM／PM 實際進食比較（最近14個完整週期）</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 8px;">AM 08:00–19:59；PM 20:00–隔天 07:59。以下為每週期平均，僅計入正式飲食紀錄。</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;text-align:right;">
+      <thead><tr><th style="text-align:left;padding:7px 4px;">項目</th><th>AM</th><th>PM</th></tr></thead>
+      <tbody>${row('乾糧','dry','g')}${row('罐頭','wet','g')}${row('其他以克計','other','g')}${row('熱量（已知部分）','kcal',' kcal')}${row('碳水（已知部分）','carb','g',2)}${row('進食紀錄次數','feeds',' 次')}</tbody>
+    </table></div>
+    ${missingK||missingC?`<p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">部分食品資料未齊：熱量 ${missingK} 筆、碳水 ${missingC} 筆未計入，顯示值可能低估；未知食品不視為零。</p>`:''}
+    <p style="font-size:11px;color:var(--ink-soft);margin:6px 0 0;">按固定時間分組，不隨實際注射時間移動；未確認的計畫餵食不計入。</p>
+  </div>`;
+}
 function renderFoodPatternView(){
   const el = document.getElementById('foodPatternView');
   const PATTERN_DAYS = 14;
@@ -5205,6 +5256,7 @@ function renderFoodPatternView(){
       <span>平均血糖 ${d.avgGlucose!=null ? d.avgGlucose.toFixed(1) : '--'}</span>
     </div>`).join('');
   el.innerHTML = `
+    ${buildAmPmFoodComparison()}
     <div class="supply-card">
       <div class="supply-title">🍽️ 常見進食時間（最近14天）</div>
       <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
