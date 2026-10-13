@@ -79,6 +79,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .ampm-table td.ampm-preshot{font-weight:700;}
 .ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
 .ampm-table td.ampm-dose-cell{cursor:pointer;}
+.ampm-table td.ampm-food-cell,.ampm-table th.ampm-food-cell{min-width:92px;max-width:92px;width:92px;cursor:pointer;font-size:10px;line-height:1.5;}
 .ampm-am-group{background:#F5F2E8;}
 .ampm-pm-group{background:#EAF1EE;}
 .ampm-table tr.ampm-day-start td{border-top:3px solid var(--ink);}
@@ -5056,6 +5057,38 @@ function buildTestingGapHtml(){
     ${settingsLinkHtml}
   </div>`;
 }
+function ampmFoodSummary(dateStr, isPm){
+  const next=new Date(dateStr+'T12:00:00');next.setDate(next.getDate()+1);
+  const nextStr=next.getFullYear()+'-'+String(next.getMonth()+1).padStart(2,'0')+'-'+String(next.getDate()).padStart(2,'0');
+  const kcalMap=loadFoodBrandKcal();
+  const result={dry:0,wet:0,other:0,kcal:0,carb:0,unknown:0,feeds:0};
+  const windows=isPm?[[dateStr,1200,1440],[nextStr,0,480]]:[[dateStr,480,1200]];
+  windows.forEach(([date,from,to])=>{
+    (data[date]?.food||[]).forEach(e=>{
+      if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
+      const minute=toMinutesOfDay(e.time);
+      if(minute<from||minute>=to)return;
+      result.feeds++;
+      parseFoodEntryGroups(e.note).forEach(g=>{
+        if(!Number.isFinite(g.grams)||g.grams<0)return;
+        if(g.unit==='g')result[g.type==='乾糧'?'dry':g.type==='罐頭'?'wet':'other']+=g.grams;
+        const brands=g.brands||[];
+        if(brands.length===1){
+          const kcal=Number(kcalMap[g.type+'::'+brands[0]]);
+          if(Number.isFinite(kcal)&&kcal>0)result.kcal+=g.grams*kcal;
+          else result.unknown++;
+          const carb=kleoCarbMatch(brands[0]);
+          if(g.unit==='g'&&carb)result.carb+=g.grams*(1-carb.moisture/100)*carb.dmb/100;
+          else result.unknown++;
+        }else result.unknown++;
+      });
+    });
+  });
+  if(!result.feeds)return {html:'—',full:'無進食紀錄'};
+  const f=n=>Number(n.toFixed(1));
+  const full=`乾糧 ${f(result.dry)}g；罐頭 ${f(result.wet)}g；其他 ${f(result.other)}g；已知熱量 ${f(result.kcal)} kcal；已知碳水 ${result.carb.toFixed(2)}g；進食 ${result.feeds} 次${result.unknown?'（部分食品熱量或碳水資料缺失）':''}`;
+  return {html:`${f(result.dry+result.wet+result.other)}g<br><small>${f(result.kcal)}kcal / ${result.carb.toFixed(2)}C</small>${result.unknown?'*':''}`,full};
+}
 function renderAmpmTable(){
   const el = document.getElementById('ampmTableView');
   const days = getLastNDates(30);
@@ -5063,14 +5096,14 @@ function renderAmpmTable(){
   let html = buildTestingGapHtml() + `<table class="ampm-table"><thead>
     <tr>
       <th class="ampm-date-col" rowspan="2">Date</th>
-      <th class="ampm-am-group" colspan="${2+hourCols.length}">AM</th>
-      <th class="ampm-pm-group" colspan="${2+hourCols.length}">PM</th>
+      <th class="ampm-am-group" colspan="${3+hourCols.length}">AM</th>
+      <th class="ampm-pm-group" colspan="${3+hourCols.length}">PM</th>
       <th class="ampm-remarks-col" rowspan="2">Remarks</th>
     </tr>
     <tr>
-      <th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
+      <th class="ampm-am-group ampm-food-cell">Food</th><th class="ampm-am-group">PS</th><th class="ampm-am-group">Units</th>
       ${hourCols.map(h=>`<th class="ampm-am-group">+${h}</th>`).join('')}
-      <th class="ampm-pm-group">PS</th><th class="ampm-pm-group">Units</th>
+      <th class="ampm-pm-group ampm-food-cell">Food</th><th class="ampm-pm-group">PS</th><th class="ampm-pm-group">Units</th>
       ${hourCols.map(h=>`<th class="ampm-pm-group">+${h}</th>`).join('')}
     </tr>
   </thead><tbody>`;
@@ -5084,31 +5117,31 @@ function renderAmpmTable(){
     const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day, data[nextDateStr], data[prevDateStr]);
     const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number' && meterFilterMatch(e));
     const hasAnyInsulin = (day.insulin||[]).length>0;
-    if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin) return; // skip only if truly nothing logged that day
+    if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin && !(day.food||[]).length) return; // skip only if truly nothing logged that day
     function valCell(v, extraClass){
       if(v==null) return `<td class="${extraClass}"></td>`;
       return `<td class="${extraClass}" style="background:${ampmValueColor(v)};color:#fff;font-weight:600;">${v}</td>`;
     }
-    function sessionCells(session, groupClass){
-      if(!session) return `<td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
+    function sessionCells(session, groupClass, food){
+      if(!session) return `<td class="${groupClass} ampm-food-cell" data-full-food="${escapeHtml(food.full)}">${food.html}</td><td class="${groupClass}"></td><td class="${groupClass}"></td>` + hourCols.map(()=>`<td class="${groupClass}"></td>`).join('');
       const isSkip = session.dose && String(session.dose).toLowerCase()==='skip';
       const doseText = session.dose!=null ? String(session.dose) : '';
       const unitMatch = doseText.match(/([\d.]+\s*u)\b/i);
       const doseDisplay = isSkip ? doseText : (unitMatch ? unitMatch[1].replace(/\s+/g,'') : doseText);
-      return `${valCell(session.preBg, `${groupClass} ampm-preshot`)}
+      return `<td class="${groupClass} ampm-food-cell" data-full-food="${escapeHtml(food.full)}">${food.html}</td>${valCell(session.preBg, `${groupClass} ampm-preshot`)}
         <td class="${groupClass}${isSkip?' ampm-skip':''} ampm-dose-cell" data-full-dose="${escapeHtml(doseText)}">${escapeHtml(doseDisplay)}</td>
         ${hourCols.map(h=>valCell(session.hours[h], groupClass)).join('')}`;
     }
     html += `<tr>
       <td class="ampm-date">${dateStr}</td>
-      ${sessionCells(amSession,'ampm-am-group')}
-      ${sessionCells(pmSession,'ampm-pm-group')}
+      ${sessionCells(amSession,'ampm-am-group',ampmFoodSummary(dateStr,false))}
+      ${sessionCells(pmSession,'ampm-pm-group',ampmFoodSummary(dateStr,true))}
       <td class="ampm-remarks" data-full-remarks="${escapeHtml(remarks)}">${escapeHtml(remarks)}</td>
     </tr>`;
   });
   html += `</tbody></table>
     <div class="ampm-legend">
-      <b>欄位說明：</b>PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
+      <b>欄位說明：</b>Food = 該週期實際進食克數／已知熱量／已知碳水（C，g；*表示資料未齊，點擊可看明細）　PS = 打針前血糖（Pre-Shot）　Units = 劑量　+1~+11 = 打針後幾小時的血糖讀數；如果那個時段還沒打針，會直接依時間順序列出當時段的血糖讀數　顯示最近30天<br>
       <b>顏色說明：</b>
       <span class="swatch" style="background:#1A1A1A;"></span>&gt;27.7　
       <span class="swatch" style="background:#E53935;"></span>22.2-27.7　
@@ -5126,6 +5159,7 @@ function renderAmpmTable(){
       alert(full);
     });
   });
+  el.querySelectorAll('.ampm-food-cell').forEach(td=>td.addEventListener('click',()=>alert(td.dataset.fullFood)));
   el.querySelectorAll('.ampm-dose-cell').forEach(td=>{
     td.addEventListener('click', ()=>{
       const full = td.dataset.fullDose;
@@ -5223,44 +5257,28 @@ function renderFoodPatternView(){
     const avgGlucose = glucoseEntries.length ? glucoseEntries.reduce((a,x)=>a+x.value,0)/glucoseEntries.length : null;
     perDayStats.push({dateStr, feedCount: foodEntries.length, dayGrams, dayPieces, avgGlucose});
   });
-  const clusters = clusterFeedingTimes(allTimes);
+  const recentDates = getLastNDates(7);
+  const recentTimeRows = [];
+  recentDates.forEach(date=>{
+    (data[date]?.food||[]).forEach(e=>{
+      if(/^\d{1,2}:\d{2}$/.test(e.time||'')) recentTimeRows.push({date,time:e.time});
+    });
+  });
+  const clusters = clusterFeedingTimes(recentTimeRows.map(x=>x.time)).map(c=>{
+    const avg=toMinutesOfDay(c.avgTime);
+    const dates=new Set(recentTimeRows.filter(x=>Math.abs(toMinutesOfDay(x.time)-avg)<=30).map(x=>x.date));
+    return {...c,days:dates.size};
+  }).filter(c=>c.days>=2);
   const avgFeedCount = perDayStats.reduce((a,d)=>a+d.feedCount,0)/perDayStats.length;
   const avgPortionSizeG = totalGramPortions>0 ? totalGrams/totalGramPortions : 0;
   const avgPortionSizePc = totalPiecePortions>0 ? totalPieces/totalPiecePortions : 0;
 
-  // Correlation uses grams-based food only (乾糧/罐頭 etc) since treats measured
-  // in pieces aren't directly comparable by weight without a conversion.
-  const pairs = perDayStats.filter(d=>d.avgGlucose!=null && d.dayGrams>0);
-  let correlationText = '這14天裡，同時有克數飲食記錄跟血糖記錄的天數不夠（至少需要3天），暫時無法計算關聯。';
-  if(pairs.length>=3){
-    const n = pairs.length;
-    const xs = pairs.map(d=>d.dayGrams), ys = pairs.map(d=>d.avgGlucose);
-    const xMean = xs.reduce((a,b)=>a+b,0)/n, yMean = ys.reduce((a,b)=>a+b,0)/n;
-    let num=0, denX=0, denY=0;
-    for(let i=0;i<n;i++){
-      num += (xs[i]-xMean)*(ys[i]-yMean);
-      denX += (xs[i]-xMean)**2;
-      denY += (ys[i]-yMean)**2;
-    }
-    const r = (denX>0 && denY>0) ? num/Math.sqrt(denX*denY) : null;
-    if(r!=null){
-      const strength = Math.abs(r)>0.6?'明顯':(Math.abs(r)>0.3?'中等':'微弱');
-      const direction = r>0.05 ? '正相關（那天吃越多，平均血糖傾向越高）' : (r<-0.05 ? '負相關（那天吃越多，平均血糖反而傾向越低）' : '幾乎沒有關聯');
-      correlationText = `相關係數 r = ${r.toFixed(2)}（${strength}${direction}），根據這 ${n} 天有同時記錄克數飲食跟血糖的資料計算（不含用「顆」計算的零食）。`;
-    }
-  }
-  const dayRowsHtml = perDayStats.map(d=>`
-    <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line);">
-      <span>${d.dateStr}</span>
-      <span>進食 ${d.feedCount} 次，共 ${d.dayGrams.toFixed(0)}g${d.dayPieces>0?`+${d.dayPieces.toFixed(0)}顆`:''}</span>
-      <span>平均血糖 ${d.avgGlucose!=null ? d.avgGlucose.toFixed(1) : '--'}</span>
-    </div>`).join('');
   el.innerHTML = `
     ${buildAmPmFoodComparison()}
     <div class="supply-card">
-      <div class="supply-title">🍽️ 常見進食時間（最近14天）</div>
+      <div class="supply-title">🍽️ 常見進食時間（最近7天，至少2天出現）</div>
       <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">
-        ${clusters.length ? clusters.map(c=>`約 <b>${c.avgTime}</b>（這14天出現 ${c.count} 次）`).join('<br>') : '這14天沒有飲食記錄。'}
+        ${clusters.length ? clusters.map(c=>`約 <b>${c.avgTime}</b>（7天內 ${c.days} 天，共 ${c.count} 次）`).join('<br>') : '最近7天沒有重複至少2天的進食時段。'}
       </div>
     </div>
     <div class="supply-card">
@@ -5271,12 +5289,7 @@ function renderFoodPatternView(){
         ${totalPiecePortions>0 ? `以顆計算的零食，平均每次份量約 <b>${avgPortionSizePc.toFixed(1)}顆</b>` : ''}
       </div>
     </div>
-    <div class="supply-card">
-      <div class="supply-title">🔗 進食量與血糖關聯</div>
-      <div style="font-size:12.5px;color:var(--ink);margin-top:6px;">${correlationText}</div>
-      <div style="margin-top:8px;">${dayRowsHtml}</div>
-      <p style="font-size:10.5px;color:var(--ink-soft);margin-top:8px;">這是簡單的「當天總進食量 vs 當天平均血糖」統計關聯，不是醫療診斷，僅供參考觀察趨勢。</p>
-    </div>
+
   `;
 }
 function renderWeeklySummary(){
