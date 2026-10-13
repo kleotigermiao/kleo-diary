@@ -5063,7 +5063,7 @@ function ampmFoodSummary(dateStr, isPm){
   const nextStr=next.getFullYear()+'-'+String(next.getMonth()+1).padStart(2,'0')+'-'+String(next.getDate()).padStart(2,'0');
   const kcalMap=loadFoodBrandKcal();
   const result={dry:0,wet:0,other:0,kcal:0,carb:0,unknown:0,feeds:0};
-  const windows=isPm?[[dateStr,1200,1440],[nextStr,0,240]]:[[dateStr,240,1200]];
+  const windows=isPm?[[dateStr,960,1440],[nextStr,0,240]]:[[dateStr,240,960]];
   windows.forEach(([date,from,to])=>{
     (data[date]?.food||[]).forEach(e=>{
       if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
@@ -5195,7 +5195,7 @@ function buildAmPmFoodComparison(){
     (day.food||[]).forEach(e=>{
       if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
       const minute=Number(e.time.slice(0,2))*60+Number(e.time.slice(-2));
-      const cycle=minute>=240 && minute<1200?'AM':'PM';
+      const cycle=minute>=240 && minute<960?'AM':'PM';
       // 00:00–03:59 belongs to previous day's PM food cycle.
       const cycleDate=minute<240?new Date(date+'T12:00:00'):null;
       if(cycleDate)cycleDate.setDate(cycleDate.getDate()-1);
@@ -5225,7 +5225,7 @@ function buildAmPmFoodComparison(){
   const missingC=buckets.AM.missingCarb+buckets.PM.missingCarb;
   return `<div class="supply-card">
     <div class="supply-title">☀️🌙 AM／PM 實際進食比較（最近14個完整週期）</div>
-    <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 8px;">AM Food 04:00–19:59；PM Food 20:00–隔天 03:59。以下為每週期平均，僅計入正式飲食紀錄。</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 8px;">AM Food 04:00–15:59；PM Food 16:00–隔天 03:59。以下為每週期平均，僅計入正式飲食紀錄。</div>
     <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;text-align:right;">
       <thead><tr><th style="text-align:left;padding:7px 4px;">項目</th><th>AM</th><th>PM</th></tr></thead>
       <tbody>${row('乾糧','dry','g')}${row('罐頭','wet','g')}${row('其他以克計','other','g')}${row('熱量（已知部分）','kcal',' kcal')}${row('碳水（已知部分）','carb','g',2)}${row('進食紀錄次數','feeds',' 次')}</tbody>
