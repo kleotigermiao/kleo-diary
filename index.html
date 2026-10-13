@@ -1570,6 +1570,45 @@ function renameFoodType(oldName, newName){
   if(kcalChanged) saveFoodBrandKcal(kcalMap);
 }
 function renameFoodBrand(type, oldName, newName){
+  newName = (newName||'').trim();
+  if(!newName || oldName===newName) return;
+  if(loadFoodBrands(type).includes(newName)){
+    alert('這個食品名稱已存在，請選擇其他名稱。');
+    return;
+  }
+  // Update all recorded notes, preserving amounts, dates and entry identity.
+  const backup = JSON.parse(JSON.stringify(data));
+  let diaryChanged=false;
+  Object.keys(data).forEach(date=>{
+    (data[date].food||[]).forEach(entry=>{
+      const note=entry.note||'';
+      const parts=note.split('（');
+      const groups=parts[0].split('、');
+      const rewritten=groups.map(group=>{
+        const separator=group.indexOf('：');
+        if(separator<0 || group.slice(0,separator)!==type) return group;
+        const rest=group.slice(separator+1);
+        const amount=rest.match(/(\s+[\d.]+(?:g|顆))$/);
+        const suffix=amount ? amount[1] : '';
+        const brandPart=amount ? rest.slice(0,-suffix.length) : rest;
+        const names=brandPart.split('+');
+        const changed=names.map(b=>b===oldName ? newName : b);
+        return type+'：'+changed.join('+')+suffix;
+      });
+      const newNote=rewritten.join('、')+(parts.length>1?'（'+parts.slice(1).join('（'):'');
+      if(newNote!==note){entry.note=newNote;diaryChanged=true;}
+    });
+  });
+  if(diaryChanged && !save({action:'rename-food-brand',type,oldName,newName})){
+    data=backup;
+    return;
+  }
+  const plan=loadFeedingPlan();
+  let planChanged=false;
+  plan.forEach(ev=>{
+    if(ev.type===type && ev.brand===oldName){ev.brand=newName;planChanged=true;}
+  });
+  if(planChanged) saveFeedingPlan(plan);
   const brands = loadFoodBrands(type);
   const idx = brands.indexOf(oldName);
   if(idx>=0) brands[idx] = newName;
@@ -2664,7 +2703,27 @@ function openSheetForEdit(dateStr, cat, idx){
       const entries = byType[type];
       entries.forEach(({brand})=>{
         if(!brand) return;
-        const brandBtn = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-btn[data-brand="${CSS.escape(brand)}"]`);
+        let brandBtn = document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-btn[data-brand="${CSS.escape(brand)}"]`);
+        if(!brandBtn && brand){
+          // Legacy record: keep its original name editable instead of clearing it.
+          const section=document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"]`);
+          if(section){
+            const list=loadFoodBrands(type);
+            if(!list.includes(brand)){list.push(brand);saveFoodBrands(type,list);}
+            section.querySelector('.food-brand-grid').insertAdjacentHTML('beforeend',
+              `<button type="button" class="option-btn food-brand-btn" data-brand="${escapeHtml(brand)}">${escapeHtml(brand)}</button>`);
+            brandBtn=section.querySelector(`.food-brand-btn[data-brand="${CSS.escape(brand)}"]`);
+            attachFoodBrandLongPress(brandBtn,type);
+            brandBtn.addEventListener('click',()=>{
+              if(brandBtn.dataset.longPressed==='1'){brandBtn.dataset.longPressed='';return;}
+              brandBtn.classList.toggle('active');
+              if(!selectedBrands[type]) selectedBrands[type]=new Set();
+              if(brandBtn.classList.contains('active')) selectedBrands[type].add(brand);
+              else selectedBrands[type].delete(brand);
+              renderAmountArea(type);composeFoodValue();
+            });
+          }
+        }
         if(brandBtn && !brandBtn.classList.contains('active')) brandBtn.click(); // this calls renderAmountArea each time
       });
       // Now that all brands for this type are active and the amount area has
@@ -3664,6 +3723,12 @@ function setCategory(cat){
       if(!section) return;
       const area = section.querySelector('.food-amount-area');
       if(!area) return;
+      // Switching a food brand must not erase an already entered amount.
+      const oldSingle = area.querySelector('.food-type-grams');
+      const previousSingle = oldSingle ? oldSingle.value : '';
+      const previousByBrand = {};
+      area.querySelectorAll('.food-brand-amount').forEach(el=>{previousByBrand[el.dataset.brand]=el.value;});
+      const previousBrandNames = Array.from(section.querySelectorAll('.food-brand-btn.active')).map(b=>b.dataset.brand);
       const unit = foodTypeUnit(type);
       const brands = selectedBrands[type] ? Array.from(selectedBrands[type]) : [];
       if(brands.length<=1){
@@ -3674,7 +3739,9 @@ function setCategory(cat){
           </div>
           <input type="text" inputmode="decimal" class="food-type-grams" placeholder="例如 ${unit==='顆' ? '2' : '5'}">
         `;
-        area.querySelector('.food-type-grams').addEventListener('input', composeFoodValue);
+        const singleInput = area.querySelector('.food-type-grams');
+        singleInput.value = previousSingle || (brands.length===1 ? (previousByBrand[brands[0]]||'') : '');
+        singleInput.addEventListener('input', composeFoodValue);
         area.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
           const units = loadFoodTypeUnits();
           units[type] = units[type]==='顆' ? 'g' : '顆';
@@ -3697,7 +3764,10 @@ function setCategory(cat){
             </div>
           `).join('')}
         `;
-        area.querySelectorAll('.food-brand-amount').forEach(inp=> inp.addEventListener('input', composeFoodValue));
+        area.querySelectorAll('.food-brand-amount').forEach(inp=>{
+          inp.value = previousByBrand[inp.dataset.brand] || (previousBrandNames.length<=1 && previousBrandNames.includes(inp.dataset.brand) ? previousSingle : '');
+          inp.addEventListener('input', composeFoodValue);
+        });
         area.querySelector('.unit-toggle-btn').addEventListener('click', ()=>{
           const units = loadFoodTypeUnits();
           units[type] = units[type]==='顆' ? 'g' : '顆';
