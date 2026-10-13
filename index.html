@@ -80,6 +80,7 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
 .ampm-table td.ampm-skip{color:var(--ink-soft);font-style:italic;}
 .ampm-table td.ampm-dose-cell{cursor:pointer;}
 .ampm-table td.ampm-food-cell,.ampm-table th.ampm-food-cell{min-width:92px;max-width:92px;width:92px;cursor:pointer;font-size:10px;line-height:1.5;}
+.ampm-table .ampm-food-grams{font-size:14px;font-weight:700;line-height:1.4;}
 .ampm-am-group{background:#F5F2E8;}
 .ampm-pm-group{background:#EAF1EE;}
 .ampm-table tr.ampm-day-start td{border-top:3px solid var(--ink);}
@@ -5062,7 +5063,7 @@ function ampmFoodSummary(dateStr, isPm){
   const nextStr=next.getFullYear()+'-'+String(next.getMonth()+1).padStart(2,'0')+'-'+String(next.getDate()).padStart(2,'0');
   const kcalMap=loadFoodBrandKcal();
   const result={dry:0,wet:0,other:0,kcal:0,carb:0,unknown:0,feeds:0};
-  const windows=isPm?[[dateStr,1200,1440],[nextStr,0,480]]:[[dateStr,480,1200]];
+  const windows=isPm?[[dateStr,1200,1440],[nextStr,0,240]]:[[dateStr,240,1200]];
   windows.forEach(([date,from,to])=>{
     (data[date]?.food||[]).forEach(e=>{
       if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
@@ -5087,7 +5088,7 @@ function ampmFoodSummary(dateStr, isPm){
   if(!result.feeds)return {html:'—',full:'無進食紀錄'};
   const f=n=>Number(n.toFixed(1));
   const full=`乾糧 ${f(result.dry)}g；罐頭 ${f(result.wet)}g；其他 ${f(result.other)}g；已知熱量 ${f(result.kcal)} kcal；已知碳水 ${result.carb.toFixed(2)}g；進食 ${result.feeds} 次${result.unknown?'（部分食品熱量或碳水資料缺失）':''}`;
-  return {html:`${f(result.dry+result.wet+result.other)}g<br><small>${f(result.kcal)}kcal / ${result.carb.toFixed(2)}C</small>${result.unknown?'*':''}`,full};
+  return {html:`<span class="ampm-food-grams">${f(result.dry+result.wet+result.other)}g</span><br><small>${f(result.kcal)}kcal / ${result.carb.toFixed(2)}C</small>${result.unknown?'*':''}`,full};
 }
 function renderAmpmTable(){
   const el = document.getElementById('ampmTableView');
@@ -5183,7 +5184,7 @@ function renderAmpmTable(){
   }
 }
 function buildAmPmFoodComparison(){
-  // Fourteen completed 08:00–08:00 days; PM crosses midnight.
+  // Fourteen completed 04:00–04:00 food days; PM crosses midnight.
   const dates=getLastNDates(15);
   const start=dates[0], end=dates[14];
   const kcalMap=loadFoodBrandKcal();
@@ -5194,9 +5195,9 @@ function buildAmPmFoodComparison(){
     (day.food||[]).forEach(e=>{
       if(!/^\d{1,2}:\d{2}$/.test(e.time||''))return;
       const minute=Number(e.time.slice(0,2))*60+Number(e.time.slice(-2));
-      const cycle=minute>=480 && minute<1200?'AM':'PM';
-      // 00:00–07:59 belongs to previous day's PM cycle.
-      const cycleDate=minute<480?new Date(date+'T12:00:00'):null;
+      const cycle=minute>=240 && minute<1200?'AM':'PM';
+      // 00:00–03:59 belongs to previous day's PM food cycle.
+      const cycleDate=minute<240?new Date(date+'T12:00:00'):null;
       if(cycleDate)cycleDate.setDate(cycleDate.getDate()-1);
       const key=cycleDate?cycleDate.getFullYear()+'-'+String(cycleDate.getMonth()+1).padStart(2,'0')+'-'+String(cycleDate.getDate()).padStart(2,'0'):date;
       if(key<start || key>=end)return;
@@ -5224,7 +5225,7 @@ function buildAmPmFoodComparison(){
   const missingC=buckets.AM.missingCarb+buckets.PM.missingCarb;
   return `<div class="supply-card">
     <div class="supply-title">☀️🌙 AM／PM 實際進食比較（最近14個完整週期）</div>
-    <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 8px;">AM 08:00–19:59；PM 20:00–隔天 07:59。以下為每週期平均，僅計入正式飲食紀錄。</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 8px;">AM Food 04:00–19:59；PM Food 20:00–隔天 03:59。以下為每週期平均，僅計入正式飲食紀錄。</div>
     <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;text-align:right;">
       <thead><tr><th style="text-align:left;padding:7px 4px;">項目</th><th>AM</th><th>PM</th></tr></thead>
       <tbody>${row('乾糧','dry','g')}${row('罐頭','wet','g')}${row('其他以克計','other','g')}${row('熱量（已知部分）','kcal',' kcal')}${row('碳水（已知部分）','carb','g',2)}${row('進食紀錄次數','feeds',' 次')}</tbody>
