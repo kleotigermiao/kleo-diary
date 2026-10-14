@@ -2019,7 +2019,7 @@ function plannedMealItems(dateStr, day){
     if(state==='cancelled' || state==='confirmed') return null;
     const note=`${ev.type}：${ev.brand} ${ev.amount}${foodTypeUnit(ev.type)}`;
     // Do not propose duplicating an already manually logged meal.
-    if((day.food||[]).some(e=>e.time===ev.time && (e.note||'').trim()===note)) return null;
+    if((day.food||[]).some(e=>e._plannedMealKey===key || (e.time===ev.time && (e.note||'').trim()===note))) return null;
     return {key,ev,note};
   }).filter(Boolean);
 }
@@ -7716,6 +7716,8 @@ function mergeDiaryData(localD, remoteD){
       flaggedDay.notes = r.notes || '';
       flaggedDay._locked = !!r._locked;
       flaggedDay._lockStateUpdatedAt = r._lockStateUpdatedAt || 0;
+      // Keep planned-feeding confirmations when an entire day arrives from Drive.
+      flaggedDay._feedingPlanChecks = Object.assign({}, r._feedingPlanChecks || {});
       merged[dateStr] = flaggedDay;
       return;
     }
@@ -7819,6 +7821,10 @@ function mergeDiaryData(localD, remoteD){
     const lockSource = rLockTs > lLockTs ? r : l;
     day._locked = !!lockSource._locked;
     day._lockStateUpdatedAt = Math.max(lLockTs, rLockTs);
+    // Confirmation/cancellation is per planned meal, not a diary entry.
+    // Never drop it during sync, even when the day also contains notes.
+    // A confirmed state takes precedence over an older unconfirmed copy.
+    day._feedingPlanChecks = Object.assign({}, r._feedingPlanChecks || {}, l._feedingPlanChecks || {});
     merged[dateStr] = day;
   });
   return merged;
