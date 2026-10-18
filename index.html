@@ -805,6 +805,20 @@ textarea{resize:vertical; min-height:64px;}
 <div id="injectScreenView" style="display:none;"></div>
 
 <main id="main"></main>
+<section id="sopPage" style="display:none;max-width:780px;margin:0 auto;padding:18px 14px 90px;min-height:65vh;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;">
+    <h2 style="margin:0;font-size:22px;">Kleo 照護 SOP</h2>
+    <button type="button" id="sopBackBtn" class="sync-btn">← 返回日誌</button>
+  </div>
+  <p style="font-size:12px;color:var(--ink-soft);margin:0 0 18px;">個人照護流程備忘 · 透過 Google Drive 跨裝置同步 · 不自動決定胰島素劑量</p>
+  <div id="sopPageContent"></div>
+  <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:16px;">
+    <button type="button" class="sync-btn" id="sopAddBtn">＋ 新增 SOP</button>
+    <button type="button" class="sync-btn" id="sopEditBtn">編輯內容</button>
+    <button type="button" class="sync-btn" id="sopSaveBtn" style="display:none;">儲存變更</button>
+    <button type="button" class="sync-btn" id="sopCancelBtn" style="display:none;">取消編輯</button>
+  </div>
+</section>
 
 <button class="fab" id="fabBtn" aria-label="新增記錄">+</button>
 <button class="fab-secondary" id="backToTodayBtn" aria-label="回到今天">↑ 今天</button>
@@ -7558,17 +7572,80 @@ function applyRemoteSop(envelope,force=false){
    localStorage.setItem(SOP_UPDATED_KEY,String(remoteTs));
  }
 }
-function showCareSop(){
- const defaults=[{title:'PS 血糖',body:'AT3 PS 低於 11 mmol/L：先不打；不餵食，約 30 分鐘後重測。依血糖走勢、進食與獸醫指示決定後續。'},{title:'低血糖',body:'若出現無力、抽搐、意識異常，立即聯絡急診獸醫。以 AT3 與臨床症狀判斷，不以 Libre 單一讀值決策。'}];
- let items=loadSopItems()||defaults;
- const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;z-index:400;background:#0008;display:flex;align-items:center;justify-content:center;padding:14px';
- const panel=document.createElement('div');panel.style.cssText='background:var(--paper);color:var(--ink);padding:18px;border-radius:12px;width:100%;max-width:540px;max-height:85vh;overflow:auto';overlay.appendChild(panel);document.body.appendChild(overlay);
- const save=()=>{try{localStorage.setItem(SOP_KEY,JSON.stringify(items));localStorage.setItem(SOP_UPDATED_KEY,String(Date.now()));markLocalChangeAndSync();return true;}catch(e){alert('儲存失敗');return false;}};
- function draw(){panel.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h3>照護 SOP</h3><button class="sync-btn sop-close">關閉</button></div><p style="font-size:12px;color:var(--ink-soft)">可自訂照護規則；僅作備忘，不自動決定劑量。內容會透過 Google Drive 同步到其他裝置。</p>${items.map((x,i)=>`<section style="padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:9px"><input data-title="${i}" value="${escapeHtml(x.title)}" style="width:100%;box-sizing:border-box;padding:8px;font-weight:bold"><textarea data-body="${i}" rows="4" style="width:100%;box-sizing:border-box;padding:8px;margin-top:6px">${escapeHtml(x.body)}</textarea><button class="sync-btn sop-delete" data-i="${i}">刪除</button></section>`).join('')}<button class="sync-btn sop-add">＋新增 SOP</button> <button class="sync-btn sop-save">儲存</button>`;
- const collect=()=>{items=items.map((x,i)=>({title:panel.querySelector(`[data-title="${i}"]`).value,body:panel.querySelector(`[data-body="${i}"]`).value}));};
- panel.querySelector('.sop-close').onclick=()=>overlay.remove();panel.querySelector('.sop-add').onclick=()=>{collect();items.push({title:'新 SOP',body:''});draw();};panel.querySelector('.sop-save').onclick=()=>{collect();if(save())alert('已儲存');};panel.querySelectorAll('.sop-delete').forEach(b=>b.onclick=()=>{collect();if(confirm('刪除這項 SOP？')){items.splice(+b.dataset.i,1);save();draw();}});
- }draw();overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+const SOP_DEFAULT_ITEMS=[
+ {title:'PS 血糖',body:'AT3 PS 低於 11 mmol/L：先不打；不餵食，約 30 分鐘後重測。依血糖走勢、進食與獸醫指示決定後續。'},
+ {title:'低血糖',body:'若出現無力、抽搐、意識異常，立即聯絡急診獸醫。以 AT3 與臨床症狀判斷，不以 Libre 單一讀值決策。'}
+];
+let sopDraft=[],sopEditing=false;
+function renderSopPage(){
+ const content=document.getElementById('sopPageContent');
+ if(sopEditing){
+   content.innerHTML=sopDraft.map((x,i)=>`<article style="background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:13px;">
+     <label style="font-size:12px;display:block;margin-bottom:5px;">SOP 標題</label>
+     <input data-sop-title="${i}" value="${escapeHtml(x.title)}" style="width:100%;box-sizing:border-box;padding:11px;font-size:16px;font-weight:600;margin-bottom:10px;">
+     <label style="font-size:12px;display:block;margin-bottom:5px;">內容</label>
+     <textarea data-sop-body="${i}" rows="7" style="width:100%;box-sizing:border-box;padding:11px;font-size:15px;line-height:1.65;resize:vertical;">${escapeHtml(x.body)}</textarea>
+     <button type="button" class="sync-btn sopDeleteBtn" data-index="${i}" style="margin-top:9px;">刪除這項</button>
+   </article>`).join('');
+ }else{
+   const items=loadSopItems()||SOP_DEFAULT_ITEMS;
+   content.innerHTML=items.length?items.map((x,i)=>`<article style="background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:17px;margin-bottom:14px;">
+     <h3 style="font-size:18px;line-height:1.4;margin:0 0 11px;">${escapeHtml(x.title)}</h3>
+     <div style="font-size:15px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(x.body)}</div>
+   </article>`).join(''):'<p>目前沒有 SOP。按「新增 SOP」建立。</p>';
+ }
+ document.getElementById('sopAddBtn').style.display=sopEditing?'':'none';
+ document.getElementById('sopEditBtn').style.display=sopEditing?'none':'';
+ document.getElementById('sopSaveBtn').style.display=sopEditing?'':'none';
+ document.getElementById('sopCancelBtn').style.display=sopEditing?'':'none';
+ content.querySelectorAll('.sopDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>{
+   collectSopDraft();
+   if(confirm('刪除這項 SOP？')){sopDraft.splice(Number(btn.dataset.index),1);renderSopPage();}
+ }));
 }
+function collectSopDraft(){
+ if(!sopEditing)return;
+ sopDraft=sopDraft.map((x,i)=>({
+   title:document.querySelector(`[data-sop-title="${i}"]`)?.value||'',
+   body:document.querySelector(`[data-sop-body="${i}"]`)?.value||''
+ }));
+}
+function showCareSop(){
+ sopEditing=false;
+ document.getElementById('main').style.display='none';
+ document.getElementById('fabBtn').style.display='none';
+ document.getElementById('backToTodayBtn').style.display='none';
+ document.getElementById('sopPage').style.display='block';
+ document.querySelectorAll('.nav-dropdown').forEach(el=>el.classList.remove('open'));
+ renderSopPage();window.scrollTo(0,0);
+}
+function closeCareSop(){
+ if(sopEditing&&!confirm('尚未儲存的 SOP 變更將會捨棄，確定返回？'))return;
+ sopEditing=false;
+ document.getElementById('sopPage').style.display='none';
+ document.getElementById('main').style.display='';
+ document.getElementById('fabBtn').style.display='';
+ document.getElementById('backToTodayBtn').style.display='';
+ window.scrollTo(0,0);
+}
+document.getElementById('sopBackBtn').addEventListener('click',closeCareSop);
+document.getElementById('sopEditBtn').addEventListener('click',()=>{
+ sopDraft=(loadSopItems()||SOP_DEFAULT_ITEMS).map(x=>({...x}));sopEditing=true;renderSopPage();
+});
+document.getElementById('sopAddBtn').addEventListener('click',()=>{
+ sopDraft=(loadSopItems()||SOP_DEFAULT_ITEMS).map(x=>({...x}));sopEditing=true;
+ sopDraft.push({title:'新 SOP',body:''});renderSopPage();
+});
+document.getElementById('sopCancelBtn').addEventListener('click',()=>{sopEditing=false;renderSopPage();});
+document.getElementById('sopSaveBtn').addEventListener('click',()=>{
+ collectSopDraft();
+ try{
+  localStorage.setItem(SOP_KEY,JSON.stringify(sopDraft));
+  localStorage.setItem(SOP_UPDATED_KEY,String(Date.now()));
+  markLocalChangeAndSync();
+  sopEditing=false;renderSopPage();
+ }catch(e){alert('SOP 儲存失敗：'+e.message);}
+});
 document.getElementById('sopMenuItem').addEventListener('click',showCareSop);
 document.getElementById('feedingPlanMenuItem').addEventListener('click', showFeedingPlanModal);
 document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
