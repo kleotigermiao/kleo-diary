@@ -788,6 +788,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
           <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
           <button type="button" class="more-menu-item" id="feedingPlanMenuItem">餵食計畫</button>
+          <button type="button" class="more-menu-item" id="sopMenuItem">照護 SOP</button>
           <button type="button" class="more-menu-item" id="batchLockMenuItem">🔒 批次鎖定／解鎖</button>
           <button type="button" class="more-menu-item" id="injectScreenMenuItem">打針畫面</button>
         </div>
@@ -7543,6 +7544,32 @@ document.getElementById('checkStorageMenuItem').addEventListener('click', showSt
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
 document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
+const SOP_KEY='kleo-care-sop-v1';
+const SOP_UPDATED_KEY='kleo-care-sop-updated-at';
+function loadSopItems(){
+ try{const value=JSON.parse(localStorage.getItem(SOP_KEY)||'null');return Array.isArray(value)?value:null;}catch(e){return null;}
+}
+function applyRemoteSop(envelope,force=false){
+ if(!Array.isArray(envelope.careSop))return;
+ const remoteTs=Number(envelope.careSopUpdatedAt||envelope._meta?.lastModified||0);
+ const localTs=Number(localStorage.getItem(SOP_UPDATED_KEY)||0);
+ if(force || remoteTs>localTs || !loadSopItems()){
+   localStorage.setItem(SOP_KEY,JSON.stringify(envelope.careSop));
+   localStorage.setItem(SOP_UPDATED_KEY,String(remoteTs));
+ }
+}
+function showCareSop(){
+ const defaults=[{title:'PS 血糖',body:'AT3 PS 低於 11 mmol/L：先不打；不餵食，約 30 分鐘後重測。依血糖走勢、進食與獸醫指示決定後續。'},{title:'低血糖',body:'若出現無力、抽搐、意識異常，立即聯絡急診獸醫。以 AT3 與臨床症狀判斷，不以 Libre 單一讀值決策。'}];
+ let items=loadSopItems()||defaults;
+ const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;z-index:400;background:#0008;display:flex;align-items:center;justify-content:center;padding:14px';
+ const panel=document.createElement('div');panel.style.cssText='background:var(--paper);color:var(--ink);padding:18px;border-radius:12px;width:100%;max-width:540px;max-height:85vh;overflow:auto';overlay.appendChild(panel);document.body.appendChild(overlay);
+ const save=()=>{try{localStorage.setItem(SOP_KEY,JSON.stringify(items));localStorage.setItem(SOP_UPDATED_KEY,String(Date.now()));markLocalChangeAndSync();return true;}catch(e){alert('儲存失敗');return false;}};
+ function draw(){panel.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h3>照護 SOP</h3><button class="sync-btn sop-close">關閉</button></div><p style="font-size:12px;color:var(--ink-soft)">可自訂照護規則；僅作備忘，不自動決定劑量。內容會透過 Google Drive 同步到其他裝置。</p>${items.map((x,i)=>`<section style="padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:9px"><input data-title="${i}" value="${escapeHtml(x.title)}" style="width:100%;box-sizing:border-box;padding:8px;font-weight:bold"><textarea data-body="${i}" rows="4" style="width:100%;box-sizing:border-box;padding:8px;margin-top:6px">${escapeHtml(x.body)}</textarea><button class="sync-btn sop-delete" data-i="${i}">刪除</button></section>`).join('')}<button class="sync-btn sop-add">＋新增 SOP</button> <button class="sync-btn sop-save">儲存</button>`;
+ const collect=()=>{items=items.map((x,i)=>({title:panel.querySelector(`[data-title="${i}"]`).value,body:panel.querySelector(`[data-body="${i}"]`).value}));};
+ panel.querySelector('.sop-close').onclick=()=>overlay.remove();panel.querySelector('.sop-add').onclick=()=>{collect();items.push({title:'新 SOP',body:''});draw();};panel.querySelector('.sop-save').onclick=()=>{collect();if(save())alert('已儲存');};panel.querySelectorAll('.sop-delete').forEach(b=>b.onclick=()=>{collect();if(confirm('刪除這項 SOP？')){items.splice(+b.dataset.i,1);save();draw();}});
+ }draw();overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+}
+document.getElementById('sopMenuItem').addEventListener('click',showCareSop);
 document.getElementById('feedingPlanMenuItem').addEventListener('click', showFeedingPlanModal);
 document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
@@ -8112,6 +8139,7 @@ async function syncFromDriveOnLogin(){
             localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remotePlanTs));
           }
         }
+        applyRemoteSop(remoteEnvelope);
         applyRemoteLockStates(remoteEnvelope.lockStates);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         render();
@@ -8169,6 +8197,7 @@ async function syncFromDriveOnLogin(){
           localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(remoteEnvelope.feedingPlan));
           localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remoteEnvelope.feedingPlanUpdatedAt || remoteLastModified));
         }
+        applyRemoteSop(remoteEnvelope,true);
         applyRemoteLockStates(remoteEnvelope.lockStates);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         // Now that all remote data has been applied, mark this device as
@@ -8347,7 +8376,7 @@ function buildSyncEnvelope(){
   //   (tag groups like insulin dose/site/needle and food types/brands are
   //   the exception — they're covered generically via tagStorage/
   //   collectSyncableTagStorage, no per-tag-group wiring needed)
-  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
 }
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId){
