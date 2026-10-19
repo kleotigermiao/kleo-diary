@@ -1970,7 +1970,8 @@ function showWetFoodWeighModal(){
         if(!brand){status.textContent='請先設定罐頭品項。';return;}
         if(bowl&&!confirm('確定開始新的一碗？舊碗的備餐狀態將結束（已記錄的飲食不會刪除）。'))return;
         bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
-        storeWetBowl(bowl);newMode=false;status.textContent='備餐已儲存，尚未計入飲食。';draw();
+        bowl.preparedAt=new Date().toISOString();bowl.initialFoodWeight=food;bowl.initialMixedWeight=mixed;bowl.weighings=[];
+        storeWetBowl(bowl);markLocalChangeAndSync();newMode=false;draw();
       }else{
         const remaining=number('#wbRemaining'),date=panel.querySelector('#wbDate').value,timeInput=panel.querySelector('#wbTime');
         autoFormatTimeInput(timeInput);const time=timeInput.value.trim();
@@ -1982,10 +1983,13 @@ function showWetFoodWeighModal(){
         const grams=Math.round(eaten*100)/100;
         const day=data[date]||(data[date]={glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
         day.food=day.food||[];
-        const entry={time,note:`罐頭：${bowl.brand} ${grams}g`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id};
+        const previousWeight=bowl.lastWeight;
+        const weighing={date,time,previousWeight,remainingWeight:remaining,mixtureConsumed:Math.round((previousWeight-remaining)*100)/100,foodConsumed:grams};
+        const weightDetails=`空碗 ${bowl.empty.toFixed(1)}g｜初始罐頭＋碗 ${(bowl.initialFoodWeight??bowl.empty+bowl.foodG).toFixed(1)}g｜加水後＋碗 ${(bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG).toFixed(1)}g｜上次連碗 ${previousWeight.toFixed(1)}g｜本次剩餘連碗 ${remaining.toFixed(1)}g`;
+        const entry={time,note:`罐頭：${bowl.brand} ${grams}g（${weightDetails}）`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id,wetBowlWeighing:weighing,wetBowlInitial:{empty:bowl.empty,foodWeight:bowl.initialFoodWeight??bowl.empty+bowl.foodG,mixedWeight:bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG}};
         day.food.push(entry);
         if(!save('罐頭秤重')){day.food.pop();return;}
-        bowl.lastWeight=remaining;bowl.updatedAt=Date.now();storeWetBowl(bowl);
+        bowl.lastWeight=remaining;bowl.weighings=Array.isArray(bowl.weighings)?bowl.weighings:[];bowl.weighings.push(weighing);bowl.updatedAt=Date.now();storeWetBowl(bowl);markLocalChangeAndSync();
         render();alert(`已記錄本次罐頭 ${grams.toFixed(2)}g（混合物減少 ${(bowl.foodG+bowl.waterG>0?eaten*(bowl.foodG+bowl.waterG)/bowl.foodG:0).toFixed(1)}g）。`);draw();
       }
     };
