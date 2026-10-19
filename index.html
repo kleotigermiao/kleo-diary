@@ -788,6 +788,7 @@ textarea{resize:vertical; min-height:64px;}
           <button type="button" class="more-menu-item" id="suppliesBtn">庫存</button>
           <button type="button" class="more-menu-item" id="kcalSettingsMenuItem">熱量設定</button>
           <button type="button" class="more-menu-item" id="feedingPlanMenuItem">餵食計畫</button>
+          <button type="button" class="more-menu-item" id="wetFoodWeighMenuItem">🥣 罐頭秤重</button>
           <button type="button" class="more-menu-item" id="sopMenuItem">照護 SOP</button>
           <button type="button" class="more-menu-item" id="batchLockMenuItem">🔒 批次鎖定／解鎖</button>
           <button type="button" class="more-menu-item" id="injectScreenMenuItem">打針畫面</button>
@@ -1923,6 +1924,73 @@ function saveFeedingPlan(plan){
   localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(Date.now()));
   markLocalChangeAndSync();
 }
+// A bowl is a durable draft until explicitly replaced. Weighings create food records only on consumption.
+const WET_BOWL_KEY='kleo-wet-bowl-v1';
+function loadWetBowl(){try{return JSON.parse(localStorage.getItem(WET_BOWL_KEY)||'null');}catch(e){return null;}}
+function storeWetBowl(bowl){localStorage.setItem(WET_BOWL_KEY,JSON.stringify(bowl));localStorage.setItem('kleo-last-modified',String(Date.now()));}
+function mergeWetBowl(remote,preferRemote){
+  if(!remote)return;
+  const local=loadWetBowl();
+  if(preferRemote||!local||(remote.updatedAt||0)>(local.updatedAt||0))localStorage.setItem(WET_BOWL_KEY,JSON.stringify(remote));
+}
+function showWetFoodWeighModal(){
+  let bowl=loadWetBowl();let newMode=!bowl;
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:300;display:flex;align-items:center;justify-content:center;padding:15px';
+  const panel=document.createElement('div');
+  panel.style.cssText='background:var(--paper);color:var(--ink);border-radius:14px;padding:18px;max-width:450px;width:100%;max-height:90vh;overflow-y:auto';
+  overlay.appendChild(panel);document.body.appendChild(overlay);
+  const close=()=>overlay.remove();overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  function draw(){
+    const brands=loadFoodBrands('罐頭');
+    panel.innerHTML=`<h3 style="margin:0 0 12px">🥣 罐頭秤重計算</h3>
+      <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbNew" type="checkbox" style="width:auto" ${newMode?'checked':''}> 新的一碗</label>
+      ${newMode?`<label>空碗重量 (g)</label><input id="wbEmpty" type="number" step="0.1" value="${bowl&&bowl.empty!=null?bowl.empty:180.8}">
+      <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}</select>
+      <label>罐頭＋碗 (g)</label><input id="wbFood" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
+      <label>加水後＋碗 (g)</label><input id="wbMixed" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
+      <p style="font-size:12px;color:var(--ink-soft)">先儲存備餐；等 Kleo 吃過後再回來輸入剩餘重量。</p>`:
+      `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g</p>
+      <label>這次吃完＋碗 (g)</label><input id="wbRemaining" type="number" inputmode="decimal" step="0.1" placeholder="最新秤重">
+      <label>測量日期</label><input id="wbDate" type="date" value="${todayStr()}">
+      <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" value="${nowTime()}">
+      <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
+      <div id="wbStatus" style="font-size:12px;margin:8px 0"></div>
+      <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
+      <button type="button" id="wbClose" style="width:100%;margin-top:10px">關閉</button>`;
+    panel.querySelector('#wbClose').onclick=close;
+    panel.querySelector('#wbNew').onchange=e=>{newMode=e.target.checked;draw();};
+    panel.querySelector('#wbSave').onclick=()=>{
+      const status=panel.querySelector('#wbStatus');
+      const number=id=>{const v=panel.querySelector(id)?.value;return v!==undefined&&v.trim()!==''?Number(v):NaN;};
+      if(newMode){
+        const empty=number('#wbEmpty'),food=number('#wbFood'),mixed=number('#wbMixed');
+        if(![empty,food,mixed].every(Number.isFinite)||empty<=0||food<=empty||mixed<food){status.textContent='請確認三個重量：罐頭＋碗須大於空碗，加水後不得小於罐頭＋碗。';return;}
+        const brand=panel.querySelector('#wbBrand').value;
+        if(!brand){status.textContent='請先設定罐頭品項。';return;}
+        if(bowl&&!confirm('確定開始新的一碗？舊碗的備餐狀態將結束（已記錄的飲食不會刪除）。'))return;
+        bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
+        storeWetBowl(bowl);newMode=false;status.textContent='備餐已儲存，尚未計入飲食。';draw();
+      }else{
+        const remaining=number('#wbRemaining'),date=panel.querySelector('#wbDate').value,time=panel.querySelector('#wbTime').value.trim();
+        if(!Number.isFinite(remaining)||remaining<bowl.empty-0.11||remaining>=bowl.lastWeight){status.textContent='剩餘重量必須小於上次重量，且不得低於空碗重量。';return;}
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)){status.textContent='請確認日期與時間（HH:MM）。';return;}
+        if(isDayLocked(date)){lockedDayWarning(date);return;}
+        const eaten=(bowl.lastWeight-remaining)*bowl.foodG/(bowl.foodG+bowl.waterG);
+        if(eaten<=0||eaten>bowl.foodG+0.01){status.textContent='重量不合理，請重新確認。';return;}
+        const grams=Math.round(eaten*100)/100;
+        const day=data[date]||(data[date]={glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
+        day.food=day.food||[];
+        const entry={time,note:`罐頭：${bowl.brand} ${grams}g`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id};
+        day.food.push(entry);
+        if(!save('罐頭秤重')){day.food.pop();return;}
+        bowl.lastWeight=remaining;bowl.updatedAt=Date.now();storeWetBowl(bowl);
+        render();alert(`已記錄本次罐頭 ${grams.toFixed(2)}g（混合物減少 ${(bowl.foodG+bowl.waterG>0?eaten*(bowl.foodG+bowl.waterG)/bowl.foodG:0).toFixed(1)}g）。`);draw();
+      }
+    };
+  }
+  draw();
+}
 function feedingPlanEventKcal(ev){
   const brandKcal = loadFoodBrandKcal();
   const perUnit = brandKcal[ev.type+'::'+ev.brand];
@@ -2701,9 +2769,6 @@ function openSheetForEdit(dateStr, cat, idx){
     if(insulinDetailEl) insulinDetailEl.value = entry.note || '';
     if(entry.site){
       document.getElementById('fSite').value = entry.site;
-      document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>{
-        b.classList.toggle('active', b.dataset.val===entry.site);
-      });
       if(/^[A-F][1-6]$/.test(entry.site)){
         const gridEl = document.getElementById('siteGridPicker');
         if(gridEl){ gridEl.innerHTML = buildSiteGridHtml(entry.site); wireSiteGridPicker(); }
@@ -3235,7 +3300,6 @@ function wireSiteGridPicker(){
       if(btn.dataset.longPressed==='1'){ btn.dataset.longPressed=''; return; }
       const site = btn.dataset.site;
       document.getElementById('fSite').value = site;
-      document.querySelectorAll('#siteTagGrid .option-btn').forEach(b=>b.classList.remove('active'));
       document.getElementById('siteGridPicker').innerHTML = buildSiteGridHtml(site);
       wireSiteGridPicker();
     });
@@ -3512,7 +3576,6 @@ function setCategory(cat){
     });
   } else if(cat==='insulin'){
     const doseTags = loadTagsGeneric(INSULIN_DOSE_KEY, ['0.5u','1u']);
-    const siteTags = loadTagsGeneric(INSULIN_SITE_KEY, []);
     const needleTags = loadTagsGeneric(INSULIN_NEEDLE_KEY, []);
     dynamicFields.innerHTML = `
       <label>劑量</label>
@@ -3523,18 +3586,7 @@ function setCategory(cat){
       </div>
       <label style="margin-top:8px;">目前劑量內容（可直接編輯文字）</label>
       <input type="text" id="fVal" placeholder="例如 1u、1u(新開封胰島素)…">
-      <label>注射位置（可選）</label>
-      <div class="option-grid" id="siteTagGrid">${renderTagButtons(siteTags)}</div>
-      <div style="display:flex;gap:8px;margin-top:8px;">
-        <input type="text" id="newSiteInput" placeholder="新增位置…" style="flex:1;">
-        <button type="button" id="addSiteBtn" class="tag-add-btn">新增</button>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;">
-        <div style="flex:1;height:1px;background:var(--line);"></div>
-        <span style="font-size:12px;color:var(--ink-soft);font-weight:600;">或</span>
-        <div style="flex:1;height:1px;background:var(--line);"></div>
-      </div>
-      <label style="margin-top:0;">用身體位置圖選（顏色代表多久沒用這個位置，跟上面是同一個欄位，兩種選一種就好）</label>
+      <label style="margin-top:12px;">注射位置</label>
       <div id="siteGridPicker">${buildSiteGridHtml()}</div>
       <div class="site-grid-legend">
         <span><i style="background:#16804A;"></i>每側最久未用的前2格（至少休息4天）</span>
@@ -3560,10 +3612,8 @@ function setCategory(cat){
       <input type="hidden" id="fNeedle">
     `;
     wireTagGroup('doseTagGrid','fVal', doseTags, INSULIN_DOSE_KEY);
-    wireTagGroup('siteTagGrid','fSite', siteTags, INSULIN_SITE_KEY);
     wireTagGroup('needleTagGrid','fNeedle', needleTags, INSULIN_NEEDLE_KEY);
     wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
-    wireAddTag('newSiteInput','addSiteBtn','siteTagGrid', siteTags, INSULIN_SITE_KEY, 'fSite');
     wireAddTag('newNeedleInput','addNeedleBtn','needleTagGrid', needleTags, INSULIN_NEEDLE_KEY, 'fNeedle');
     document.querySelectorAll('.reaction-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
@@ -7648,6 +7698,7 @@ document.getElementById('sopSaveBtn').addEventListener('click',()=>{
 });
 document.getElementById('sopMenuItem').addEventListener('click',showCareSop);
 document.getElementById('feedingPlanMenuItem').addEventListener('click', showFeedingPlanModal);
+document.getElementById('wetFoodWeighMenuItem').addEventListener('click', showWetFoodWeighModal);
 document.getElementById('injectScreenMenuItem').addEventListener('click', openInjectScreen);
 document.getElementById('clearPhotosMenuItem').addEventListener('click', showClearPhotosModal);
 document.getElementById('gptLinkMenuItem').addEventListener('click', async ()=>{
@@ -8216,6 +8267,7 @@ async function syncFromDriveOnLogin(){
             localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remotePlanTs));
           }
         }
+        mergeWetBowl(remoteEnvelope.wetBowl,false);
         applyRemoteSop(remoteEnvelope);
         applyRemoteLockStates(remoteEnvelope.lockStates);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -8274,6 +8326,7 @@ async function syncFromDriveOnLogin(){
           localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(remoteEnvelope.feedingPlan));
           localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remoteEnvelope.feedingPlanUpdatedAt || remoteLastModified));
         }
+        mergeWetBowl(remoteEnvelope.wetBowl,true);
         applyRemoteSop(remoteEnvelope,true);
         applyRemoteLockStates(remoteEnvelope.lockStates);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -8453,7 +8506,7 @@ function buildSyncEnvelope(){
   //   (tag groups like insulin dose/site/needle and food types/brands are
   //   the exception — they're covered generically via tagStorage/
   //   collectSyncableTagStorage, no per-tag-group wiring needed)
-  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), wetBowl: loadWetBowl(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
 }
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId){
