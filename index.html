@@ -1953,7 +1953,7 @@ function showWetFoodWeighModal(){
       `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g</p>
       <label>這次吃完＋碗 (g)</label><input id="wbRemaining" type="number" inputmode="decimal" step="0.1" placeholder="最新秤重">
       <label>測量日期</label><input id="wbDate" type="date" value="${todayStr()}">
-      <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" value="${nowTime()}">
+      <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" maxlength="5" autocomplete="off" data-clock-time="true" value="${nowTime()}">
       <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
       <div id="wbStatus" style="font-size:12px;margin:8px 0"></div>
       <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
@@ -1972,7 +1972,8 @@ function showWetFoodWeighModal(){
         bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
         storeWetBowl(bowl);newMode=false;status.textContent='備餐已儲存，尚未計入飲食。';draw();
       }else{
-        const remaining=number('#wbRemaining'),date=panel.querySelector('#wbDate').value,time=panel.querySelector('#wbTime').value.trim();
+        const remaining=number('#wbRemaining'),date=panel.querySelector('#wbDate').value,timeInput=panel.querySelector('#wbTime');
+        autoFormatTimeInput(timeInput);const time=timeInput.value.trim();
         if(!Number.isFinite(remaining)||remaining<bowl.empty-0.11||remaining>=bowl.lastWeight){status.textContent='剩餘重量必須小於上次重量，且不得低於空碗重量。';return;}
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)){status.textContent='請確認日期與時間（HH:MM）。';return;}
         if(isDayLocked(date)){lockedDayWarning(date);return;}
@@ -2621,18 +2622,22 @@ const photoField = document.getElementById('photoField');
 const fTimeNowBtn = document.getElementById('fTimeNowBtn');
 fTimeNowBtn.addEventListener('click', ()=>{ fTime.value = nowTime(); });
 function autoFormatTimeInput(inputEl){
-  // Only auto-format when the user is actively typing plain digits (e.g. "0840" -> "08:40").
-  // Anything containing non-digit characters (like "?", "約上午", "左耳2:05") is left untouched
-  // so odd/unsure original time text can still be preserved and edited freely.
-  const raw = inputEl.value;
-  const digitsOnly = raw.replace(/[^0-9]/g,'');
-  if(digitsOnly.length===0 || digitsOnly.length !== raw.length){ return; }
-  let formatted = digitsOnly;
-  if(digitsOnly.length>=3){
-    formatted = digitsOnly.slice(0,2) + ':' + digitsOnly.slice(2,4);
-  }
-  inputEl.value = formatted;
+  const raw=inputEl.value;
+  if(!/^[0-9:]*$/.test(raw)) return; // Keep uncertain historical time text.
+  const digits=raw.replace(/\D/g,'').slice(0,4);
+  inputEl.value=digits.length>2?digits.slice(0,2)+':'+digits.slice(2):digits;
 }
+// A single delegated handler covers current and future time fields, including modals.
+document.addEventListener('input',e=>{
+  const el=e.target;
+  if(el instanceof HTMLInputElement &&
+     (el.id==='fTime'||el.id==='wbTime'||el.id==='sensorActivatedTimeInput'||
+      el.id==='vialOpenedTimeInput'||el.classList.contains('planned-time')||
+      el.classList.contains('fp-time')||el.dataset.clockTime==='true')){
+    autoFormatTimeInput(el);
+  }
+},true);
+
 fTime.addEventListener('focus', ()=>{ fTime.select(); });
 fTime.addEventListener('input', ()=> autoFormatTimeInput(fTime));
 const fPhoto = document.getElementById('fPhoto');
