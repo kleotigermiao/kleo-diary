@@ -487,6 +487,21 @@ textarea{resize:vertical; min-height:64px;}
   box-shadow:0 -8px 12px -4px var(--paper-raised);
 }
 .save-btn:active{opacity:0.85;}
+
+/* Note editor: save stays reachable without covering the last lines of dictation. */
+.sheet.note-editor .save-btn{display:none;}
+.sheet.note-editor h2{padding-left:65px;min-height:52px;display:flex;align-items:center;}
+.note-side-save{
+  display:none;position:fixed;z-index:59;width:60px;height:60px;
+  padding:4px;border:0;border-radius:50%;background:var(--ink);
+  color:var(--paper-raised);font:600 13px 'Inter',sans-serif;
+  box-shadow:0 3px 14px rgba(0,0,0,.22);cursor:pointer;
+  align-items:center;justify-content:center;text-align:center;
+}
+.note-side-save.visible{display:flex;}
+.note-side-save:active{opacity:.85;}
+.sheet.note-editor textarea{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+
 .close-x{
   position:absolute; top:14px; right:18px; background:none; border:none;
   font-size:22px; color:var(--ink-soft); cursor:pointer;
@@ -873,6 +888,7 @@ textarea{resize:vertical; min-height:64px;}
 
   <button class="save-btn" id="saveBtn">儲存</button>
 </div>
+<button type="button" id="noteSideSave" class="note-side-save" aria-label="儲存備註">儲存</button>
 
 <div class="lightbox" id="lightbox"><img id="lightboxImg" src="" alt="放大照片"></div>
 
@@ -2649,15 +2665,62 @@ const fDate = document.getElementById('fDate');
 const fTime = document.getElementById('fTime');
 let waterTimeListener = null;
 const dynamicFields = document.getElementById('dynamicFields');
+const noteSideSave = document.getElementById('noteSideSave');
+function updateNoteEditorLayout(){
+  const active = sheet.classList.contains('open') && currentCat==='note';
+  sheet.classList.toggle('note-editor', active);
+  noteSideSave.classList.toggle('visible', active);
+  if(!active) return;
+  const r=sheet.getBoundingClientRect();
+  const vv=window.visualViewport;
+  // Keep save within the visible screen when iOS scrolls the sheet for the keyboard.
+  const viewTop=vv ? vv.offsetTop : 0;
+  const viewHeight=vv ? vv.height : window.innerHeight;
+  const left=r.left>=76 ? r.left-70 : 10;
+  noteSideSave.style.left=Math.max(8,Math.round(left))+'px';
+  noteSideSave.style.top=Math.round(viewTop+Math.min(Math.max(80,viewHeight*.24),Math.max(8,viewHeight-76)))+'px';
+  noteSideSave.textContent=document.getElementById('saveBtn').textContent;
+  noteSideSave.setAttribute('aria-label',document.getElementById('saveBtn').textContent);
+}
+noteSideSave.addEventListener('click',()=>document.getElementById('saveBtn').click());
+function adjustSheetForKeyboard(){
+  const vv=window.visualViewport;
+  if(!vv){updateNoteEditorLayout();return;}
+  const covered=Math.max(0,window.innerHeight-vv.height-vv.offsetTop);
+  sheet.style.bottom=covered+'px';
+  sheet.style.maxHeight=Math.max(180,Math.min(window.innerHeight*.86,vv.height-12))+'px';
+  if(sheet.classList.contains('open')){
+    dynamicFields.querySelectorAll('textarea').forEach(autoGrowTextarea);
+    updateNoteEditorLayout();
+  }
+}
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize',adjustSheetForKeyboard);
+  window.visualViewport.addEventListener('scroll',adjustSheetForKeyboard);
+}
+window.addEventListener('resize',adjustSheetForKeyboard);
+
 function autoGrowTextarea(el){
+  // A capped, internally scrollable textarea keeps the caret visible when the
+  // iPad software keyboard or dictation panel occupies the lower viewport.
+  const visibleHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const limit = Math.max(130, Math.min(320, Math.floor(visibleHeight * .42)));
+  const minHeight = el.id==='fVal' && currentCat==='note' ? 170 : 64;
   el.style.height = 'auto';
-  el.style.height = Math.max(el.scrollHeight, 44) + 'px';
+  el.style.height = Math.max(Math.min(el.scrollHeight,limit), Math.min(minHeight,limit)) + 'px';
+  el.style.overflowY = el.scrollHeight > limit ? 'auto' : 'hidden';
 }
 function autoGrowAllTextareas(){
   dynamicFields.querySelectorAll('textarea').forEach(autoGrowTextarea);
 }
 dynamicFields.addEventListener('input', (e)=>{
-  if(e.target.tagName==='TEXTAREA') autoGrowTextarea(e.target);
+  if(e.target.tagName==='TEXTAREA'){
+    const el=e.target;
+    autoGrowTextarea(el);
+    // When dictating at the end, keep newly inserted text visible. Do not
+    // jump to the bottom while the owner is editing an earlier sentence.
+    if(el.selectionStart>=el.value.length-1) el.scrollTop=el.scrollHeight;
+  }
 });
 const timeWrap = document.getElementById('timeWrap');
 const photoField = document.getElementById('photoField');
@@ -2743,6 +2806,8 @@ function openSheet(){
   setCategory('note');
   sheet.classList.add('open');
   backdrop.classList.add('open');
+  updateNoteEditorLayout();
+  setTimeout(updateNoteEditorLayout, 270);
 }
 
 function openQuickAdd(dateStr, cat){
@@ -2759,6 +2824,8 @@ function openQuickAdd(dateStr, cat){
   setCategory(cat);
   sheet.classList.add('open');
   backdrop.classList.add('open');
+  updateNoteEditorLayout();
+  setTimeout(updateNoteEditorLayout, 270);
 }
 function openSheetForEditNote(dateStr){
   if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
@@ -2776,6 +2843,8 @@ function openSheetForEditNote(dateStr){
   autoGrowAllTextareas();
   sheet.classList.add('open');
   backdrop.classList.add('open');
+  updateNoteEditorLayout();
+  setTimeout(updateNoteEditorLayout, 270);
 }
 
 function openSheetForEdit(dateStr, cat, idx){
@@ -3003,11 +3072,17 @@ function openSheetForEdit(dateStr, cat, idx){
   autoGrowAllTextareas();
   sheet.classList.add('open');
   backdrop.classList.add('open');
+  updateNoteEditorLayout();
+  setTimeout(updateNoteEditorLayout, 270);
 }
 function closeSheetFn(){
   if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
   sheet.classList.remove('open');
   backdrop.classList.remove('open');
+  sheet.classList.remove('note-editor');
+  noteSideSave.classList.remove('visible');
+  sheet.style.bottom='';
+  sheet.style.maxHeight='';
   editContext = null;
   document.getElementById('catGrid').style.display = 'grid';
   setTimeout(()=>{ window.scrollTo(0, savedScrollY); }, 50);
@@ -3508,6 +3583,7 @@ function getOptionsForCat(cat){
 
 function setCategory(cat){
   currentCat = cat;
+  updateNoteEditorLayout();
   document.querySelectorAll('.cat-btn').forEach(b=>{
     b.classList.toggle('active', b.dataset.cat===cat);
   });
