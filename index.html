@@ -1973,7 +1973,12 @@ function showWetFoodWeighModal(){
       <label>加水後＋碗 (g)</label><input id="wbMixed" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
       <p style="font-size:12px;color:var(--ink-soft)">先儲存備餐；等 Kleo 吃過後再回來輸入剩餘重量。</p>`:
       `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g</p>
+      <div style="border:1px solid var(--line,#ddd);border-radius:10px;padding:12px;margin:10px 0;font-size:14px">
+        <div>目前剩餘罐頭（估算）</div>
+        <strong style="font-size:22px" id="wbCurrentFood">${(Math.max(0,bowl.lastWeight-bowl.empty)*bowl.foodG/(bowl.foodG+bowl.waterG)).toFixed(2)} g</strong>
+      </div>
       <label>這次吃完＋碗 (g)</label><input id="wbRemaining" type="number" inputmode="decimal" step="0.1" placeholder="最新秤重">
+      <div id="wbRemainingPreview" style="font-size:13px;margin:5px 0;color:var(--ink-soft)">輸入最新秤重後，顯示更新後剩餘罐頭量。</div>
       <label>測量日期</label><input id="wbDate" type="date" value="${todayStr()}">
       <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" maxlength="5" autocomplete="off" data-clock-time="true" value="${nowTime()}">
       <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
@@ -1981,6 +1986,17 @@ function showWetFoodWeighModal(){
       <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;min-height:48px;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
       <button type="button" class="modal-close-btn" id="wbClose" style="margin-top:10px">關閉</button>`;
     panel.querySelector('#wbClose').onclick=close;
+    if(!newMode){
+      panel.querySelector('#wbRemaining').addEventListener('input',e=>{
+        const raw=e.target.value;
+        const preview=panel.querySelector('#wbRemainingPreview');
+        if(raw.trim()===''){preview.textContent='輸入最新秤重後，顯示更新後剩餘罐頭量。';return;}
+        const value=Number(raw);
+        if(!Number.isFinite(value)||value<bowl.empty-0.11||value>bowl.lastWeight){preview.textContent='請輸入介於空碗與上次連碗重量之間的數字。';return;}
+        const remainingFood=Math.max(0,value-bowl.empty)*bowl.foodG/(bowl.foodG+bowl.waterG);
+        preview.textContent=`本次秤重後預計剩餘罐頭：${remainingFood.toFixed(2)} g（儲存後更新）`;
+      });
+    }
     panel.querySelector('#wbNew').onchange=e=>{newMode=e.target.checked;draw();};
     panel.querySelector('#wbSave').onclick=()=>{
       const status=panel.querySelector('#wbStatus');
