@@ -186,8 +186,8 @@ body{min-height:100vh;padding-bottom:calc(96px + var(--safe-bottom));overscroll-
   box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:50;min-width:200px;overflow:hidden;
 }
 .modal-close-btn{
-  display:block;width:100%;text-align:center;padding:10px 12px;margin-top:14px;
-  border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;
+  display:block;width:100%;min-height:48px;text-align:center;padding:13px 12px;margin-top:14px;
+  border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:15px;
 }
 .legend{
   display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;
@@ -489,7 +489,8 @@ textarea{resize:vertical; min-height:64px;}
 .save-btn:active{opacity:0.85;}
 .close-x{
   position:absolute; top:14px; right:18px; background:none; border:none;
-  font-size:20px; color:var(--ink-soft); cursor:pointer;
+  font-size:22px; color:var(--ink-soft); cursor:pointer;
+  min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center;
 }
 
 .option-grid{display:flex;flex-wrap:wrap;gap:8px;}
@@ -1933,6 +1934,26 @@ function mergeWetBowl(remote,preferRemote){
   const local=loadWetBowl();
   if(preferRemote||!local||(remote.updatedAt||0)>(local.updatedAt||0))localStorage.setItem(WET_BOWL_KEY,JSON.stringify(remote));
 }
+function preferredWetFoodBrand(brands){
+  if(!brands.length)return '';
+  const allowed=new Set(brands);
+  let latest=null;
+  const counts=new Map();
+  Object.entries(data||{}).forEach(([date,day])=>{
+    (day.food||[]).forEach(entry=>{
+      parseFoodEntryGroups(entry.note).forEach(group=>{
+        if(group.type!=='罐頭')return;
+        group.brands.forEach(brand=>{
+          if(!allowed.has(brand))return;
+          counts.set(brand,(counts.get(brand)||0)+1);
+          const stamp=date+' '+(entry.time||'00:00');
+          if(!latest||stamp>latest.stamp)latest={brand,stamp};
+        });
+      });
+    });
+  });
+  return latest?.brand||[...counts].sort((a,b)=>b[1]-a[1])[0]?.[0]||brands[0];
+}
 function showWetFoodWeighModal(){
   let bowl=loadWetBowl();let newMode=!bowl;
   const overlay=document.createElement('div');
@@ -1943,10 +1964,11 @@ function showWetFoodWeighModal(){
   const close=()=>overlay.remove();overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
   function draw(){
     const brands=loadFoodBrands('罐頭');
+    const preferredBrand=preferredWetFoodBrand(brands);
     panel.innerHTML=`<h3 style="margin:0 0 12px">🥣 罐頭秤重計算</h3>
       <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbNew" type="checkbox" style="width:auto" ${newMode?'checked':''}> 新的一碗</label>
       ${newMode?`<label>空碗重量 (g)</label><input id="wbEmpty" type="number" step="0.1" value="${bowl&&bowl.empty!=null?bowl.empty:180.8}">
-      <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}</select>
+      <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}" ${b===preferredBrand?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
       <label>罐頭＋碗 (g)</label><input id="wbFood" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
       <label>加水後＋碗 (g)</label><input id="wbMixed" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
       <p style="font-size:12px;color:var(--ink-soft)">先儲存備餐；等 Kleo 吃過後再回來輸入剩餘重量。</p>`:
@@ -1957,7 +1979,7 @@ function showWetFoodWeighModal(){
       <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
       <div id="wbStatus" style="font-size:12px;margin:8px 0"></div>
       <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;min-height:48px;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
-      <button type="button" id="wbClose" style="width:100%;margin-top:10px">關閉</button>`;
+      <button type="button" class="modal-close-btn" id="wbClose" style="margin-top:10px">關閉</button>`;
     panel.querySelector('#wbClose').onclick=close;
     panel.querySelector('#wbNew').onchange=e=>{newMode=e.target.checked;draw();};
     panel.querySelector('#wbSave').onclick=()=>{
@@ -7418,6 +7440,30 @@ function clearPhotosOlderThan(days){
   });
   return removed;
 }
+function feedingPlanCategorySummary(plan){
+  const categories=['乾糧','罐頭','零食'];
+  return categories.map(type=>{
+    const items=plan.filter(ev=>ev.type===type);
+    const grams=items.reduce((sum,ev)=>sum+(Number.parseFloat(ev.amount)||0),0);
+    let kcal=0, missing=false;
+    items.forEach(ev=>{
+      const value=feedingPlanEventKcal(ev);
+      if(value==null) missing=true; else kcal+=value;
+    });
+    return {type,grams,kcal,missing,unit:foodTypeUnit(type)};
+  });
+}
+function feedingPlanSummaryHtml(plan){
+  const summaries=feedingPlanCategorySummary(plan);
+  const {total,anyMissing}=feedingPlanTotalKcal(plan);
+  return `<div style="font-weight:700;margin-bottom:7px;">每日餵食計畫加總</div>
+    ${summaries.map(item=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--line,#ddd);">
+      <span>${item.type} ${item.grams.toFixed(1)} ${escapeHtml(item.unit)}</span>
+      <strong>${item.kcal.toFixed(1)} kcal${item.missing?' *':''}</strong>
+    </div>`).join('')}
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:9px;font-weight:700;"><span>合計熱量</span><span>${total.toFixed(1)} kcal</span></div>
+    ${anyMissing?'<div style="color:#B23A48;font-size:12px;margin-top:6px;">* 有品牌尚未設定熱量密度，熱量合計不完整。</div>':''}`;
+}
 function showFeedingPlanModal(){
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
@@ -7439,7 +7485,7 @@ function showFeedingPlanModal(){
       <div id="feedingPlanRows"></div>
       <button type="button" id="addFeedingPlanRowBtn" class="tag-add-btn" style="width:100%;margin-top:8px;">+ 新增餐點</button>
       <div id="feedingPlanTotalBox" style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
-        全部餐點加總：<b>${total.toFixed(1)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}
+        ${feedingPlanSummaryHtml(plan)}
       </div>
       <button type="button" id="saveFeedingPlanBtn" class="tag-add-btn" style="width:100%;min-height:48px;margin-top:12px;">儲存計畫</button>
       <button type="button" id="clearFeedingPlanBtn" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清空計畫（改回手動目標）</button>
@@ -7449,7 +7495,7 @@ function showFeedingPlanModal(){
     const totalBoxEl = document.getElementById('feedingPlanTotalBox');
     function refreshTotalOnly(){
       const { total, anyMissing } = feedingPlanTotalKcal(plan);
-      totalBoxEl.innerHTML = `全部餐點加總：<b>${total.toFixed(1)} kcal</b>${anyMissing ? '　<span style="color:#B23A48;">（有品牌還沒設定熱量密度，總量會偏低）</span>' : ''}`;
+      totalBoxEl.innerHTML = `${feedingPlanSummaryHtml(plan)}`;
     }
     plan.forEach((ev, i)=>{
       const brands = ev.type ? loadFoodBrands(ev.type) : [];
