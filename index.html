@@ -761,6 +761,7 @@ textarea{resize:vertical; min-height:64px;}
 @media (prefers-reduced-motion: reduce){
   .sheet, .sheet-backdrop, .fab, .sync-sheet{transition:none;}
 }
+  .option-btn,.food-type-btn,.food-brand-btn,.tag-add-btn,.site-grid-cell { -webkit-user-select:none;user-select:none;-webkit-touch-callout:none; }
 </style>
 </head>
 <body>
@@ -914,11 +915,13 @@ textarea{resize:vertical; min-height:64px;}
     <div><label>結束日期</label><input type="date" id="rangeEnd"></div>
   </div>
   <label>血糖機（只影響血糖數值，不影響其他欄位）</label>
-  <div class="cat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:4px;">
-    <button class="cat-btn meter-filter-btn active" data-meter="all">全部</button>
-    <button class="cat-btn meter-filter-btn" data-meter="alphatrak">AlphaTrak</button>
-    <button class="cat-btn meter-filter-btn" data-meter="petTest">PetTest</button>
-  </div>
+  <select id="reportMeterSelect" style="width:100%;margin-bottom:8px;">
+    <option value="all">全部血糖機</option>
+    <option value="alphatrak">AlphaTrak</option>
+    <option value="pettest">PetTest</option>
+    <option value="libre">Libre</option>
+  </select>
+  <p style="font-size:11px;color:var(--ink-soft);margin:0 0 8px;">包含同一筆紀錄中的第二台血糖機；新增的血糖機會自動出現在選單。</p>
   <label>版面</label>
   <div class="cat-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:4px;">
     <button class="cat-btn layout-btn active" data-layout="table">表格（列印/PDF用）</button>
@@ -1790,8 +1793,10 @@ function renderRowHtml(dateStr, cat, e, idx){
       deltaHtml = ` <span style="font-size:11px;color:${deltaColor};">(${arrow}${Math.abs(delta).toFixed(1)}, ${Math.abs(pct).toFixed(0)}%)</span>`;
     }
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
-    const meterHtml = e.meter==='petTest' ? ` <span style="font-size:10px;color:var(--ink-soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px;">PetTest</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${meterHtml}${hoursHtml}${deltaHtml}${detail}`;
+    const meterName = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : 'AlphaTrak');
+    const meterHtml = ` <span style="font-size:10px;color:var(--ink-soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px;">${escapeHtml(meterName)}</span>`;
+    const secondaryHtml = e.secondaryValue!=null ? ` <span style="font-size:12px;color:var(--ink-soft);">${escapeHtml(e.secondaryMeterLabel||'Libre')} ${e.secondaryValue} mmol/L</span>` : '';
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${meterHtml}${secondaryHtml}${hoursHtml}${deltaHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -3017,7 +3022,7 @@ function renderPhotoPreview(){
   });
 }
 let editContext = null; // {date, cat, idx} when editing, null when creating new
-const PHOTO_CATS = ['insulin','vomit','stool','urine','noteEntries'];
+const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine','noteEntries'];
 
 let savedScrollY = 0;
 function openSheet(){
@@ -3246,12 +3251,10 @@ function openSheetForEdit(dateStr, cat, idx){
           if(trendEl) trendEl.value = entry.trend;
         }
       }
-      const meterVal = entry.meter || 'alphatrak';
-      document.querySelectorAll('.glucose-meter-btn').forEach(b=>{
-        b.classList.toggle('active', b.dataset.meter===meterVal);
-      });
-      const meterEl = document.getElementById('fGlucoseMeter');
-      if(meterEl) meterEl.value = meterVal;
+      const meterName = entry.meterLabel || (entry.meter==='petTest' ? 'PetTest' : entry.meter==='libre' ? 'Libre' : 'AlphaTrak');
+      document.getElementById('fGlucoseMeterLabel').value = meterName;
+      document.getElementById('fGlucoseSecondaryLabel').value = entry.secondaryMeterLabel || 'Libre';
+      document.getElementById('fGlucoseSecondaryValue').value = entry.secondaryValue == null ? '' : entry.secondaryValue;
     }
     else if(cat==='urine'){
       const detailEl = document.getElementById('fDetail');
@@ -3405,6 +3408,11 @@ function moveTagInList(list,value,direction,saveFn,refreshFn){
   [list[index],list[next]]=[list[next],list[index]];
   saveFn(list);refreshFn();
 }
+function reorderTagButtons(container,selector,attribute,order){
+  if(!container)return;
+  const buttons=Array.from(container.querySelectorAll(selector));
+  order.forEach(name=>{const btn=buttons.find(b=>b.dataset[attribute]===name);if(btn)container.appendChild(btn);});
+}
 function renderTagButtons(tags){
   return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
 }
@@ -3432,7 +3440,14 @@ function showTagManageModal(currentName, onRename, onDelete, onMove){
     onRename(newName);
     close();
   });
-  if(onMove){box.querySelector('#tagMoveUp').onclick=()=>{onMove(-1);close();};box.querySelector('#tagMoveDown').onclick=()=>{onMove(1);close();};}
+  if(onMove){
+    const hint=document.createElement('div');
+    hint.style.cssText='font-size:11px;color:var(--ink-soft);text-align:center;margin:-3px 0 8px;';
+    hint.textContent='可連續上移／下移，完成後按取消關閉';
+    box.querySelector('#tagMoveDown').parentElement.after(hint);
+    box.querySelector('#tagMoveUp').onclick=()=>onMove(-1);
+    box.querySelector('#tagMoveDown').onclick=()=>onMove(1);
+  }
   box.querySelector('#tagDeleteConfirmBtn').addEventListener('click', ()=>{
     if(!confirm(`確定要刪除標籤「${currentName}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)) return;
     onDelete();
@@ -3852,13 +3867,17 @@ function setCategory(cat){
       });
     });
   } else if(cat==='glucose'){
-    dynamicFields.innerHTML = `<label>數值 (mmol/L)</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
-      <label>用哪台機器測的？</label>
-      <div class="option-grid" id="glucoseMeterGrid">
-        <button type="button" class="option-btn glucose-meter-btn active" data-meter="alphatrak">AlphaTrak</button>
-        <button type="button" class="option-btn glucose-meter-btn" data-meter="petTest">PetTest</button>
-      </div>
-      <input type="hidden" id="fGlucoseMeter" value="alphatrak">
+    dynamicFields.innerHTML = `
+      <label>血糖機標籤（可自行修改）</label>
+      <input type="text" id="fGlucoseMeterLabel" value="AlphaTrak" list="glucoseMeterNames" placeholder="例如 AlphaTrak" autocomplete="off">
+      <datalist id="glucoseMeterNames"><option value="AlphaTrak"><option value="PetTest"><option value="Libre"></datalist>
+      <label>血糖數值（mmol/L）</label>
+      <input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
+      <label>第二台血糖機標籤（可自行修改）</label>
+      <input type="text" id="fGlucoseSecondaryLabel" value="Libre" placeholder="例如 Libre" autocomplete="off">
+      <label>第二台數值（mmol/L，可留空）</label>
+      <input type="text" inputmode="decimal" id="fGlucoseSecondaryValue" placeholder="例如 13.8">
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:5px;">兩台同時測量可記在同一筆；下方可附上 Libre 截圖。血糖分析仍以 AlphaTrak 為主。</div>
       <label>趨勢箭頭（可選）</label>
       <div class="option-grid" id="glucoseTrendGrid">
         <button type="button" class="option-btn glucose-trend-btn" data-trend="up_fast">↑</button>
@@ -3870,13 +3889,6 @@ function setCategory(cat){
       <input type="hidden" id="fGlucoseTrend">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如左耳、同滴血、餐前…" style="height:80px;"></textarea>`;
-    document.querySelectorAll('.glucose-meter-btn').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        document.querySelectorAll('.glucose-meter-btn').forEach(b=>b.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById('fGlucoseMeter').value = btn.dataset.meter;
-      });
-    });
     document.querySelectorAll('.glucose-trend-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const already = btn.classList.contains('active');
@@ -4125,7 +4137,7 @@ function setCategory(cat){
             saveFoodTypes(list);
             closeSheetFn();
           },
-          direction=>moveTagInList(loadFoodTypes(),btn.dataset.type,direction,saveFoodTypes,()=>{closeSheetFn();})
+          direction=>moveTagInList(loadFoodTypes(),btn.dataset.type,direction,saveFoodTypes,()=>reorderTagButtons(document.getElementById('foodTypeGrid'),'.food-type-btn','type',loadFoodTypes()))
         );
       };
       const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
@@ -4149,7 +4161,7 @@ function setCategory(cat){
             closeSheetFn();
           },
           direction=>moveTagInList(loadFoodBrands(type),btn.dataset.brand,direction,
-            list=>saveFoodBrands(type,list),()=>closeSheetFn())
+            list=>saveFoodBrands(type,list),()=>reorderTagButtons(document.querySelector(`.food-brand-section[data-type="${CSS.escape(type)}"] .food-brand-grid`),'.food-brand-btn','brand',loadFoodBrands(type)))
         );
       };
       const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
@@ -4511,6 +4523,32 @@ clearPhotoBtn.addEventListener('click', ()=>{
   renderPhotoPreview();
 });
 
+function glucoseMeterKey(label){
+  const s = (label||'').trim().toLowerCase();
+  if(s.includes('pettest') || s.includes('pet test')) return 'petTest';
+  if(s.includes('libre')) return 'libre';
+  if(s.includes('alpha')) return 'alphatrak';
+  return 'custom';
+}
+function readGlucoseForm(time, note, photos){
+  const primaryLabel = (document.getElementById('fGlucoseMeterLabel')?.value||'AlphaTrak').trim() || 'AlphaTrak';
+  const secondaryLabel = (document.getElementById('fGlucoseSecondaryLabel')?.value||'Libre').trim() || 'Libre';
+  const primaryRaw = (document.getElementById('fVal')?.value||'').trim();
+  const secondaryRaw = (document.getElementById('fGlucoseSecondaryValue')?.value||'').trim();
+  const valid = v => v!=='' && Number.isFinite(Number(v)) && Number(v)>0;
+  if(!valid(primaryRaw) && !valid(secondaryRaw)) return null;
+  if((primaryRaw && !valid(primaryRaw)) || (secondaryRaw && !valid(secondaryRaw))) return null;
+  const firstIsPrimary = valid(primaryRaw);
+  const firstLabel = firstIsPrimary ? primaryLabel : secondaryLabel;
+  const trend = document.getElementById('fGlucoseTrend')?.value || undefined;
+  return {
+    time, value: Number(firstIsPrimary ? primaryRaw : secondaryRaw),
+    meter: glucoseMeterKey(firstLabel), meterLabel: firstLabel,
+    secondaryValue: firstIsPrimary && valid(secondaryRaw) ? Number(secondaryRaw) : undefined,
+    secondaryMeterLabel: firstIsPrimary && valid(secondaryRaw) ? secondaryLabel : undefined,
+    note: note || undefined, trend, photos
+  };
+}
 document.getElementById('saveBtn').addEventListener('click', ()=>{
   const dataBackupBeforeSave = JSON.parse(JSON.stringify(data));
   const dateStr = fDate.value || todayStr();
@@ -4524,7 +4562,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     rawVal = rawVal ? `${rawVal}（${detailRaw}）` : detailRaw;
   }
   const isDayNoteEdit = editContext && editContext.isDayNote;
-  if(!rawVal && !isDayNoteEdit){ valEl && valEl.focus(); return; }
+  if(!rawVal && !isDayNoteEdit && (editContext ? editContext.cat : currentCat)!=='glucose'){ valEl && valEl.focus(); return; }
   const effectiveCat = editContext ? editContext.cat : currentCat;
   // Enforce the lock at the write layer as well as the UI. This also blocks
   // moving an existing record into a locked date.
@@ -4536,6 +4574,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       alert('請選擇牠這次打針的反應（必選）');
       return;
     }
+  }
+  if(effectiveCat==='glucose' && !readGlucoseForm(time, detailRaw, currentPhotos.length ? currentPhotos.slice() : undefined)){
+    alert('請至少輸入一台血糖機的有效數值（mmol/L）。'); return;
   }
   const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
@@ -4554,9 +4595,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     let updated;
     if(cat==='glucose'){
-      const trendEl = document.getElementById('fGlucoseTrend');
-      const meterEl = document.getElementById('fGlucoseMeter');
-      updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, meter: (meterEl && meterEl.value) || undefined, photos: photosToSave};
+      updated = readGlucoseForm(time, detailRaw, photosToSave);
     } else if(cat==='urine'){
       updated = {time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='mood' || cat==='appetite'){
@@ -4608,11 +4647,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(!data[dateStr].appetite) data[dateStr].appetite = [];
     const photosToSave = currentPhotos.length ? currentPhotos.slice() : undefined;
     if(currentCat==='glucose'){
-      const trendEl = document.getElementById('fGlucoseTrend');
-      const meterEl = document.getElementById('fGlucoseMeter');
-      const meterVal = (meterEl && meterEl.value) || 'alphatrak';
-      data[dateStr].glucose.push({time, value: parseFloat(numRaw), note: detailRaw || undefined, trend: (trendEl && trendEl.value) || undefined, meter: meterVal, photos: photosToSave});
-      consumeSupplyOnGlucose(meterVal);
+      const glucoseEntry = readGlucoseForm(time, detailRaw, photosToSave);
+      data[dateStr].glucose.push(glucoseEntry);
+      if(glucoseEntry.meter==='alphatrak' || glucoseEntry.meter==='petTest') consumeSupplyOnGlucose(glucoseEntry.meter);
     } else if(currentCat==='urine'){
       data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='mood' || currentCat==='appetite'){
@@ -4702,7 +4739,7 @@ reportBtn.addEventListener('click', ()=>{
   document.getElementById('foodPatternView').style.display = 'none';
   document.getElementById('ampmTableView').style.display = 'none';
   selectedMeterFilter = 'all';
-  document.querySelectorAll('.meter-filter-btn').forEach(b=>b.classList.toggle('active', b.dataset.meter==='all'));
+  refreshReportMeterOptions();
   const today = todayStr();
   rangeEnd.value = today;
   const d = new Date();
@@ -4769,16 +4806,30 @@ document.querySelectorAll('.layout-btn').forEach(btn=>{
   });
 });
 let selectedMeterFilter = 'all';
-function meterFilterMatch(e){
-  return selectedMeterFilter==='all' || (e.meter||'alphatrak')===selectedMeterFilter;
+function meterNameKey(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g,''); }
+function glucoseReadings(e){
+  const primaryName = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : e.meter==='custom' ? '其他血糖機' : 'AlphaTrak');
+  const result = [{...e, meterLabel:primaryName, meterNameKey:meterNameKey(primaryName), _readingSource:'primary'}];
+  if(e.secondaryValue!=null && Number.isFinite(Number(e.secondaryValue))){
+    const secondaryName=e.secondaryMeterLabel||'Libre';
+    result.push({...e,value:Number(e.secondaryValue),meterLabel:secondaryName,meterNameKey:meterNameKey(secondaryName),_readingSource:'secondary',secondaryValue:undefined,secondaryMeterLabel:undefined});
+  }
+  return result;
 }
-document.querySelectorAll('.meter-filter-btn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.meter-filter-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedMeterFilter = btn.dataset.meter;
-  });
-});
+function filteredGlucoseReadings(entries){
+  return (entries||[]).flatMap(e=>glucoseReadings(e).filter(r=>selectedMeterFilter==='all'||r.meterNameKey===selectedMeterFilter));
+}
+function meterFilterMatch(e){ return glucoseReadings(e).some(r=>selectedMeterFilter==='all'||r.meterNameKey===selectedMeterFilter); }
+function refreshReportMeterOptions(){
+  const select=document.getElementById('reportMeterSelect');
+  if(!select)return;
+  const names=new Map([['alphatrak','AlphaTrak'],['pettest','PetTest'],['libre','Libre']]);
+  Object.values(data||{}).forEach(day=>(day.glucose||[]).forEach(e=>glucoseReadings(e).forEach(r=>names.set(r.meterNameKey,r.meterLabel))));
+  select.innerHTML='<option value="all">全部血糖機</option>'+Array.from(names).map(([key,label])=>`<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`).join('');
+  select.value=selectedMeterFilter;
+  if(select.value!==selectedMeterFilter){selectedMeterFilter='all';select.value='all';}
+}
+document.getElementById('reportMeterSelect').addEventListener('change',e=>{selectedMeterFilter=e.target.value;});
 
 function getRangeDates(){
   const today = new Date();
@@ -4887,18 +4938,22 @@ function buildGlucoseChart(allEntries, allInsulin){
     svg += `<text x="${x}" y="${H-16}" font-size="11.5" fill="#5A6E6E" text-anchor="middle">${label2}</text>`;
   }
 
-  // glucose line
-  let path = '';
-  sorted.forEach((e,i)=>{
-    const x = xFor(toTs(e)), y = yFor(e.value);
-    path += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+  // Never connect values from different meters into one misleading line.
+  const meterGroups=new Map();
+  sorted.forEach(e=>{
+    const key=meterNameKey(e.meterLabel||'AlphaTrak');
+    if(!meterGroups.has(key))meterGroups.set(key,[]);
+    meterGroups.get(key).push(e);
   });
-  svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="2.5"/>`;
+  meterGroups.forEach(group=>{
+    const path=group.map((e,i)=>(i===0?'M':'L')+xFor(toTs(e)).toFixed(1)+','+yFor(e.value).toFixed(1)).join(' ');
+    svg += `<path d="${path}" fill="none" stroke="#6B4FA0" stroke-width="2.5"/>`;
+  });
   sorted.forEach(e=>{
     const x = xFor(toTs(e)), y = yFor(e.value);
     const d = new Date(toTs(e));
     const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} → ${e.value} mmol/L${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}</title></circle>`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} ${escapeHtml(e.meterLabel||'AlphaTrak')} → ${e.value} mmol/L${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}</title></circle>`;
   });
 
   svg += `</svg>`;
@@ -5019,9 +5074,9 @@ function saveColOrder(order){
 }
 let reportColOrder = loadColOrder();
 function reportCellLines(day, catKey, dateStr){
-  const meterMatches = e => selectedMeterFilter==='all' || (e.meter||'alphatrak')===selectedMeterFilter;
+  const meterMatches = meterFilterMatch;
   if(catKey==='glucoseNote'){
-    const entries = (day.glucose||[]).filter(e=>e.note && meterMatches(e)).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    const entries = filteredGlucoseReadings(day.glucose).filter(e=>e.note).slice().sort((a,b)=>a.time.localeCompare(b.time));
     return entries.map(e=>`${e.time} ${e.note}`);
   }
   if(catKey==='insulinNote'){
@@ -5042,11 +5097,13 @@ function reportCellLines(day, catKey, dateStr){
   }
   let entries = (day[catKey]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
   if(catKey==='glucose'){
-    entries = entries.filter(meterMatches);
+    entries = filteredGlucoseReadings(entries);
     return entries.map(e=>{
       const hoursSince = dateStr ? hoursSinceLastInsulin(dateStr, e.time) : null;
       const hoursHtml = hoursSince!=null ? ` (+${hoursSince.toFixed(1)}h)` : '';
-      return `${e.time} → ${e.value}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${hoursHtml}${e.meter==='petTest' ? ' (PetTest)' : ''}`;
+      const name = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : 'AlphaTrak');
+      const second = e._readingSource==='primary' && e.secondaryValue!=null && selectedMeterFilter==='all' ? '' : '';
+      return `${e.time} → ${name} ${e.value}${second}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${hoursHtml}`;
     });
   }
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
@@ -5128,7 +5185,7 @@ renderColCheckGrid();
 
 // ---- Weekly summary report ----
 function buildMiniDayChart(day){
-  const entries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && meterFilterMatch(e));
+  const entries = filteredGlucoseReadings(day.glucose).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
   if(entries.length===0) return '<p class="no-data-msg" style="font-size:12px;margin:0;">沒有血糖記錄</p>';
   const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
   const toMinutes = t => { const [h,m]=t.split(':').map(Number); return h*60+m; };
@@ -5237,7 +5294,7 @@ function buildMiniDayChart(day){
   return svg;
 }
 function computeDayReportStats(dateStr, day, allDatesSorted, idx){
-  const glucoseEntries = (day.glucose||[]).filter(e=>typeof e.value==='number' && meterFilterMatch(e));
+  const glucoseEntries = filteredGlucoseReadings(day.glucose).filter(e=>typeof e.value==='number');
   const avgGlucose = glucoseEntries.length ? (glucoseEntries.reduce((a,e)=>a+e.value,0)/glucoseEntries.length) : null;
   const glucoseCount = glucoseEntries.length;
   const insulinTotal = (day.insulin||[]).reduce((sum,e)=>{
@@ -5301,7 +5358,7 @@ function clusterFeedingTimes(allTimes){
 function toMinutesOfDay(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
 function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
   const insulinEntries = (day.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time));
-  const glucoseEntries = (day.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number' && meterFilterMatch(e)).sort((a,b)=>a.time.localeCompare(b.time));
+  const glucoseEntries = filteredGlucoseReadings(day.glucose).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number').sort((a,b)=>a.time.localeCompare(b.time));
   const amShot = insulinEntries.find(e=> toMinutesOfDay(e.time) < 14*60);
   const pmShot = insulinEntries.slice().reverse().find(e=> toMinutesOfDay(e.time) >= 14*60);
 
@@ -5333,7 +5390,7 @@ function buildDaySessionsForAmpm(dateStr, day, nextDayData, prevDayData){
   // this day's PM row entirely.
   const nextDayInsulin = nextDayData ? (nextDayData.insulin||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'')).sort((a,b)=>a.time.localeCompare(b.time)) : [];
   const nextDayAmShot = nextDayInsulin.find(e=> toMinutesOfDay(e.time) < 14*60);
-  const nextDayGlucose = nextDayData ? (nextDayData.glucose||[]).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number' && meterFilterMatch(e)) : [];
+  const nextDayGlucose = nextDayData ? filteredGlucoseReadings(nextDayData.glucose).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||'') && typeof e.value==='number') : [];
   const glucoseEntriesExtended = [
     ...glucoseEntries.map(e=>({...e, _min: toMinutesOfDay(e.time)})),
     ...nextDayGlucose.map(e=>({...e, _min: toMinutesOfDay(e.time)+1440}))
@@ -5586,7 +5643,7 @@ function renderAmpmTable(){
     const prevDate = new Date(dateStr+'T00:00:00'); prevDate.setDate(prevDate.getDate()-1);
     const prevDateStr = prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0')+'-'+String(prevDate.getDate()).padStart(2,'0');
     const { amSession, pmSession, remarks } = buildDaySessionsForAmpm(dateStr, day, data[nextDateStr], data[prevDateStr]);
-    const hasAnyGlucose = (day.glucose||[]).some(e=>typeof e.value==='number' && meterFilterMatch(e));
+    const hasAnyGlucose = filteredGlucoseReadings(day.glucose).some(e=>typeof e.value==='number');
     const hasAnyInsulin = (day.insulin||[]).length>0;
     if(!amSession && !pmSession && !remarks && !hasAnyGlucose && !hasAnyInsulin && !(day.food||[]).length) return; // skip only if truly nothing logged that day
     function valCell(v, extraClass){
@@ -5868,8 +5925,7 @@ function generateReport(){
 
   const allGlucose = [];
   dates.forEach(d=> (data[d].glucose||[]).forEach(e=> {
-    if(selectedMeterFilter!=='all' && (e.meter||'alphatrak')!==selectedMeterFilter) return;
-    allGlucose.push({...e, date:d});
+    filteredGlucoseReadings([e]).forEach(r=>allGlucose.push({...r,date:d}));
   }));
   allGlucose.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
 
@@ -5979,10 +6035,10 @@ function generateReport(){
       <div class="collapsible-body" id="${sectionId}">${bodyHtml}</div>
     </div>`;
   }
-  const meterFilterLabel = selectedMeterFilter==='alphatrak' ? '（只顯示AlphaTrak）' : (selectedMeterFilter==='petTest' ? '（只顯示PetTest）' : '');
+  const meterFilterLabel = selectedMeterFilter==='all' ? '（全部血糖機）' : '（'+(document.getElementById('reportMeterSelect').selectedOptions[0]?.textContent||selectedMeterFilter)+'）';
   const glucoseChartHtml = showCat('glucose') ? collapsibleChart(
     `血糖趨勢${meterFilterLabel}（藍虛線=4 mmol/L 偏低參考，橘虛線=10 mmol/L 偏高參考，紅虛線=15 mmol/L 過高警戒；紅色豎實線=胰島素施打時間，滑鼠移上去可看時間）`,
-    buildGlucoseChart(allGlucose, allInsulin),
+    buildGlucoseChart(allGlucose, allInsulin) + (selectedMeterFilter==='all' ? '<p style="font-size:11px;color:var(--ink-soft)">全部模式依血糖機分別連線；建議選單一血糖機分析趨勢。</p>' : ''),
     'glucoseChartBody'
   ) : '';
   const weightChartHtml = showCat('weight') ? collapsibleChart(
@@ -6296,8 +6352,8 @@ function consumeSupplyOnUrinalysis(){
 function refundSupplyOnDelete(cat, entry){
   if(cat==='glucose'){
     if(entry && entry.meter==='petTest') supplies.petTestStrips.stock = (supplies.petTestStrips.stock||0) + 1;
-    else supplies.strips.stock = (supplies.strips.stock||0) + 1;
-    supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
+    else if(!entry || !entry.meter || entry.meter==='alphatrak') supplies.strips.stock = (supplies.strips.stock||0) + 1;
+    if(!entry || !entry.meter || entry.meter==='alphatrak' || entry.meter==='petTest') supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
     saveSupplies();
   } else if(cat==='urinalysis'){
     supplies.urinalysisStrips.stock = (supplies.urinalysisStrips.stock||0) + 1;
