@@ -2022,9 +2022,9 @@ function petbankHomeHtml(plan){
   const state=loadPetbankState();
   const text=st.empty?'⚠️ Petbank 已無足夠格數，請補糧並校正':
     st.warning?`⚠️ Petbank 剩 ${st.remaining} 格（${Math.floor(st.remaining/2)} 餐），請準備補糧`:
-    `🐟 預計位置 ${st.position} 號｜剩 ${st.remaining} 格`;
+    `🐟 目前位置 ${st.position} 號｜剩 ${st.remaining} 格`;
   const next=st.nextAt?`｜下次 ${st.nextAt.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
-  return `<div style="margin:4px 0 8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:12px;line-height:1.6;">
+  return `<div style="margin:8px 16px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;line-height:1.6;box-sizing:border-box;">
     <strong>${text}</strong>${next}
     <button type="button" class="edit-feeding-plan-link" style="display:block;border:0;background:none;text-decoration:underline;color:var(--ink-soft);padding:5px 0 0;font-size:12px;">核對轉盤／補糧</button>
     <div style="font-size:10.5px;color:var(--ink-soft);">依排程推算，非實際落糧確認。</div>
@@ -2976,6 +2976,15 @@ document.addEventListener('input',e=>{
   }
 },true);
 
+document.addEventListener('focusin',e=>{
+  const el=e.target;
+  if(el instanceof HTMLInputElement &&
+    (el.id==='fTime'||el.id==='wbTime'||el.id==='sensorActivatedTimeInput'||
+     el.id==='vialOpenedTimeInput'||el.classList.contains('planned-time')||
+     el.classList.contains('fp-time')||el.dataset.clockTime==='true')){
+    el.select();
+  }
+});
 fTime.addEventListener('focus', ()=>{ fTime.select(); });
 fTime.addEventListener('input', ()=> autoFormatTimeInput(fTime));
 const fPhoto = document.getElementById('fPhoto');
@@ -3252,8 +3261,11 @@ function openSheetForEdit(dateStr, cat, idx){
         }
       }
       const meterName = entry.meterLabel || (entry.meter==='petTest' ? 'PetTest' : entry.meter==='libre' ? 'Libre' : 'AlphaTrak');
+      ensureGlucoseMeterTag(meterName);
       document.getElementById('fGlucoseMeterLabel').value = meterName;
+      ensureGlucoseMeterTag(entry.secondaryMeterLabel || 'Libre');
       document.getElementById('fGlucoseSecondaryLabel').value = entry.secondaryMeterLabel || 'Libre';
+      initGlucoseMeterPicker();
       document.getElementById('fGlucoseSecondaryValue').value = entry.secondaryValue == null ? '' : entry.secondaryValue;
     }
     else if(cat==='urine'){
@@ -3358,7 +3370,7 @@ function saveTagsGeneric(key, tags){
 // types, food brands per type — an open-ended, dynamically-named set of
 // localStorage keys). Matched by prefix so any NEW tag group added later is
 // automatically covered without needing individual sync wiring each time.
-const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags', 'kleo-food-type-units'];
+const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags', 'kleo-food-type-units', 'kleo-glucose-meter-tags'];
 function collectSyncableTagStorage(){
   const bucket = {};
   for(let i=0;i<localStorage.length;i++){
@@ -3837,6 +3849,61 @@ function getOptionsForCat(cat){
   return FIXED_OPTIONS[cat] || (cat==='med' ? medTags : null);
 }
 
+const GLUCOSE_METER_TAG_KEY = 'kleo-glucose-meter-tags-v1';
+function loadGlucoseMeterTags(){
+  const tags=loadTagsGeneric(GLUCOSE_METER_TAG_KEY,['AlphaTrak','PetTest','Libre']);
+  return Array.isArray(tags)?tags.filter(t=>typeof t==='string'&&t.trim()):['AlphaTrak','PetTest','Libre'];
+}
+function ensureGlucoseMeterTag(name){
+  if(!name)return;
+  const tags=loadGlucoseMeterTags();
+  if(!tags.includes(name)){tags.push(name);saveTagsGeneric(GLUCOSE_METER_TAG_KEY,tags);}
+}
+function initGlucoseMeterPicker(){
+  let tags=loadGlucoseMeterTags();
+  const primary=document.getElementById('fGlucoseMeterLabel');
+  const secondary=document.getElementById('fGlucoseSecondaryLabel');
+  const refresh=()=>{
+    ['glucosePrimaryGrid','glucoseSecondaryGrid'].forEach((id,i)=>{
+      const grid=document.getElementById(id),selected=(i?secondary:primary).value;
+      if(!grid)return;
+      grid.innerHTML=tags.map(t=>`<button type="button" class="option-btn${t===selected?' active':''}" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+      grid.querySelectorAll('button').forEach(btn=>{
+        btn.onclick=()=>{
+          if(btn.dataset.longPressed==='1'){btn.dataset.longPressed='';return;}
+          (i?secondary:primary).value=btn.dataset.val;
+          refresh();
+        };
+        let timer;
+        const manage=()=>showTagManageModal(btn.dataset.val,
+          name=>{if(tags.includes(name)&&name!==btn.dataset.val){alert('標籤已存在');return;}
+            tags=tags.map(t=>t===btn.dataset.val?name:t);
+            if(primary.value===btn.dataset.val)primary.value=name;
+            if(secondary.value===btn.dataset.val)secondary.value=name;
+            saveTagsGeneric(GLUCOSE_METER_TAG_KEY,tags);refresh();},
+          ()=>{tags=tags.filter(t=>t!==btn.dataset.val);
+            if(primary.value===btn.dataset.val)primary.value=tags[0]||'';
+            if(secondary.value===btn.dataset.val)secondary.value=tags[1]||tags[0]||'';
+            saveTagsGeneric(GLUCOSE_METER_TAG_KEY,tags);refresh();},
+          direction=>{const j=tags.indexOf(btn.dataset.val),k=j+direction;
+            if(k<0||k>=tags.length)return;
+            [tags[j],tags[k]]=[tags[k],tags[j]];
+            saveTagsGeneric(GLUCOSE_METER_TAG_KEY,tags);refresh();});
+        btn.addEventListener('pointerdown',()=>{btn.dataset.longPressed='';timer=setTimeout(()=>{btn.dataset.longPressed='1';manage();},550);});
+        ['pointerup','pointerleave','pointercancel'].forEach(event=>btn.addEventListener(event,()=>clearTimeout(timer)));
+        btn.addEventListener('contextmenu',e=>{e.preventDefault();manage();});
+      });
+    });
+  };
+  const add=document.getElementById('glucoseMeterAddBtn');
+  add.onclick=()=>{
+    const input=document.getElementById('glucoseMeterAdd'),name=input.value.trim();
+    if(!name)return;
+    if(!tags.includes(name)){tags.push(name);saveTagsGeneric(GLUCOSE_METER_TAG_KEY,tags);}
+    primary.value=name;input.value='';refresh();
+  };
+  refresh();
+}
 function setCategory(cat){
   currentCat = cat;
   updateNoteEditorLayout();
@@ -3868,13 +3935,15 @@ function setCategory(cat){
     });
   } else if(cat==='glucose'){
     dynamicFields.innerHTML = `
-      <label>血糖機標籤（可自行修改）</label>
-      <input type="text" id="fGlucoseMeterLabel" value="AlphaTrak" list="glucoseMeterNames" placeholder="例如 AlphaTrak" autocomplete="off">
-      <datalist id="glucoseMeterNames"><option value="AlphaTrak"><option value="PetTest"><option value="Libre"></datalist>
+      <label>血糖機</label>
+      <div class="option-grid" id="glucosePrimaryGrid"></div>
+      <input type="hidden" id="fGlucoseMeterLabel" value="AlphaTrak">
+      <div style="display:flex;gap:7px;margin-top:7px;"><input id="glucoseMeterAdd" type="text" placeholder="新增血糖機標籤" autocomplete="off" style="flex:1;min-width:0;"><button type="button" id="glucoseMeterAddBtn" class="tag-add-btn" style="flex:0 0 auto;">＋</button></div>
       <label>血糖數值（mmol/L）</label>
       <input type="text" inputmode="decimal" id="fVal" placeholder="例如 15.2">
-      <label>第二台血糖機標籤（可自行修改）</label>
-      <input type="text" id="fGlucoseSecondaryLabel" value="Libre" placeholder="例如 Libre" autocomplete="off">
+      <label>第二台血糖機（可選）</label>
+      <div class="option-grid" id="glucoseSecondaryGrid"></div>
+      <input type="hidden" id="fGlucoseSecondaryLabel" value="Libre">
       <label>第二台數值（mmol/L，可留空）</label>
       <input type="text" inputmode="decimal" id="fGlucoseSecondaryValue" placeholder="例如 13.8">
       <div style="font-size:12px;color:var(--ink-soft);margin-top:5px;">兩台同時測量可記在同一筆；下方可附上 Libre 截圖。血糖分析仍以 AlphaTrak 為主。</div>
@@ -3889,6 +3958,7 @@ function setCategory(cat){
       <input type="hidden" id="fGlucoseTrend">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如左耳、同滴血、餐前…" style="height:80px;"></textarea>`;
+    initGlucoseMeterPicker();
     document.querySelectorAll('.glucose-trend-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const already = btn.classList.contains('active');
@@ -7904,7 +7974,7 @@ function showFeedingPlanModal(){
         <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 9px;">每餐前進 2 格；先在上蓋依轉動方向標 1–16，並選定轉盤上的固定辨識點對照。勾選上方由 Petbank 執行的乾糧餐次。</div>
         ${!meals.length?'<div style="font-size:12px;color:#B23A48;margin-bottom:8px;">尚未勾選 Petbank 餵食時段，無法推算位置。</div>':''}
         ${st?`<div style="padding:9px;border-radius:8px;background:var(--paper-raised);font-size:13px;line-height:1.8;">
-          <b>🐟 預計位置：${st.position} 號</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
+          <b>🐟 目前位置：${st.position} 號</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
           ${st.warning?`<div style="color:#B23A48;font-weight:700;">${st.empty?'⚠️ 格數不足，下次餵食前必須補糧':'⚠️ 即將需要補糧'}</div>`:''}
         </div>`:'<div style="font-size:12px;margin:7px 0;">先設定起始位置及目前裝有食物的格數。</div>'}
         <label style="display:block;font-size:12px;margin-top:9px;">🐟 實際位置（1–16）</label>
