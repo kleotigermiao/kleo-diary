@@ -2069,7 +2069,10 @@ function showWetFoodWeighModal(){
   function draw(){
     const brands=loadFoodBrands('罐頭');
     const preferredBrand=preferredWetFoodBrand(brands);
-    panel.innerHTML=`<h3 style="margin:0 0 12px">🥣 罐頭秤重計算</h3>
+    panel.innerHTML=`<div style="position:sticky;top:-18px;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--paper);padding:12px 0;margin:-12px 0 12px">
+        <h3 style="margin:0;min-width:0">🥣 罐頭秤重計算</h3>
+        <button type="button" id="wbTopSave" aria-label="儲存罐頭秤重" style="flex:0 0 60px;width:60px;height:60px;border:0;border-radius:50%;background:var(--ink);color:var(--paper-raised);font:600 13px 'Inter',sans-serif;cursor:pointer">儲存</button>
+      </div>
       <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbNew" type="checkbox" style="width:auto" ${newMode?'checked':''}> 新的一碗</label>
       ${newMode?`<label>空碗重量 (g)</label><input id="wbEmpty" type="number" step="0.1" value="${bowl&&bowl.empty!=null?bowl.empty:180.8}">
       <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}" ${b===preferredBrand?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
@@ -2091,6 +2094,7 @@ function showWetFoodWeighModal(){
       <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;min-height:48px;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
       <button type="button" class="modal-close-btn" id="wbClose" style="margin-top:10px">關閉</button>`;
     panel.querySelector('#wbClose').onclick=close;
+    panel.querySelector('#wbTopSave').onclick=()=>panel.querySelector('#wbSave').click();
     if(!newMode){
       const preview=()=>{
         const target=panel.querySelector('#wbRemainingPreview');
