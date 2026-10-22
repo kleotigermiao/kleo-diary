@@ -2235,7 +2235,6 @@ function buildKcalProgressHtml(day, dateStr){
     return `<div class="kcal-progress${isOver?' over':''}">
       ${missingWarningHtml}
       <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(1)} / ${(+target).toFixed(1)} kcal</div>
-      ${petbankHomeHtml(plan)}
     <div class="kcal-bar-track">
         <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
         <div class="kcal-bar-target" style="left:${targetPct}%;" title="當日目標"></div>
@@ -2588,6 +2587,7 @@ function render(){
         ${buildCustomStatusPanel(dateStr, day)}
       </div>
       ${foodStatsHtml}
+      ${dateStr===todayStr()?petbankHomeHtml(loadFeedingPlan()):''}
       ${kcalProgressHtml}
       <div class="section">${rowsHtml}${plannedMealsHtml}${notesHtml}</div>
     </div>`;
