@@ -501,6 +501,8 @@ textarea{resize:vertical; min-height:64px;}
 .note-side-save.visible{display:flex;}
 .modal-save-original{display:none!important;}
 .note-side-save:active{opacity:.85;}
+.note-side-save{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
+.note-side-save.is-dragging{opacity:.78;cursor:grabbing;box-shadow:0 7px 22px rgba(0,0,0,.28);}
 .sheet.note-editor textarea{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
 
 .close-x{
@@ -2783,6 +2785,61 @@ const fTime = document.getElementById('fTime');
 let waterTimeListener = null;
 const dynamicFields = document.getElementById('dynamicFields');
 const noteSideSave = document.getElementById('noteSideSave');
+// Floating save buttons can be dragged out of the way. Positions are local UI preferences,
+// not diary records; no cloud data is modified.
+function movableSaveBounds(el){
+  const vv=window.visualViewport;
+  const x0=vv?vv.offsetLeft:0, y0=vv?vv.offsetTop:0;
+  const w=vv?vv.width:window.innerWidth, h=vv?vv.height:window.innerHeight;
+  const size=el.getBoundingClientRect().width||60;
+  return {left:x0+8,top:y0+8,right:Math.max(x0+8,x0+w-size-8),bottom:Math.max(y0+8,y0+h-size-8)};
+}
+function positionMovableSave(el,defaultLeft,defaultTop){
+  const bounds=movableSaveBounds(el);
+  let saved=null;
+  try{saved=JSON.parse(localStorage.getItem('kleo-save-button-position-'+el.dataset.dragSaveKey)||'null');}catch(e){}
+  const x=saved&&Number.isFinite(saved.x)?saved.x:defaultLeft;
+  const y=saved&&Number.isFinite(saved.y)?saved.y:defaultTop;
+  el.style.left=Math.round(Math.max(bounds.left,Math.min(bounds.right,x)))+'px';
+  el.style.top=Math.round(Math.max(bounds.top,Math.min(bounds.bottom,y)))+'px';
+}
+function enableMovableSave(el,key){
+  if(el.dataset.dragSaveKey)return;
+  el.dataset.dragSaveKey=key;
+  el.title='可拖曳移動儲存按鈕';
+  let start=null, dragged=false, blockClick=false;
+  el.addEventListener('pointerdown',e=>{
+    if(e.button!==undefined&&e.button!==0)return;
+    const rect=el.getBoundingClientRect();
+    start={id:e.pointerId,x:e.clientX,y:e.clientY,left:rect.left,top:rect.top};
+    dragged=false;
+    try{el.setPointerCapture(e.pointerId);}catch(err){}
+  });
+  el.addEventListener('pointermove',e=>{
+    if(!start||e.pointerId!==start.id)return;
+    if(!dragged&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<6)return;
+    dragged=true;el.classList.add('is-dragging');
+    const bounds=movableSaveBounds(el);
+    const x=Math.max(bounds.left,Math.min(bounds.right,start.left+e.clientX-start.x));
+    const y=Math.max(bounds.top,Math.min(bounds.bottom,start.top+e.clientY-start.y));
+    el.style.left=Math.round(x)+'px';el.style.top=Math.round(y)+'px';
+  });
+  const finish=e=>{
+    if(!start||e.pointerId!==start.id)return;
+    start=null;el.classList.remove('is-dragging');
+    if(dragged){
+      blockClick=true;
+      try{localStorage.setItem('kleo-save-button-position-'+key,JSON.stringify({x:parseFloat(el.style.left),y:parseFloat(el.style.top)}));}catch(err){}
+      setTimeout(()=>{blockClick=false;},450);
+    }
+  };
+  el.addEventListener('pointerup',finish);
+  el.addEventListener('pointercancel',finish);
+  el.addEventListener('click',e=>{
+    if(blockClick){e.preventDefault();e.stopImmediatePropagation();blockClick=false;}
+  },true);
+}
+enableMovableSave(noteSideSave,'entry');
 function updateNoteEditorLayout(){
   const active = sheet.classList.contains('open');
   sheet.classList.toggle('note-editor', active);
@@ -2794,8 +2851,7 @@ function updateNoteEditorLayout(){
   const viewTop=vv ? vv.offsetTop : 0;
   const viewHeight=vv ? vv.height : window.innerHeight;
   const left=r.left>=76 ? r.left-70 : 10;
-  noteSideSave.style.left=Math.max(8,Math.round(left))+'px';
-  noteSideSave.style.top=Math.round(viewTop+Math.min(Math.max(80,viewHeight*.24),Math.max(8,viewHeight-76)))+'px';
+  positionMovableSave(noteSideSave,Math.max(8,Math.round(left)),viewTop+Math.min(Math.max(80,viewHeight*.24),Math.max(8,viewHeight-76)));
   noteSideSave.textContent='儲存';
   noteSideSave.setAttribute('aria-label',document.getElementById('saveBtn').textContent);
 }
@@ -2820,11 +2876,11 @@ window.addEventListener('resize',adjustSheetForKeyboard);
 function updateSopFloatingSave(){
   const page=document.getElementById('sopPage'),original=document.getElementById('sopSaveBtn');
   let floating=document.getElementById('sopFloatingSave');
-  if(!floating){floating=document.createElement('button');floating.id='sopFloatingSave';floating.type='button';floating.className='note-side-save';floating.textContent='儲存';floating.style.zIndex='320';floating.onclick=()=>original.click();document.body.appendChild(floating);}
+  if(!floating){floating=document.createElement('button');floating.id='sopFloatingSave';floating.type='button';floating.className='note-side-save';floating.textContent='儲存';floating.style.zIndex='320';floating.onclick=()=>original.click();document.body.appendChild(floating);enableMovableSave(floating,'sop');}
   const active=page.style.display!=='none'&&original.style.display!=='none';
   floating.classList.toggle('visible',active);
   original.classList.toggle('modal-save-original',active);
-  if(active){const vv=window.visualViewport,h=vv?vv.height:window.innerHeight,t=vv?vv.offsetTop:0;floating.style.left='10px';floating.style.top=Math.round(t+Math.min(Math.max(80,h*.24),Math.max(8,h-76)))+'px';}
+  if(active){const vv=window.visualViewport,h=vv?vv.height:window.innerHeight,t=vv?vv.offsetTop:0;positionMovableSave(floating,10,t+Math.min(Math.max(80,h*.24),Math.max(8,h-76)));}
 }
 // All modal save controls use the same keyboard-safe circular action.
 // Original buttons remain in the DOM and receive the click, preserving validation.
@@ -2858,15 +2914,14 @@ function refreshModalSaveButtons(){
         const target=floating._saveTarget;
         if(target&&!target.disabled)target.click();
       });
-      overlay.appendChild(floating);floatingModalSaveButtons.set(overlay,floating);
+      overlay.appendChild(floating);enableMovableSave(floating,'modal');floatingModalSaveButtons.set(overlay,floating);
     }
     floating._saveTarget=saveBtn;
     if(!saveBtn.classList.contains('modal-save-original'))saveBtn.classList.add('modal-save-original');
     const vv=window.visualViewport;
     const visibleHeight=vv?vv.height:window.innerHeight;
     const visibleTop=vv?vv.offsetTop:0;
-    floating.style.left='10px';
-    floating.style.top=Math.round(visibleTop+Math.min(Math.max(80,visibleHeight*.24),Math.max(8,visibleHeight-76)))+'px';
+    positionMovableSave(floating,10,visibleTop+Math.min(Math.max(80,visibleHeight*.24),Math.max(8,visibleHeight-76)));
   });
 }
 const floatingModalObserver=new MutationObserver(()=>refreshModalSaveButtons());
