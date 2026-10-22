@@ -489,8 +489,8 @@ textarea{resize:vertical; min-height:64px;}
 .save-btn:active{opacity:0.85;}
 
 /* Note editor: save stays reachable without covering the last lines of dictation. */
-.sheet.note-editor .save-btn{display:none;}
-.sheet.note-editor h2{padding-left:65px;min-height:52px;display:flex;align-items:center;}
+.sheet .save-btn{display:none;}
+.sheet h2{padding-left:65px;min-height:52px;display:flex;align-items:center;}
 .note-side-save{
   display:none;position:fixed;z-index:59;width:60px;height:60px;
   padding:4px;border:0;border-radius:50%;background:var(--ink);
@@ -499,6 +499,7 @@ textarea{resize:vertical; min-height:64px;}
   align-items:center;justify-content:center;text-align:center;
 }
 .note-side-save.visible{display:flex;}
+.modal-save-original{display:none!important;}
 .note-side-save:active{opacity:.85;}
 .sheet.note-editor textarea{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
 
@@ -1689,6 +1690,7 @@ function renameFoodBrand(type, oldName, newName){
   const kcalMap = loadFoodBrandKcal();
   const oldKey = type+'::'+oldName, newKey = type+'::'+newName;
   if(kcalMap[oldKey]!=null){ kcalMap[newKey] = kcalMap[oldKey]; delete kcalMap[oldKey]; saveFoodBrandKcal(kcalMap); }
+  saveFoodAlias(type,oldName,newName);
 }
 const FIXED_OPTIONS = {
   vomit: ['吐食物','吐水','吐毛','吐膽汁','吐泡泡'],
@@ -1864,6 +1866,11 @@ function computeFoodStats(day){
 }
 // ---- Food calorie tracking ----
 const FOOD_BRAND_KCAL_KEY = 'kleo-food-brand-kcal-v1';
+const FOOD_ALIASES_KEY='kleo-food-brand-aliases-v1';
+function loadFoodAliases(){try{return JSON.parse(localStorage.getItem(FOOD_ALIASES_KEY)||'{}');}catch(e){return {};}}
+function resolveFoodBrand(type,brand){const aliases=loadFoodAliases();const seen=new Set();let value=brand;while(aliases[type+'::'+value]&&!seen.has(value)){seen.add(value);value=aliases[type+'::'+value];}return value;}
+function saveFoodAlias(type,oldName,newName){const aliases=loadFoodAliases();aliases[type+'::'+oldName]=newName;localStorage.setItem(FOOD_ALIASES_KEY,JSON.stringify(aliases));markLocalChangeAndSync();}
+
 const DAILY_KCAL_TARGET_KEY = 'kleo-daily-kcal-target';
 function loadFoodBrandKcal(){
   try{
@@ -1899,7 +1906,7 @@ function saveDailyTreatsCount(v){
 function typeAverageKcalPerGram(type){
   const brandKcal = loadFoodBrandKcal();
   const brands = loadFoodBrands(type);
-  const vals = brands.map(b=>brandKcal[type+'::'+b]).filter(v=>v!=null && !isNaN(v));
+  const vals = brands.map(b=>brandKcal[type+'::'+resolveFoodBrand(type,b)]).filter(v=>v!=null && !isNaN(v));
   if(vals.length===0) return null;
   return vals.reduce((a,b)=>a+b,0)/vals.length;
 }
@@ -1911,14 +1918,14 @@ function computeFoodKcalSoFar(day){
   (day.food || []).forEach(e=>{
     parseFoodEntryGroups(e.note).forEach(g=>{
       if(g.grams==null) return;
-      const kcalValues = g.brands.map(b=> brandKcal[g.type+'::'+b]).filter(v=>v!=null && !isNaN(v));
+      const kcalValues = g.brands.map(b=> brandKcal[g.type+'::'+resolveFoodBrand(g.type,b)]).filter(v=>v!=null && !isNaN(v));
       if(kcalValues.length===0){
         g.brands.forEach(b=> missingBrands.add(`${g.type}－${b}`));
         return;
       }
       if(kcalValues.length < g.brands.length){
         // some but not all brands in this mixed entry have a density set
-        g.brands.forEach(b=>{ if(brandKcal[g.type+'::'+b]==null) missingBrands.add(`${g.type}－${b}`); });
+        g.brands.forEach(b=>{ if(brandKcal[g.type+'::'+resolveFoodBrand(g.type,b)]==null) missingBrands.add(`${g.type}－${b}`); });
       }
       anyKnown = true;
       const avgKcalPerG = kcalValues.reduce((a,b)=>a+b,0)/kcalValues.length;
@@ -1941,6 +1948,82 @@ function saveFeedingPlan(plan){
   localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(Date.now()));
   markLocalChangeAndSync();
 }
+
+// Petbank 16-slot rotary feeder: two consecutive compartments per programmed meal.
+// This is a mechanical-position estimate, not proof that food was dispensed or eaten.
+const PETBANK_STATE_KEY='kleo-petbank-rotor-v1';
+function loadPetbankState(){
+  try{
+    const v=JSON.parse(localStorage.getItem(PETBANK_STATE_KEY)||'null');
+    return v && typeof v==='object' && !Array.isArray(v) ? v : null;
+  }catch(e){return null;}
+}
+function savePetbankState(state){
+  const next={...state,updatedAt:Date.now()};
+  localStorage.setItem(PETBANK_STATE_KEY,JSON.stringify(next));
+  markLocalChangeAndSync();
+  return next;
+}
+function mergePetbankState(remote,force){
+  if(!remote || typeof remote!=='object' || Array.isArray(remote))return;
+  const local=loadPetbankState();
+  if(force || !local || (Number(remote.updatedAt)||0)>(Number(local.updatedAt)||0)){
+    localStorage.setItem(PETBANK_STATE_KEY,JSON.stringify(remote));
+  }
+}
+function petbankMeals(plan){
+  return (plan||[]).filter(ev=>ev.feeder===true && ev.type==='乾糧' && /^([01]\d|2[0-3]):[0-5]\d$/.test(ev.time||''));
+}
+function petbankStatus(plan,now=new Date(),state=loadPetbankState()){
+  const meals=petbankMeals(plan);
+  if(!state || !state.anchorAt || !Number.isInteger(Number(state.anchorSlot)) || !meals.length) return null;
+  const start=new Date(state.anchorAt);
+  if(!Number.isFinite(start.getTime()) || start>now)return null;
+  // The tray has only eight two-compartment meals. Stop scanning after it has
+  // exhausted its original load, but keep the missed-refill warning visible.
+  let events=0,nextAt=null;
+  const d=new Date(start.getFullYear(),start.getMonth(),start.getDate());
+  const end=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  for(let i=0;i<366 && d<=end;i++,d.setDate(d.getDate()+1)){
+    const yy=d.getFullYear(),mm=d.getMonth(),dd=d.getDate();
+    for(const ev of meals){
+      const [h,m]=ev.time.split(':').map(Number);
+      const at=new Date(yy,mm,dd,h,m,0,0);
+      if(at>start && at<=now)events++;
+    }
+  }
+  const slotsUsed=events*2;
+  const initial=Math.max(0,Math.min(16,Number(state.filledSlots)||0));
+  const remaining=Math.max(0,initial-slotsUsed);
+  const position=((Number(state.anchorSlot)-1+slotsUsed)%16+16)%16+1;
+  const refillAt=Math.max(0,Math.min(16,Number(state.refillAt) || 4));
+  // Determine the next scheduled feeder meal, including tomorrow.
+  for(let offset=0;offset<=2 && !nextAt;offset++){
+    const day=new Date(now.getFullYear(),now.getMonth(),now.getDate()+offset);
+    for(const ev of meals){
+      const [h,m]=ev.time.split(':').map(Number);
+      const at=new Date(day.getFullYear(),day.getMonth(),day.getDate(),h,m);
+      if(at>now && (!nextAt||at<nextAt))nextAt=at;
+    }
+  }
+  return {position,remaining,events,slotsUsed,refillAt,warning:remaining<=refillAt,
+    empty:remaining<2,nextAt,meals:meals.length};
+}
+function petbankHomeHtml(plan){
+  const st=petbankStatus(plan);
+  if(!st)return '';
+  const state=loadPetbankState();
+  const text=st.empty?'⚠️ Petbank 已無足夠格數，請補糧並校正':
+    st.warning?`⚠️ Petbank 剩 ${st.remaining} 格（${Math.floor(st.remaining/2)} 餐），請準備補糧`:
+    `Petbank 預期停在第 ${st.position} 格｜剩 ${st.remaining} 格`;
+  const next=st.nextAt?`｜下次 ${st.nextAt.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
+  return `<div style="margin:4px 0 8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:12px;line-height:1.6;">
+    <strong>${text}</strong>${next}
+    <button type="button" class="edit-feeding-plan-link" style="display:block;border:0;background:none;text-decoration:underline;color:var(--ink-soft);padding:5px 0 0;font-size:12px;">核對轉盤／補糧</button>
+    <div style="font-size:10.5px;color:var(--ink-soft);">依排程推算，非實際落糧確認。</div>
+  </div>`;
+}
+
 // A bowl is a durable draft until explicitly replaced. Weighings create food records only on consumption.
 const WET_BOWL_KEY='kleo-wet-bowl-v1';
 function loadWetBowl(){try{return JSON.parse(localStorage.getItem(WET_BOWL_KEY)||'null');}catch(e){return null;}}
@@ -1949,6 +2032,11 @@ function mergeWetBowl(remote,preferRemote){
   if(!remote)return;
   const local=loadWetBowl();
   if(preferRemote||!local||(remote.updatedAt||0)>(local.updatedAt||0))localStorage.setItem(WET_BOWL_KEY,JSON.stringify(remote));
+}
+function wetBowlFoodRemaining(bowl){
+  if(Number.isFinite(bowl.foodRemaining))return bowl.foodRemaining;
+  const mixture=Math.max(0,bowl.lastWeight-bowl.empty);
+  return mixture*(bowl.foodG/(bowl.foodG+bowl.waterG));
 }
 function preferredWetFoodBrand(brands){
   if(!brands.length)return '';
@@ -1991,10 +2079,11 @@ function showWetFoodWeighModal(){
       `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g</p>
       <div style="border:1px solid var(--line,#ddd);border-radius:10px;padding:12px;margin:10px 0;font-size:14px">
         <div>目前剩餘罐頭（估算）</div>
-        <strong style="font-size:22px" id="wbCurrentFood">${(Math.max(0,bowl.lastWeight-bowl.empty)*bowl.foodG/(bowl.foodG+bowl.waterG)).toFixed(2)} g</strong>
+        <strong style="font-size:22px" id="wbCurrentFood">${wetBowlFoodRemaining(bowl).toFixed(2)} g</strong>
       </div>
+      <label>這次追加水量 (g，可留空)</label><input id="wbExtraWater" type="number" inputmode="decimal" min="0" step="0.1" placeholder="沒有加水就留空">
       <label>這次吃完＋碗 (g)</label><input id="wbRemaining" type="number" inputmode="decimal" step="0.1" placeholder="最新秤重">
-      <div id="wbRemainingPreview" style="font-size:13px;margin:5px 0;color:var(--ink-soft)">輸入最新秤重後，顯示更新後剩餘罐頭量。</div>
+      <div id="wbRemainingPreview" style="font-size:14px;margin:7px 0;color:var(--ink);font-weight:600">輸入最新秤重後，先預覽這次吃掉的罐頭量。</div>
       <label>測量日期</label><input id="wbDate" type="date" value="${todayStr()}">
       <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" maxlength="5" autocomplete="off" data-clock-time="true" value="${nowTime()}">
       <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
@@ -2003,15 +2092,24 @@ function showWetFoodWeighModal(){
       <button type="button" class="modal-close-btn" id="wbClose" style="margin-top:10px">關閉</button>`;
     panel.querySelector('#wbClose').onclick=close;
     if(!newMode){
-      panel.querySelector('#wbRemaining').addEventListener('input',e=>{
-        const raw=e.target.value;
-        const preview=panel.querySelector('#wbRemainingPreview');
-        if(raw.trim()===''){preview.textContent='輸入最新秤重後，顯示更新後剩餘罐頭量。';return;}
+      const preview=()=>{
+        const target=panel.querySelector('#wbRemainingPreview');
+        const raw=panel.querySelector('#wbRemaining').value;
+        const waterRaw=panel.querySelector('#wbExtraWater').value;
+        const extraWater=waterRaw.trim()===''?0:Number(waterRaw);
+        if(!Number.isFinite(extraWater)||extraWater<0){target.textContent='追加水量不可為負數。';return;}
+        const beforeFood=wetBowlFoodRemaining(bowl), beforeMixture=Math.max(0,bowl.lastWeight-bowl.empty);
+        const ratio=(beforeMixture+extraWater)>0?beforeFood/(beforeMixture+extraWater):0;
+        if(raw.trim()===''){
+          target.textContent=extraWater>0?`追加水 ${extraWater.toFixed(1)}g；可只儲存加水，或輸入吃完重量。`:'輸入最新秤重後，先預覽這次吃掉的罐頭量。';return;
+        }
         const value=Number(raw);
-        if(!Number.isFinite(value)||value<bowl.empty-0.11||value>bowl.lastWeight){preview.textContent='請輸入介於空碗與上次連碗重量之間的數字。';return;}
-        const remainingFood=Math.max(0,value-bowl.empty)*bowl.foodG/(bowl.foodG+bowl.waterG);
-        preview.textContent=`本次秤重後預計剩餘罐頭：${remainingFood.toFixed(2)} g（儲存後更新）`;
-      });
+        if(!Number.isFinite(value)||value<bowl.empty-0.11||value>bowl.lastWeight+extraWater){target.textContent='最新重量須介於空碗與加水後的重量之間。';return;}
+        const eaten=(bowl.lastWeight+extraWater-value)*ratio;
+        target.textContent=`本次吃了罐頭 ${eaten.toFixed(2)}g｜吃完剩餘 ${(beforeFood-eaten).toFixed(2)}g（尚未儲存）`;
+      };
+      panel.querySelector('#wbRemaining').addEventListener('input',preview);
+      panel.querySelector('#wbExtraWater').addEventListener('input',preview);
     }
     panel.querySelector('#wbNew').onchange=e=>{newMode=e.target.checked;draw();};
     panel.querySelector('#wbSave').onclick=()=>{
@@ -2023,28 +2121,42 @@ function showWetFoodWeighModal(){
         const brand=panel.querySelector('#wbBrand').value;
         if(!brand){status.textContent='請先設定罐頭品項。';return;}
         if(bowl&&!confirm('確定開始新的一碗？舊碗的備餐狀態將結束（已記錄的飲食不會刪除）。'))return;
-        bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
+        bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,foodRemaining:food-empty,waterRemaining:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
         bowl.preparedAt=new Date().toISOString();bowl.initialFoodWeight=food;bowl.initialMixedWeight=mixed;bowl.weighings=[];
         storeWetBowl(bowl);markLocalChangeAndSync();newMode=false;draw();
       }else{
-        const remaining=number('#wbRemaining'),date=panel.querySelector('#wbDate').value,timeInput=panel.querySelector('#wbTime');
+        const remaining=number('#wbRemaining'),extraRaw=panel.querySelector('#wbExtraWater').value,extraWater=extraRaw.trim()===''?0:Number(extraRaw),date=panel.querySelector('#wbDate').value,timeInput=panel.querySelector('#wbTime');
         autoFormatTimeInput(timeInput);const time=timeInput.value.trim();
-        if(!Number.isFinite(remaining)||remaining<bowl.empty-0.11||remaining>=bowl.lastWeight){status.textContent='剩餘重量必須小於上次重量，且不得低於空碗重量。';return;}
+        if(!Number.isFinite(extraWater)||extraWater<0){status.textContent='追加水量不可為負數。';return;}
+        const waterOnly=extraWater>0&&!Number.isFinite(remaining);
+        if(!waterOnly&&(!Number.isFinite(remaining)||remaining<bowl.empty-0.11||remaining>=bowl.lastWeight+extraWater)){status.textContent='最新重量須低於加水後的重量，且不得低於空碗。';return;}
         if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)){status.textContent='請確認日期與時間（HH:MM）。';return;}
-        if(isDayLocked(date)){lockedDayWarning(date);return;}
-        const eaten=(bowl.lastWeight-remaining)*bowl.foodG/(bowl.foodG+bowl.waterG);
-        if(eaten<=0||eaten>bowl.foodG+0.01){status.textContent='重量不合理，請重新確認。';return;}
+        if(isDayLocked(date)&&!waterOnly){lockedDayWarning(date);return;}
+        const beforeFood=wetBowlFoodRemaining(bowl);
+        const mixtureBefore=Math.max(0,bowl.lastWeight-bowl.empty);
+        const afterWaterWeight=bowl.lastWeight+extraWater;
+        const consumed=waterOnly?0:afterWaterWeight-remaining;
+        const eaten=consumed*(mixtureBefore+extraWater>0?beforeFood/(mixtureBefore+extraWater):0);
+        if(!waterOnly&&(eaten<=0||eaten>beforeFood+0.01)){status.textContent='重量不合理，請重新確認。';return;}
+        if(waterOnly){
+          bowl.lastWeight=afterWaterWeight;bowl.waterRemaining=(mixtureBefore-beforeFood)+extraWater;
+          bowl.foodRemaining=beforeFood;bowl.pendingWater=(Number(bowl.pendingWater)||0)+extraWater;bowl.updatedAt=Date.now();
+          bowl.weighings=Array.isArray(bowl.weighings)?bowl.weighings:[];
+          bowl.weighings.push({date,time,addedWater:extraWater,waterOnly:true,remainingWeight:afterWaterWeight});
+          storeWetBowl(bowl);markLocalChangeAndSync();draw();return;
+        }
         const grams=Math.round(eaten*100)/100;
         const day=data[date]||(data[date]={glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
         day.food=day.food||[];
         const previousWeight=bowl.lastWeight;
-        const weighing={date,time,previousWeight,remainingWeight:remaining,mixtureConsumed:Math.round((previousWeight-remaining)*100)/100,foodConsumed:grams};
-        const weightDetails=`空碗 ${bowl.empty.toFixed(1)}g｜初始罐頭＋碗 ${(bowl.initialFoodWeight??bowl.empty+bowl.foodG).toFixed(1)}g｜加水後＋碗 ${(bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG).toFixed(1)}g｜上次連碗 ${previousWeight.toFixed(1)}g｜本次剩餘連碗 ${remaining.toFixed(1)}g`;
+        const recordedWater=extraWater+(Number(bowl.pendingWater)||0);
+        const weighing={date,time,previousWeight,addedWater:recordedWater,remainingWeight:remaining,mixtureConsumed:Math.round(consumed*100)/100,foodConsumed:grams};
+        const weightDetails=`空碗 ${bowl.empty.toFixed(1)}g｜初始罐頭＋碗 ${(bowl.initialFoodWeight??bowl.empty+bowl.foodG).toFixed(1)}g｜加水後＋碗 ${(bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG).toFixed(1)}g｜上次連碗 ${previousWeight.toFixed(1)}g｜這段期間追加水 ${recordedWater.toFixed(1)}g｜本次剩餘連碗 ${remaining.toFixed(1)}g`;
         const entry={time,note:`罐頭：${bowl.brand} ${grams}g（${weightDetails}）`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id,wetBowlWeighing:weighing,wetBowlInitial:{empty:bowl.empty,foodWeight:bowl.initialFoodWeight??bowl.empty+bowl.foodG,mixedWeight:bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG}};
         day.food.push(entry);
         if(!save('罐頭秤重')){day.food.pop();return;}
-        bowl.lastWeight=remaining;bowl.weighings=Array.isArray(bowl.weighings)?bowl.weighings:[];bowl.weighings.push(weighing);bowl.updatedAt=Date.now();storeWetBowl(bowl);markLocalChangeAndSync();
-        render();alert(`已記錄本次罐頭 ${grams.toFixed(2)}g（混合物減少 ${(bowl.foodG+bowl.waterG>0?eaten*(bowl.foodG+bowl.waterG)/bowl.foodG:0).toFixed(1)}g）。`);draw();
+        bowl.lastWeight=remaining;bowl.pendingWater=0;bowl.foodRemaining=Math.max(0,beforeFood-eaten);bowl.waterRemaining=Math.max(0,remaining-bowl.empty-bowl.foodRemaining);bowl.weighings=Array.isArray(bowl.weighings)?bowl.weighings:[];bowl.weighings.push(weighing);bowl.updatedAt=Date.now();storeWetBowl(bowl);markLocalChangeAndSync();
+        render();alert(`已記錄本次罐頭 ${grams.toFixed(2)}g（混合物減少 ${consumed.toFixed(1)}g；追加水 ${extraWater.toFixed(1)}g）。`);draw();
       }
     };
   }
@@ -2052,7 +2164,7 @@ function showWetFoodWeighModal(){
 }
 function feedingPlanEventKcal(ev){
   const brandKcal = loadFoodBrandKcal();
-  const perUnit = brandKcal[ev.type+'::'+ev.brand];
+  const perUnit = brandKcal[ev.type+'::'+resolveFoodBrand(ev.type,ev.brand)];
   if(perUnit==null) return null;
   return perUnit * (parseFloat(ev.amount)||0);
 }
@@ -2112,7 +2224,8 @@ function buildKcalProgressHtml(day, dateStr){
     return `<div class="kcal-progress${isOver?' over':''}">
       ${missingWarningHtml}
       <div class="kcal-bar-label">🔥 當天熱量總計：${totalKcal.toFixed(1)} / ${(+target).toFixed(1)} kcal</div>
-      <div class="kcal-bar-track">
+      ${petbankHomeHtml(plan)}
+    <div class="kcal-bar-track">
         <div class="kcal-bar-fill${isOver?' over':''}" style="width:${fillPct}%;"></div>
         <div class="kcal-bar-target" style="left:${targetPct}%;" title="當日目標"></div>
       </div>
@@ -2667,7 +2780,7 @@ let waterTimeListener = null;
 const dynamicFields = document.getElementById('dynamicFields');
 const noteSideSave = document.getElementById('noteSideSave');
 function updateNoteEditorLayout(){
-  const active = sheet.classList.contains('open') && currentCat==='note';
+  const active = sheet.classList.contains('open');
   sheet.classList.toggle('note-editor', active);
   noteSideSave.classList.toggle('visible', active);
   if(!active) return;
@@ -2679,7 +2792,7 @@ function updateNoteEditorLayout(){
   const left=r.left>=76 ? r.left-70 : 10;
   noteSideSave.style.left=Math.max(8,Math.round(left))+'px';
   noteSideSave.style.top=Math.round(viewTop+Math.min(Math.max(80,viewHeight*.24),Math.max(8,viewHeight-76)))+'px';
-  noteSideSave.textContent=document.getElementById('saveBtn').textContent;
+  noteSideSave.textContent='儲存';
   noteSideSave.setAttribute('aria-label',document.getElementById('saveBtn').textContent);
 }
 noteSideSave.addEventListener('click',()=>document.getElementById('saveBtn').click());
@@ -2700,6 +2813,62 @@ if(window.visualViewport){
 }
 window.addEventListener('resize',adjustSheetForKeyboard);
 
+function updateSopFloatingSave(){
+  const page=document.getElementById('sopPage'),original=document.getElementById('sopSaveBtn');
+  let floating=document.getElementById('sopFloatingSave');
+  if(!floating){floating=document.createElement('button');floating.id='sopFloatingSave';floating.type='button';floating.className='note-side-save';floating.textContent='儲存';floating.style.zIndex='320';floating.onclick=()=>original.click();document.body.appendChild(floating);}
+  const active=page.style.display!=='none'&&original.style.display!=='none';
+  floating.classList.toggle('visible',active);
+  original.classList.toggle('modal-save-original',active);
+  if(active){const vv=window.visualViewport,h=vv?vv.height:window.innerHeight,t=vv?vv.offsetTop:0;floating.style.left='10px';floating.style.top=Math.round(t+Math.min(Math.max(80,h*.24),Math.max(8,h-76)))+'px';}
+}
+// All modal save controls use the same keyboard-safe circular action.
+// Original buttons remain in the DOM and receive the click, preserving validation.
+const floatingModalSaveButtons=new Map();
+function refreshModalSaveButtons(){
+  const overlays=[...document.body.children].filter(el=>{
+    if(!(el instanceof HTMLElement)||el===sheet||el===backdrop)return false;
+    const style=el.style;
+    return style.position==='fixed' && Number(style.zIndex||0)>=100 && el.querySelector('.modal-close-btn');
+  });
+  const active=new Set(overlays);
+  floatingModalSaveButtons.forEach((floating,overlay)=>{
+    if(!active.has(overlay)||!overlay.isConnected){floating.remove();floatingModalSaveButtons.delete(overlay);}
+  });
+  overlays.forEach(overlay=>{
+    const candidates=[...overlay.querySelectorAll('button')].filter(btn=>
+      !btn.classList.contains('modal-floating-save') &&
+      /^(儲存|保存|計算並新增飲食紀錄)/.test(btn.textContent.trim()) &&
+      !btn.closest('.modal-floating-save')
+    );
+    // A single primary save per dialog: no ambiguity between multiple actions.
+    const saveBtn=candidates.length===1?candidates[0]:null;
+    let floating=floatingModalSaveButtons.get(overlay);
+    if(!saveBtn){if(floating){floating.remove();floatingModalSaveButtons.delete(overlay);}return;}
+    if(!floating){
+      floating=document.createElement('button');
+      floating.type='button';floating.className='note-side-save modal-floating-save visible';
+      floating.textContent='儲存';
+      floating.style.zIndex='9999';
+      floating.addEventListener('click',()=>{
+        const target=floating._saveTarget;
+        if(target&&!target.disabled)target.click();
+      });
+      overlay.appendChild(floating);floatingModalSaveButtons.set(overlay,floating);
+    }
+    floating._saveTarget=saveBtn;
+    if(!saveBtn.classList.contains('modal-save-original'))saveBtn.classList.add('modal-save-original');
+    const vv=window.visualViewport;
+    const visibleHeight=vv?vv.height:window.innerHeight;
+    const visibleTop=vv?vv.offsetTop:0;
+    floating.style.left='10px';
+    floating.style.top=Math.round(visibleTop+Math.min(Math.max(80,visibleHeight*.24),Math.max(8,visibleHeight-76)))+'px';
+  });
+}
+const floatingModalObserver=new MutationObserver(()=>refreshModalSaveButtons());
+floatingModalObserver.observe(document.body,{childList:true,subtree:true});
+if(window.visualViewport){window.visualViewport.addEventListener('resize',()=>{refreshModalSaveButtons();updateSopFloatingSave();});window.visualViewport.addEventListener('scroll',()=>{refreshModalSaveButtons();updateSopFloatingSave();});}
+window.addEventListener('resize',refreshModalSaveButtons);
 function autoGrowTextarea(el){
   // A capped, internally scrollable textarea keeps the caret visible when the
   // iPad software keyboard or dictation panel occupies the lower viewport.
@@ -3171,10 +3340,16 @@ function mergeSyncableTagStorage(remoteBucket){
     }catch(e){ /* malformed JSON on either side: leave local untouched */ }
   });
 }
+function moveTagInList(list,value,direction,saveFn,refreshFn){
+  const index=list.indexOf(value),next=index+direction;
+  if(index<0||next<0||next>=list.length)return;
+  [list[index],list[next]]=[list[next],list[index]];
+  saveFn(list);refreshFn();
+}
 function renderTagButtons(tags){
   return tags.map(t=>`<button type="button" class="option-btn" data-val="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
 }
-function showTagManageModal(currentName, onRename, onDelete){
+function showTagManageModal(currentName, onRename, onDelete, onMove){
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
   const box = document.createElement('div');
@@ -3183,6 +3358,7 @@ function showTagManageModal(currentName, onRename, onDelete){
     <h3 style="margin:0 0 12px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">管理標籤</h3>
     <input type="text" id="tagRenameInput" value="${escapeHtml(currentName)}" style="margin-bottom:10px;">
     <button type="button" id="tagRenameConfirmBtn" class="tag-add-btn" style="width:100%;margin-bottom:8px;">重新命名</button>
+    ${onMove?`<div style="display:flex;gap:8px;margin-bottom:10px"><button type="button" id="tagMoveUp" class="tag-add-btn" style="flex:1">↑ 上移</button><button type="button" id="tagMoveDown" class="tag-add-btn" style="flex:1">↓ 下移</button></div>`:''}
     <button type="button" id="tagDeleteConfirmBtn" style="display:block;width:100%;text-align:center;padding:10px 12px;border:1px solid #B23A48;border-radius:8px;background:none;color:#B23A48;cursor:pointer;font-size:13px;margin-bottom:8px;">刪除這個標籤</button>
     <button type="button" class="modal-close-btn">取消</button>
   `;
@@ -3197,6 +3373,7 @@ function showTagManageModal(currentName, onRename, onDelete){
     onRename(newName);
     close();
   });
+  if(onMove){box.querySelector('#tagMoveUp').onclick=()=>{onMove(-1);close();};box.querySelector('#tagMoveDown').onclick=()=>{onMove(1);close();};}
   box.querySelector('#tagDeleteConfirmBtn').addEventListener('click', ()=>{
     if(!confirm(`確定要刪除標籤「${currentName}」嗎？（不會影響已經記錄過的資料，只是以後不會再出現在選項裡）`)) return;
     onDelete();
@@ -3453,7 +3630,10 @@ function wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey){
             saveTagsGeneric(storageKey, tagsArr);
             document.getElementById(gridId).innerHTML = renderTagButtons(tagsArr);
             wireTagGroup(gridId, hiddenInputId, tagsArr, storageKey);
-          }
+          },
+          direction=>moveTagInList(tagsArr,btn.dataset.val,direction,
+            list=>saveTagsGeneric(storageKey,list),
+            ()=>{document.getElementById(gridId).innerHTML=renderTagButtons(tagsArr);wireTagGroup(gridId,hiddenInputId,tagsArr,storageKey);})
         );
       };
       const startPress = ()=>{
@@ -3537,7 +3717,9 @@ function wireMedTagButtons(){
           saveMedTags(medTags);
           document.getElementById('medTagGrid').innerHTML = renderMedTagButtons();
           wireMedTagButtons();
-        }
+        },
+        direction=>moveTagInList(medTags,btn.dataset.opt,direction,
+          saveMedTags,()=>{document.getElementById('medTagGrid').innerHTML=renderMedTagButtons();wireMedTagButtons();})
       );
     };
     const startPress = ()=>{
@@ -3883,7 +4065,8 @@ function setCategory(cat){
             if(idx>=0) list.splice(idx,1);
             saveFoodTypes(list);
             closeSheetFn();
-          }
+          },
+          direction=>moveTagInList(loadFoodTypes(),btn.dataset.type,direction,saveFoodTypes,()=>{closeSheetFn();})
         );
       };
       const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
@@ -3905,7 +4088,9 @@ function setCategory(cat){
             if(idx>=0) list.splice(idx,1);
             saveFoodBrands(type, list);
             closeSheetFn();
-          }
+          },
+          direction=>moveTagInList(loadFoodBrands(type),btn.dataset.brand,direction,
+            list=>saveFoodBrands(type,list),()=>closeSheetFn())
         );
       };
       const startPress = ()=>{ btn.dataset.longPressed=''; pressTimer=setTimeout(()=>{ btn.dataset.longPressed='1'; openManage(); },550); };
@@ -5301,7 +5486,7 @@ function ampmFoodSummary(dateStr, isPm){
         if(g.unit==='g')result[g.type==='乾糧'?'dry':g.type==='罐頭'?'wet':'other']+=g.grams;
         const brands=g.brands||[];
         if(brands.length===1){
-          const kcal=Number(kcalMap[g.type+'::'+brands[0]]);
+          const kcal=Number(kcalMap[g.type+'::'+resolveFoodBrand(g.type,brands[0])]);
           if(Number.isFinite(kcal)&&kcal>0)result.kcal+=g.grams*kcal;
           else result.unknown++;
           const carb=kleoCarbMatch(brands[0]);
@@ -5433,7 +5618,7 @@ function buildAmPmFoodComparison(){
         const category=g.type==='乾糧'?'dry':g.type==='罐頭'?'wet':'other';
         if(g.unit==='g')b[category]+=g.grams;
         const names=g.brands;
-        const values=names.map(name=>Number(kcalMap[g.type+'::'+name]));
+        const values=names.map(name=>Number(kcalMap[g.type+'::'+resolveFoodBrand(g.type,name)]));
         if(names.length && values.every(v=>Number.isFinite(v)&&v>0))b.kcal+=g.grams*values.reduce((a,v)=>a+v,0)/values.length;
         else b.missingKcal++;
         if(g.unit==='g' && names.length===1){
@@ -7579,6 +7764,7 @@ function showFeedingPlanModal(){
       <div id="feedingPlanTotalBox" style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
         ${feedingPlanSummaryHtml(plan)}
       </div>
+      <div id="petbankPanel" style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px;"></div>
       <button type="button" id="saveFeedingPlanBtn" class="tag-add-btn" style="width:100%;min-height:48px;margin-top:12px;">儲存計畫</button>
       <button type="button" id="clearFeedingPlanBtn" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清空計畫（改回手動目標）</button>
       <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
@@ -7589,6 +7775,64 @@ function showFeedingPlanModal(){
       const { total, anyMissing } = feedingPlanTotalKcal(plan);
       totalBoxEl.innerHTML = `${feedingPlanSummaryHtml(plan)}`;
     }
+    function renderPetbankPanel(){
+      const panel=box.querySelector('#petbankPanel');
+      const state=loadPetbankState();
+      const st=petbankStatus(plan);
+      const meals=petbankMeals(plan);
+      const slot=st?st.position:(state?.anchorSlot||1);
+      const remain=st?st.remaining:(state?.filledSlots??16);
+      const last=state?.lastCheck;
+      const nextLabel=st?.nextAt?st.nextAt.toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'—';
+      panel.innerHTML=`
+        <strong style="font-size:14px;">Petbank 轉盤核對｜16 格</strong>
+        <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 9px;">每餐前進 2 格；先在上蓋依轉動方向標 1–16，並選定轉盤上的固定辨識點對照。勾選上方由 Petbank 執行的乾糧餐次。</div>
+        ${!meals.length?'<div style="font-size:12px;color:#B23A48;margin-bottom:8px;">尚未勾選 Petbank 餵食時段，無法推算位置。</div>':''}
+        ${st?`<div style="padding:9px;border-radius:8px;background:var(--paper-raised);font-size:13px;line-height:1.8;">
+          <b>預期停在第 ${st.position} 格</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
+          ${st.warning?`<div style="color:#B23A48;font-weight:700;">${st.empty?'⚠️ 格數不足，下次餵食前必須補糧':'⚠️ 即將需要補糧'}</div>`:''}
+        </div>`:'<div style="font-size:12px;margin:7px 0;">先設定起始位置及目前裝有食物的格數。</div>'}
+        <label style="display:block;font-size:12px;margin-top:9px;">實際看到的轉盤位置（1–16）</label>
+        <input id="petbankObserved" type="number" min="1" max="16" step="1" inputmode="numeric" value="${slot}" style="width:100%;box-sizing:border-box;">
+        <button id="petbankCheckBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:6px;">核對並記錄目前位置</button>
+        ${last?`<div style="font-size:11.5px;margin:7px 0;color:var(--ink-soft);">上次核對：${escapeHtml(last.at||'')}｜看到第 ${Number(last.observed)} 格／預期第 ${Number(last.expected)} 格｜${last.matched?'符合':'不符，請檢查'}</div>`:''}
+        <div style="border-top:1px solid var(--line);margin:12px 0 9px;"></div>
+        <label style="display:block;font-size:12px;">補糧提醒門檻</label>
+        <select id="petbankRefillAt" style="width:100%;margin:4px 0 9px;">
+          ${[2,4,6,8].map(n=>`<option value="${n}" ${(state?.refillAt??4)===n?'selected':''}>剩 ${n} 格（${n/2} 餐）提醒</option>`).join('')}
+        </select>
+        <label style="display:block;font-size:12px;">目前實際裝有食物的格數</label>
+        <input id="petbankFilled" type="number" min="0" max="16" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
+        <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">依目前位置／格數校正</button>
+        <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 16 格，重新開始計算</button>
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">核對只檢查轉盤位置，不會自動確認 Kleo 已吃下乾糧。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
+      const observed=()=>{const v=Number(panel.querySelector('#petbankObserved').value);return Number.isInteger(v)&&v>=1&&v<=16?v:null;};
+      const threshold=()=>Number(panel.querySelector('#petbankRefillAt').value)||4;
+      const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=16?v:null;};
+      panel.querySelector('#petbankCheckBtn').onclick=()=>{
+        const v=observed();if(v===null){alert('請輸入 1–16 的格號。');return;}
+        if(!st){alert('請先校正起始位置，並儲存有勾選 Petbank 的餵食計畫。');return;}
+        savePetbankState({...state,refillAt:threshold(),lastCheck:{at:new Date().toLocaleString('zh-TW'),observed:v,expected:st.position,matched:v===st.position}});
+        renderPetbankPanel();
+      };
+      panel.querySelector('#petbankRefillAt').onchange=()=>{
+        if(!state){return;}
+        savePetbankState({...state,refillAt:threshold()});
+        renderPetbankPanel();
+      };
+      function calibrate(full){
+        const v=observed(),f=full?16:filled();
+        if(v===null||f===null){alert('請確認格號 1–16、剩餘格數 0–16。');return;}
+        const next={anchorAt:new Date().toISOString(),anchorSlot:v,filledSlots:f,refillAt:threshold(),lastCheck:null};
+        savePetbankState(next);renderPetbankPanel();window.render();
+      }
+      panel.querySelector('#petbankCalibrateBtn').onclick=()=>calibrate(false);
+      panel.querySelector('#petbankRefilledBtn').onclick=()=>{
+        if(!confirm('確定已經補滿 16 格乾糧？這會將剩餘格數重置為 16。'))return;
+        calibrate(true);
+      };
+    }
+    renderPetbankPanel();
     plan.forEach((ev, i)=>{
       const brands = ev.type ? loadFoodBrands(ev.type) : [];
       const unit = ev.type ? foodTypeUnit(ev.type) : 'g';
@@ -7605,13 +7849,17 @@ function showFeedingPlanModal(){
           ${brands.map(b=>`<option value="${escapeHtml(b)}"${b===ev.brand?' selected':''}>${escapeHtml(b)}</option>`).join('')}
         </select>
         <input type="text" inputmode="decimal" class="fp-amount" value="${ev.amount!=null?ev.amount:''}" placeholder="${unit}" style="width:54px;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;width:100%;margin:1px 0 0;">
+          <input type="checkbox" class="fp-petbank" ${ev.feeder?'checked':''} ${ev.type!=='乾糧'?'disabled':''} style="width:18px;height:18px;margin:0;">Petbank 自動餵食（每次轉 2 格）
+        </label>
         <button type="button" class="fp-remove" style="background:none;border:none;color:var(--ink-soft);font-size:16px;cursor:pointer;">✕</button>
       `;
       rowsEl.appendChild(row);
       const timeInput = row.querySelector('.fp-time');
       timeInput.addEventListener('focus', ()=>{ timeInput.select(); });
       timeInput.addEventListener('input', e=>{ autoFormatTimeInput(e.target); ev.time = e.target.value.trim(); });
-      row.querySelector('.fp-type').addEventListener('change', e=>{ ev.type = e.target.value; ev.brand = ''; render(); });
+      row.querySelector('.fp-type').addEventListener('change', e=>{ ev.type = e.target.value; ev.brand = ''; if(ev.type!=='乾糧')ev.feeder=false; render(); });
+      row.querySelector('.fp-petbank').addEventListener('change', e=>{ev.feeder=e.target.checked; renderPetbankPanel();});
       row.querySelector('.fp-brand').addEventListener('change', e=>{ ev.brand = e.target.value; refreshTotalOnly(); });
       row.querySelector('.fp-amount').addEventListener('input', e=>{ ev.amount = e.target.value.trim(); refreshTotalOnly(); });
       row.querySelector('.fp-remove').addEventListener('click', ()=>{ plan.splice(i,1); render(); });
@@ -7691,6 +7939,13 @@ function showKcalSettingsModal(){
     ${brandRowsHtml || '<p style="font-size:12px;color:var(--ink-soft);">目前還沒有任何食物品牌，先去新增一筆飲食記錄建立品牌後再回來設定。</p>'}
     <label style="margin-top:14px;">📐 建議每日份量</label>
     <div id="dailyPortionCalc">${buildDailyPortionHtml()}</div>
+    <div id="foodAliasRepair" style="margin-top:16px;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <b>修復歷史食品名稱與熱量</b><p style="font-size:12px">選擇舊名稱及對應的現有品牌，將歷史紀錄連動到正確熱量。不同配方請勿合併。</p>
+      <select id="foodAliasOld" style="width:100%;margin-bottom:7px"></select>
+      <select id="foodAliasNew" style="width:100%;margin-bottom:7px"></select>
+      <button type="button" id="applyFoodAlias" class="tag-add-btn" style="width:100%">連動舊名稱</button>
+      <p id="foodAliasStatus" style="font-size:12px"></p>
+    </div>
     <button type="button" id="saveKcalSettingsBtn" class="tag-add-btn" style="width:100%;margin-top:14px;">儲存設定</button>
     <button type="button" class="modal-close-btn">關閉</button>
   `;
@@ -7699,6 +7954,57 @@ function showKcalSettingsModal(){
   const close = ()=> overlay.remove();
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
   box.querySelector('.modal-close-btn').addEventListener('click', close);
+  const oldAliasSelect=box.querySelector('#foodAliasOld'),newAliasSelect=box.querySelector('#foodAliasNew');
+  const knownKcal=loadFoodBrandKcal();
+  const oldMissing=new Map();
+  Object.values(data).forEach(day=>(day.food||[]).forEach(e=>parseFoodEntryGroups(e.note).forEach(g=>{
+    g.brands.forEach(brand=>{
+      if(knownKcal[g.type+'::'+resolveFoodBrand(g.type,brand)]==null)oldMissing.set(g.type+'::'+brand,{type:g.type,brand});
+    });
+  })));
+  const missingList=[...oldMissing.values()];
+  oldAliasSelect.innerHTML='<option value="">選擇歷史名稱</option>'+missingList.map((v,i)=>`<option value="${i}">${escapeHtml(v.type+'－'+v.brand)}</option>`).join('');
+  oldAliasSelect.onchange=()=>{
+    const old=missingList[Number(oldAliasSelect.value)];
+    if(!old||oldAliasSelect.value===''){newAliasSelect.innerHTML='';return;}
+    const candidates=loadFoodBrands(old.type).filter(brand=>knownKcal[old.type+'::'+resolveFoodBrand(old.type,brand)]!=null);
+    newAliasSelect.innerHTML='<option value="">選擇正確品牌</option>'+candidates.map(brand=>`<option value="${escapeHtml(brand)}">${escapeHtml(brand)}</option>`).join('');
+  };
+  box.querySelector('#applyFoodAlias').onclick=()=>{
+    const old=missingList[Number(oldAliasSelect.value)],target=newAliasSelect.value;
+    if(!old||oldAliasSelect.value===''||!target){box.querySelector('#foodAliasStatus').textContent='請選擇舊名稱與正確品牌。';return;}
+    if(!confirm(`確定「${old.brand}」與「${target}」是相同食品、相同熱量密度？`))return;
+    // Snapshot before rewriting any medical diary entries. Retain record IDs and amounts.
+    saveLocalHistorySnapshot('修復食品歷史名稱前');
+    let changed=0;
+    Object.keys(data).forEach(date=>{
+      (data[date].food||[]).forEach(entry=>{
+        const text=entry.note||'';
+        const open=text.indexOf('（');
+        const prefix=open<0?text:text.slice(0,open),suffix=open<0?'':text.slice(open);
+        const groups=prefix.split('、').map(group=>{
+          const pos=group.indexOf('：');
+          if(pos<0||group.slice(0,pos)!==old.type)return group;
+          const rest=group.slice(pos+1);
+          const amount=rest.match(/(\s+[\d.]+(?:g|顆))$/);
+          const amountPart=amount?amount[1]:'';
+          const names=(amount?rest.slice(0,-amountPart.length):rest).split('+');
+          return old.type+'：'+names.map(n=>n===old.brand?target:n).join('+')+amountPart;
+        });
+        const updated=groups.join('、')+suffix;
+        if(updated!==text){entry.note=updated;entry._updatedAt=Date.now();changed++;}
+      });
+    });
+    const plan=loadFeedingPlan();let planChanged=false;
+    plan.forEach(ev=>{if(ev.type===old.type&&ev.brand===old.brand){ev.brand=target;planChanged=true;}});
+    if(planChanged)saveFeedingPlan(plan);
+    const bowl=loadWetBowl();
+    if(bowl&&old.type==='罐頭'&&bowl.brand===old.brand){bowl.brand=target;bowl.updatedAt=Date.now();storeWetBowl(bowl);}
+    saveFoodAlias(old.type,old.brand,target);
+    if(changed&&!save({action:'repair-food-brand',type:old.type,oldName:old.brand,newName:target})){alert('歷史紀錄儲存失敗，請從本機歷史備份還原。');return;}
+    box.querySelector('#foodAliasStatus').textContent=`已連動 ${changed} 筆歷史飲食紀錄、餵食計畫與熱量設定；資料已同步排程。`;
+    render();
+  };
   document.getElementById('saveKcalSettingsBtn').addEventListener('click', ()=>{
     const targetVal = parseFloat(document.getElementById('dailyKcalTargetInput').value);
     if(targetVal && targetVal>0) saveDailyKcalTarget(targetVal);
@@ -7795,6 +8101,7 @@ function renderSopPage(){
  document.getElementById('sopEditBtn').style.display=sopEditing?'none':'';
  document.getElementById('sopSaveBtn').style.display=sopEditing?'':'none';
  document.getElementById('sopCancelBtn').style.display=sopEditing?'':'none';
+ updateSopFloatingSave();
  content.querySelectorAll('.sopDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>{
    collectSopDraft();
    if(confirm('刪除這項 SOP？')){sopDraft.splice(Number(btn.dataset.index),1);renderSopPage();}
@@ -7819,7 +8126,7 @@ function showCareSop(){
 function closeCareSop(){
  if(sopEditing&&!confirm('尚未儲存的 SOP 變更將會捨棄，確定返回？'))return;
  sopEditing=false;
- document.getElementById('sopPage').style.display='none';
+ document.getElementById('sopPage').style.display='none';updateSopFloatingSave();
  document.getElementById('main').style.display='';
  document.getElementById('fabBtn').style.display='';
  document.getElementById('backToTodayBtn').style.display='';
@@ -8406,6 +8713,7 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.tagStorage){
           mergeSyncableTagStorage(remoteEnvelope.tagStorage);
         }
+        if(remoteEnvelope.foodAliases){localStorage.setItem(FOOD_ALIASES_KEY,JSON.stringify({...remoteEnvelope.foodAliases,...loadFoodAliases()}));}
         if(remoteEnvelope.feedingPlan){
           const localPlanTs = parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0');
           const remotePlanTs = remoteEnvelope.feedingPlanUpdatedAt || 0;
@@ -8414,6 +8722,7 @@ async function syncFromDriveOnLogin(){
             localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remotePlanTs));
           }
         }
+        mergePetbankState(remoteEnvelope.petbankState,false);
         mergeWetBowl(remoteEnvelope.wetBowl,false);
         applyRemoteSop(remoteEnvelope);
         applyRemoteLockStates(remoteEnvelope.lockStates);
@@ -8469,10 +8778,12 @@ async function syncFromDriveOnLogin(){
         if(remoteEnvelope.tagStorage){
           restoreSyncableTagStorage(remoteEnvelope.tagStorage);
         }
+        if(remoteEnvelope.foodAliases){localStorage.setItem(FOOD_ALIASES_KEY,JSON.stringify(remoteEnvelope.foodAliases));}
         if(remoteEnvelope.feedingPlan){
           localStorage.setItem(FEEDING_PLAN_KEY, JSON.stringify(remoteEnvelope.feedingPlan));
           localStorage.setItem(FEEDING_PLAN_UPDATED_KEY, String(remoteEnvelope.feedingPlanUpdatedAt || remoteLastModified));
         }
+        mergePetbankState(remoteEnvelope.petbankState,true);
         mergeWetBowl(remoteEnvelope.wetBowl,true);
         applyRemoteSop(remoteEnvelope,true);
         applyRemoteLockStates(remoteEnvelope.lockStates);
@@ -8653,7 +8964,7 @@ function buildSyncEnvelope(){
   //   (tag groups like insulin dose/site/needle and food types/brands are
   //   the exception — they're covered generically via tagStorage/
   //   collectSyncableTagStorage, no per-tag-group wiring needed)
-  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), wetBowl: loadWetBowl(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage() };
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), petbankState: loadPetbankState(), wetBowl: loadWetBowl(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage(), foodAliases: loadFoodAliases() };
 }
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId){
