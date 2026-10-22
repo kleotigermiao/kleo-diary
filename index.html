@@ -2015,7 +2015,7 @@ function petbankHomeHtml(plan){
   const state=loadPetbankState();
   const text=st.empty?'⚠️ Petbank 已無足夠格數，請補糧並校正':
     st.warning?`⚠️ Petbank 剩 ${st.remaining} 格（${Math.floor(st.remaining/2)} 餐），請準備補糧`:
-    `Petbank 預期停在第 ${st.position} 格｜剩 ${st.remaining} 格`;
+    `🐟 預計位置 ${st.position} 號｜剩 ${st.remaining} 格`;
   const next=st.nextAt?`｜下次 ${st.nextAt.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
   return `<div style="margin:4px 0 8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:12px;line-height:1.6;">
     <strong>${text}</strong>${next}
@@ -7793,12 +7793,12 @@ function showFeedingPlanModal(){
         <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 9px;">每餐前進 2 格；先在上蓋依轉動方向標 1–16，並選定轉盤上的固定辨識點對照。勾選上方由 Petbank 執行的乾糧餐次。</div>
         ${!meals.length?'<div style="font-size:12px;color:#B23A48;margin-bottom:8px;">尚未勾選 Petbank 餵食時段，無法推算位置。</div>':''}
         ${st?`<div style="padding:9px;border-radius:8px;background:var(--paper-raised);font-size:13px;line-height:1.8;">
-          <b>預期停在第 ${st.position} 格</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
+          <b>🐟 預計位置：${st.position} 號</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
           ${st.warning?`<div style="color:#B23A48;font-weight:700;">${st.empty?'⚠️ 格數不足，下次餵食前必須補糧':'⚠️ 即將需要補糧'}</div>`:''}
         </div>`:'<div style="font-size:12px;margin:7px 0;">先設定起始位置及目前裝有食物的格數。</div>'}
-        <label style="display:block;font-size:12px;margin-top:9px;">實際看到的轉盤位置（1–16）</label>
+        <label style="display:block;font-size:12px;margin-top:9px;">🐟 實際位置（1–16）</label>
         <input id="petbankObserved" type="number" min="1" max="16" step="1" inputmode="numeric" value="${slot}" style="width:100%;box-sizing:border-box;">
-        <button id="petbankCheckBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:6px;">核對並記錄目前位置</button>
+        <button id="petbankCheckBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:6px;">核對並記錄位置</button>
         ${last?`<div style="font-size:11.5px;margin:7px 0;color:var(--ink-soft);">上次核對：${escapeHtml(last.at||'')}｜看到第 ${Number(last.observed)} 格／預期第 ${Number(last.expected)} 格｜${last.matched?'符合':'不符，請檢查'}</div>`:''}
         <div style="border-top:1px solid var(--line);margin:12px 0 9px;"></div>
         <label style="display:block;font-size:12px;">補糧提醒門檻</label>
@@ -7807,9 +7807,9 @@ function showFeedingPlanModal(){
         </select>
         <label style="display:block;font-size:12px;">目前實際裝有食物的格數</label>
         <input id="petbankFilled" type="number" min="0" max="16" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
-        <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">依目前位置／格數校正</button>
+        <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">校正位置／剩餘格數</button>
         <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 16 格，重新開始計算</button>
-        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">核對只檢查轉盤位置，不會自動確認 Kleo 已吃下乾糧。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">位置不符時可隨時按「校正位置／剩餘格數」，不只第一次設定。核對不代表 Kleo 已吃下乾糧。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
       const observed=()=>{const v=Number(panel.querySelector('#petbankObserved').value);return Number.isInteger(v)&&v>=1&&v<=16?v:null;};
       const threshold=()=>Number(panel.querySelector('#petbankRefillAt').value)||4;
       const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=16?v:null;};
