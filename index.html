@@ -2351,7 +2351,10 @@ function openPlannedMealDialog(dateStr,key){
   overlay.innerHTML=`<div style="width:100%;max-width:390px;background:var(--paper);padding:18px;border-radius:14px;color:var(--ink);">
     <h3 style="margin:0 0 12px;">確認計畫餵食</h3>
     <label style="font-size:12px;">實際時間</label>
-    <input class="planned-time" type="text" inputmode="numeric" autocomplete="off" placeholder="HH:MM" value="${escapeHtml(ev.time)}" style="display:block;width:100%;box-sizing:border-box;margin:5px 0 10px;padding:8px;">
+    <div style="display:flex;align-items:center;gap:8px;margin:5px 0 10px;">
+      <input class="planned-time" type="text" inputmode="numeric" autocomplete="off" placeholder="HH:MM" value="${escapeHtml(ev.time)}" style="flex:1;min-width:0;box-sizing:border-box;padding:8px;">
+      <button type="button" class="planned-time-now sync-btn" style="flex-shrink:0;padding:8px 12px;">現在</button>
+    </div>
     <label style="font-size:12px;">實際餵食類型</label>
     <select class="planned-type" style="display:block;width:100%;box-sizing:border-box;margin:5px 0 10px;padding:8px;">${typeOptions}</select>
     <label style="font-size:12px;">實際食品</label>
@@ -2368,6 +2371,7 @@ function openPlannedMealDialog(dateStr,key){
   const timeInput=overlay.querySelector('.planned-time');
   timeInput.addEventListener('focus',()=>timeInput.select());
   timeInput.addEventListener('input',()=>autoFormatTimeInput(timeInput));
+  overlay.querySelector('.planned-time-now').addEventListener('click',()=>{timeInput.value=nowTime();});
   const typeSelect=overlay.querySelector('.planned-type');
   const brandSelect=overlay.querySelector('.planned-brand');
   function updatePlannedBrands(selected){
