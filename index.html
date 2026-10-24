@@ -2467,8 +2467,10 @@ function buildRemindersBanner(){
     }
   });
   const missingTodayLines = buildMissingTodayLines();
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0) return '';
+  const stockAlerts = supplyAlerts();
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0) return '';
   const lines = [];
+  stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
   overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev.text)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
@@ -2606,7 +2608,9 @@ function render(){
 
   main.querySelectorAll('.reminder-line').forEach(line=>{
     line.addEventListener('click', ()=>{
-      if(line.classList.contains('missing-today')){
+      if(line.classList.contains('supply-reminder')){
+        document.getElementById('suppliesBtn').click();
+      } else if(line.classList.contains('missing-today')){
         openQuickAdd(line.dataset.date, line.dataset.cat);
       } else {
         openCalDayMenu(line.dataset.date);
@@ -6370,7 +6374,10 @@ function normalizeSupplies(parsed){
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
     lancets: Object.assign({}, SUPPLIES_DEFAULTS.lancets, parsed.lancets),
     sensor: Object.assign({}, SUPPLIES_DEFAULTS.sensor, parsed.sensor),
-    insulinVial: Object.assign({}, SUPPLIES_DEFAULTS.insulinVial, parsed.insulinVial)
+    insulinVial: Object.assign({}, SUPPLIES_DEFAULTS.insulinVial, parsed.insulinVial),
+    stockAudit: Array.isArray(parsed.stockAudit) ? parsed.stockAudit.slice(-120) : [],
+    stockReview: Object.assign({}, parsed.stockReview||{}),
+    stockConfirmedAt: Object.assign({}, parsed.stockConfirmedAt||{})
   });
   normalized.sensor.activatedAt = repairDateTimeField(normalized.sensor.activatedAt);
   normalized.insulinVial.openedAt = repairDateTimeField(normalized.insulinVial.openedAt);
@@ -6384,6 +6391,71 @@ function loadSupplies(){
 }
 function loadSuppliesFromRemote(remote){
   return normalizeSupplies(remote);
+}
+const SUPPLY_STOCK_KEYS = ['strips','petTestStrips','urinalysisStrips','needles','lancets'];
+const SUPPLY_META = {
+  strips: {label:'AlphaTrak 試紙', unit:'張', threshold:60},
+  petTestStrips: {label:'PetTest 試紙', unit:'張', threshold:60},
+  urinalysisStrips: {label:'尿酮尿糖試紙', unit:'張', threshold:60},
+  needles: {label:'針管', unit:'支', threshold:30},
+  lancets: {label:'採血針', unit:'支', threshold:60}
+};
+// Record every inventory adjustment for audit and per-item conflict resolution.
+function changeSupplyStock(key, newStock, reason){
+  if(!SUPPLY_STOCK_KEYS.includes(key)) return;
+  const before = Math.max(0, Number(supplies[key].stock)||0);
+  const after = Math.max(0, Math.round(Number(newStock)||0));
+  if(before===after && reason==='使用') return;
+  const stamp = Date.now();
+  supplies[key].stock = after;
+  supplies[key].lastModifiedAt = stamp;
+  if(!Array.isArray(supplies.stockAudit)) supplies.stockAudit=[];
+  supplies.stockAudit.push({id:stamp+'-'+Math.random().toString(36).slice(2,9),key,before,after,reason:reason||'調整',at:stamp});
+  supplies.stockAudit = supplies.stockAudit.slice(-120);
+  if(supplies.stockReview) supplies.stockReview[key]=false;
+  if(reason==='盤點修正'){
+    if(!supplies.stockConfirmedAt) supplies.stockConfirmedAt={};
+    supplies.stockConfirmedAt[key]=stamp;
+  }
+  saveSupplies();
+}
+// A stale device's zero must never erase a later restock. When legacy states
+// lack timestamps, preserve the positive count and explicitly request a count.
+function mergeSupplyStates(local, remote){
+  try{
+    const key='kleo-supplies-sync-backups-v1';
+    const old=JSON.parse(localStorage.getItem(key)||'[]');
+    old.push({at:new Date().toISOString(),local:normalizeSupplies(local),remote:normalizeSupplies(remote)});
+    localStorage.setItem(key,JSON.stringify(old.slice(-8)));
+  }catch(e){}
+  const a=normalizeSupplies(local), b=normalizeSupplies(remote);
+  const merged=normalizeSupplies(a);
+  const byId=new Map();
+  [...(b.stockAudit||[]),...(a.stockAudit||[])].forEach(e=>{if(e&&e.id)byId.set(e.id,e);});
+  merged.stockAudit=Array.from(byId.values()).sort((x,y)=>(x.at||0)-(y.at||0)).slice(-120);
+  merged.stockReview={...(b.stockReview||{}),...(a.stockReview||{})};
+  merged.stockConfirmedAt={};
+  SUPPLY_STOCK_KEYS.forEach(k=>{merged.stockConfirmedAt[k]=Math.max(Number(a.stockConfirmedAt&&a.stockConfirmedAt[k])||0,Number(b.stockConfirmedAt&&b.stockConfirmedAt[k])||0);});
+  SUPPLY_STOCK_KEYS.forEach(key=>{
+    const left=a[key],right=b[key];
+    const lt=Number(left.lastModifiedAt)||0, rt=Number(right.lastModifiedAt)||0;
+    const lv=Math.max(0,Number(left.stock)||0),rv=Math.max(0,Number(right.stock)||0);
+    const picked=lt>rt?left:rt>lt?right:lv>=rv?left:right;
+    merged[key]={...picked};
+    if(lv!==rv && ((lt===0 && rt===0) || merged.stockConfirmedAt[key] < Math.max(lt,rt))){
+      // A conflict is not proof that both counts are correct.
+      merged.stockReview[key]=true;
+    }
+  });
+  const lc=Number(a.lancets.lastChangedAt)||0, rc=Number(b.lancets.lastChangedAt)||0;
+  merged.lancets.testsSinceChange = lc>rc ? a.lancets.testsSinceChange : rc>lc ? b.lancets.testsSinceChange : Math.max(a.lancets.testsSinceChange,b.lancets.testsSinceChange);
+  merged.lancets.lastChangedAt = Math.max(lc,rc)||null;
+  merged.lancets.changeThreshold = a.lancets.changeThreshold;
+  merged.countSkipAsNeedleUse = a.countSkipAsNeedleUse;
+  ['sensor','insulinVial'].forEach(key=>{
+    merged[key]=(Number(b[key].lastModifiedAt)||0)>(Number(a[key].lastModifiedAt)||0)?b[key]:a[key];
+  });
+  return normalizeSupplies(merged);
 }
 function saveSupplies(){
   try{ localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies)); }catch(e){}
@@ -6403,8 +6475,8 @@ let supplies = loadSupplies();
 })();
 
 function consumeSupplyOnGlucose(meter){
-  if(meter==='petTest') supplies.petTestStrips.stock = Math.max(0, (supplies.petTestStrips.stock||0) - 1);
-  else supplies.strips.stock = Math.max(0, (supplies.strips.stock||0) - 1); // default: AlphaTrak
+  const key = meter==='petTest'?'petTestStrips':'strips';
+  changeSupplyStock(key, (supplies[key].stock||0)-1, '血糖測量');
   supplies.lancets.testsSinceChange = (supplies.lancets.testsSinceChange||0) + 1;
   saveSupplies();
   if(supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold){
@@ -6416,27 +6488,23 @@ function consumeSupplyOnGlucose(meter){
 function consumeSupplyOnInsulin(doseText){
   const isSkip = (doseText||'').trim().toLowerCase()==='skip';
   if(isSkip && !supplies.countSkipAsNeedleUse) return;
-  supplies.needles.stock = Math.max(0, (supplies.needles.stock||0) - 1);
-  saveSupplies();
+  changeSupplyStock('needles', (supplies.needles.stock||0)-1, '使用');
 }
 function consumeSupplyOnUrinalysis(){
-  supplies.urinalysisStrips.stock = Math.max(0, (supplies.urinalysisStrips.stock||0) - 1);
-  saveSupplies();
+  changeSupplyStock('urinalysisStrips', (supplies.urinalysisStrips.stock||0)-1, '使用');
 }
 function refundSupplyOnDelete(cat, entry){
   if(cat==='glucose'){
-    if(entry && entry.meter==='petTest') supplies.petTestStrips.stock = (supplies.petTestStrips.stock||0) + 1;
-    else if(!entry || !entry.meter || entry.meter==='alphatrak') supplies.strips.stock = (supplies.strips.stock||0) + 1;
+    if(entry && entry.meter==='petTest') changeSupplyStock('petTestStrips',(supplies.petTestStrips.stock||0)+1,'刪除紀錄退回');
+    else if(!entry || !entry.meter || entry.meter==='alphatrak') changeSupplyStock('strips',(supplies.strips.stock||0)+1,'刪除紀錄退回');
     if(!entry || !entry.meter || entry.meter==='alphatrak' || entry.meter==='petTest') supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
     saveSupplies();
   } else if(cat==='urinalysis'){
-    supplies.urinalysisStrips.stock = (supplies.urinalysisStrips.stock||0) + 1;
-    saveSupplies();
+    changeSupplyStock('urinalysisStrips',(supplies.urinalysisStrips.stock||0)+1,'刪除紀錄退回');
   } else if(cat==='insulin'){
     const isSkip = (entry && entry.dose || '').trim().toLowerCase()==='skip';
     if(!isSkip || supplies.countSkipAsNeedleUse){
-      supplies.needles.stock = (supplies.needles.stock||0) + 1;
-      saveSupplies();
+      changeSupplyStock('needles',(supplies.needles.stock||0)+1,'刪除紀錄退回');
     }
   }
 }
@@ -6453,13 +6521,56 @@ function estimateDailyUsage(cat){
   if(dayCount===0) return 0;
   return total/dayCount;
 }
+function estimateSupplyRates(){
+  const now=new Date();now.setHours(23,59,59,999);
+  const cutoff=new Date(now);cutoff.setDate(cutoff.getDate()-29);cutoff.setHours(0,0,0,0);
+  const totals={strips:0,petTestStrips:0,urinalysisStrips:0,needles:0};
+  let activeDays=0;
+  Object.keys(data||{}).forEach(d=>{
+    const dt=new Date(d+'T00:00:00');
+    if(dt<cutoff||dt>now)return;
+    const day=data[d]||{};
+    const all=(day.glucose||[]).length+(day.insulin||[]).length+(day.urinalysis||[]).length;
+    if(!all)return;
+    activeDays++;
+    (day.glucose||[]).forEach(e=>{
+      glucoseReadings(e).forEach(r=>{
+        if(r.meterNameKey==='alphatrak')totals.strips++;
+        if(r.meterNameKey==='pettest')totals.petTestStrips++;
+      });
+    });
+    totals.urinalysisStrips+=(day.urinalysis||[]).length;
+    totals.needles+=(day.insulin||[]).filter(e=>supplies.countSkipAsNeedleUse||String(e.dose||'').toLowerCase().trim()!=='skip').length;
+  });
+  const rates={};
+  Object.keys(totals).forEach(k=>rates[k]=activeDays?totals[k]/activeDays:0);
+  rates.lancets=(rates.strips+rates.petTestStrips)/Math.max(1,Number(supplies.lancets.changeThreshold)||5);
+  return rates;
+}
+function supplyAlerts(){
+  const rates=estimateSupplyRates();
+  const alerts=[];
+  SUPPLY_STOCK_KEYS.forEach(key=>{
+    const stock=Number(supplies[key].stock)||0;
+    const rate=rates[key]||0;
+    const days=rate>0?Math.floor(stock/rate):null;
+    const meta=SUPPLY_META[key];
+    if(supplies.stockReview && supplies.stockReview[key]){
+      alerts.push('⚠️ '+meta.label+'：多裝置庫存數字不一致，請盤點並用「修正為」確認');
+    } else if(days!==null && days<=meta.threshold){
+      alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完，請及時購買');
+    }
+  });
+  return alerts;
+}
 function renderSupplies(){
   const el = document.getElementById('suppliesContent');
-  const stripsRate = estimateDailyUsage('glucose');
-  const needlesRate = estimateDailyUsage('insulin');
+  const rates = estimateSupplyRates();
+  const stripsRate = rates.strips;
+  const needlesRate = rates.needles;
   const stripsDaysLeft = stripsRate>0 ? Math.floor(supplies.strips.stock/stripsRate) : null;
   const needlesDaysLeft = needlesRate>0 ? Math.floor(supplies.needles.stock/needlesRate) : null;
-  const WARN_THRESHOLD = {strips: 60, needles: 30, lancets: 60};
+  const WARN_THRESHOLD = {strips: 60, petTestStrips:60, urinalysisStrips:60, needles: 30, lancets: 60};
   const SIX_MONTHS_DAYS = 182;
   const PACKAGE_SIZE = {strips: 50, needles: 10, lancets: 50};
   const PACKAGE_UNIT = {strips: '罐', needles: '包', lancets: '盒'};
@@ -6468,21 +6579,25 @@ function renderSupplies(){
       return `<div class="supply-buy" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算未來6個月需要買多少</div>`;
     }
     const neededTotal = dailyRate * SIX_MONTHS_DAYS;
+    const stockUnit=SUPPLY_META[key].unit;
     const shortfall = Math.max(0, neededTotal - supplies[key].stock);
     const size = PACKAGE_SIZE[key];
     const unit = PACKAGE_UNIT[key];
     if(shortfall<=0){
-      return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} 個，目前庫存夠用，暫時不用買。</div>`;
+      return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} ${stockUnit}，目前庫存夠用，暫時不用買。</div>`;
     }
     const packagesToBuy = Math.ceil(shortfall/size);
-    return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} 個，庫存還差 ${Math.round(shortfall)} 個 → 建議買 <b>${packagesToBuy}</b> ${unit}（每${unit} ${size}個）</div>`;
+    return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} ${stockUnit}，庫存還差 ${Math.round(shortfall)} ${stockUnit} → 建議買 <b>${packagesToBuy}</b> ${unit}（每${unit} ${size}個）</div>`;
   }
   function supplyCard(key, label, icon, daysLeft, dailyRate){
     const s = supplies[key];
-    const warn = daysLeft!=null && daysLeft < WARN_THRESHOLD[key];
-    return `<div class="supply-card${warn?' warn':''}">
+    const warn = daysLeft!=null && daysLeft <= WARN_THRESHOLD[key];
+    const review = !!(supplies.stockReview && supplies.stockReview[key]);
+    return `<div class="supply-card${warn||review?' warn':''}">
       <div class="supply-title">${icon} ${label}</div>
-      <div class="supply-stock">庫存：<b>${s.stock}</b> 個</div>
+      <div class="supply-stock">庫存：<b>${s.stock}</b> ${SUPPLY_META[key].unit}</div>
+      <div class="supply-days">平均每天使用 <b>${dailyRate>0?dailyRate.toFixed(2):'—'}</b> ${SUPPLY_META[key].unit}${dailyRate>0?'（近30天有紀錄日平均）':''}</div>
+      ${review?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點後按「修正為」確認</div>':''}
       ${daysLeft!=null ? `<div class="supply-days">照最近用量，估計還能用 <b>${daysLeft}</b> 天${warn?'　⚠️建議補貨':''}</div>` : `<div class="supply-days" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算</div>`}
       ${sixMonthBuyHtml(key, dailyRate)}
       <div style="display:flex;gap:8px;margin-top:10px;">
@@ -6498,7 +6613,7 @@ function renderSupplies(){
   const lancetWarn = supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold;
   // Lancets aren't consumed per test — they're consumed per "changed" event.
   // Rate of lancet changes per day = (glucose tests per day) / (tests per change).
-  const lancetChangeRate = (stripsRate>0 && supplies.lancets.changeThreshold>0) ? (stripsRate/supplies.lancets.changeThreshold) : 0;
+  const lancetChangeRate = rates.lancets;
   let sensorStatusHtml;
   const sensorActivatedDate = supplies.sensor.activatedAt ? supplies.sensor.activatedAt.split('T')[0] : '';
   const sensorActivatedTime = supplies.sensor.activatedAt && supplies.sensor.activatedAt.includes('T') ? supplies.sensor.activatedAt.split('T')[1] : '00:00';
@@ -6527,6 +6642,11 @@ function renderSupplies(){
   } else {
     vialStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄開瓶時間</div>`;
   }
+  const auditHtml = (supplies.stockAudit||[]).slice(-12).reverse().map(e=>{
+    const meta=SUPPLY_META[e.key]||{label:e.key,unit:'個'};
+    const when=new Date(e.at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return `<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--line);">${when}　${escapeHtml(meta.label)}　${escapeHtml(e.reason||'調整')}：${e.before} → ${e.after} ${meta.unit}</div>`;
+  }).join('');
   el.innerHTML = `
     <div class="supply-card${supplies.sensor.activatedAt && (new Date(supplies.sensor.activatedAt).getTime() + supplies.sensor.durationDays*86400000 - Date.now())<0 ? ' warn' : ''}">
       <div class="supply-title">📡 Libre 感測器</div>
@@ -6569,12 +6689,14 @@ function renderSupplies(){
       </div>
     </div>
     ${supplyCard('strips', '血糖試紙 (AlphaTrak)', '🩸', stripsDaysLeft, stripsRate)}
-    ${supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', null, 0)}
-    ${supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', null, 0)}
+    ${supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', rates.petTestStrips>0?Math.floor(supplies.petTestStrips.stock/rates.petTestStrips):null, rates.petTestStrips)}
+    ${supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', rates.urinalysisStrips>0?Math.floor(supplies.urinalysisStrips.stock/rates.urinalysisStrips):null, rates.urinalysisStrips)}
     ${supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate)}
     <div class="supply-card${lancetWarn?' warn':''}">
       <div class="supply-title">🔴 採血針</div>
       <div class="supply-stock">庫存：<b>${supplies.lancets.stock}</b> 支</div>
+      <div class="supply-days">平均每天使用 <b>${lancetChangeRate>0?lancetChangeRate.toFixed(2):'—'}</b> 支</div>
+      ${supplies.stockReview&&supplies.stockReview.lancets?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點確認</div>':''}
       <div class="supply-days">已測 <b>${supplies.lancets.testsSinceChange}</b> / ${supplies.lancets.changeThreshold} 次${lancetWarn?'　⚠️該換針了':''}</div>
       ${sixMonthBuyHtml('lancets', lancetChangeRate)}
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
@@ -6599,6 +6721,7 @@ function renderSupplies(){
         胰島素記錄「skip」時，也算用掉一根針管
       </label>
     </div>
+    <div class="supply-card"><div class="supply-title">庫存異動紀錄</div>${auditHtml||'<div class="supply-days">更新後的進貨、消耗與盤點會記錄在這裡；過去未留存的數字無法由此還原。</div>'}</div>
   `;
   el.querySelectorAll('.supply-add-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -6606,8 +6729,7 @@ function renderSupplies(){
       const input = el.querySelector(`.supply-add-input[data-key="${key}"]`);
       const n = parseInt(input.value);
       if(!n || n<=0) return;
-      supplies[key].stock = (supplies[key].stock||0) + n;
-      saveSupplies();
+      changeSupplyStock(key,(supplies[key].stock||0)+n,'進貨');
       renderSupplies();
     });
   });
@@ -6617,13 +6739,12 @@ function renderSupplies(){
       const input = el.querySelector(`.supply-set-input[data-key="${key}"]`);
       const n = parseInt(input.value);
       if(isNaN(n) || n<0) return;
-      supplies[key].stock = n;
-      saveSupplies();
+      changeSupplyStock(key,n,'盤點修正');
       renderSupplies();
     });
   });
   document.getElementById('lancetChangedBtn').addEventListener('click', ()=>{
-    supplies.lancets.stock = Math.max(0, (supplies.lancets.stock||0) - 1);
+    changeSupplyStock('lancets',(supplies.lancets.stock||0)-1,'更換採血針');
     supplies.lancets.testsSinceChange = 0;
     supplies.lancets.lastChangedAt = Date.now();
     saveSupplies();
@@ -7014,7 +7135,7 @@ function renderCalendar(){
   // Predict which future date each consumable is expected to run out on, so it
   // can be flagged on the calendar well ahead of time.
   function runOutDateStr(supplyKey, usageCat){
-    const rate = estimateDailyUsage(usageCat);
+    const rate = estimateSupplyRates()[supplyKey]||0;
     if(rate<=0) return null;
     const daysLeft = Math.floor(supplies[supplyKey].stock/rate);
     const d = new Date();
@@ -8793,65 +8914,10 @@ async function syncFromDriveOnLogin(){
         localStorage.setItem('kleo-last-modified', String(newTs));
         localStorage.setItem(LAST_SYNCED_KEY, String(newTs));
         if(remoteEnvelope.supplies){
-          // Stock counts are decrementing counters, not directly mergeable like
-          // diary entries. A blind "take remote's copy" here was the actual bug:
-          // the diary merge correctly combines both devices' new entries, but
-          // this replaced supplies with only ONE side's deductions, leaving the
-          // stock count out of sync with the (correctly merged) entry count.
-          // Take the more conservative (lower) stock number from either side,
-          // since assuming less remaining stock is safer than assuming more.
-          const remoteSupplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
-          function pickMoreRecentlyModified(localObj, remoteObj){
-            // Whole-object comparison based on an explicit lastModifiedAt
-            // stamp — this correctly handles cancellations (activatedAt set
-            // back to null), which the previous per-field "if empty, defer to
-            // the other side" logic got wrong: it always deferred whenever
-            // the local value was null, silently undoing real cancellations
-            // with a stale still-active value from the other device.
-            const localTs = localObj.lastModifiedAt || 0;
-            const remoteTs = remoteObj.lastModifiedAt || 0;
-            return remoteTs > localTs ? remoteObj : localObj;
-          }
-          const localLancetChangedAt = supplies.lancets.lastChangedAt;
-          const remoteLancetChangedAt = remoteSupplies.lancets.lastChangedAt;
-          let mergedTestsSinceChange, mergedLastChangedAt;
-          if(localLancetChangedAt && remoteLancetChangedAt){
-            // Whichever side changed the lancet more recently is the more
-            // authoritative "starting point" — taking the max here would
-            // silently undo a real reset with a stale, un-synced higher count.
-            if(new Date(localLancetChangedAt) >= new Date(remoteLancetChangedAt)){
-              mergedTestsSinceChange = supplies.lancets.testsSinceChange;
-              mergedLastChangedAt = localLancetChangedAt;
-            } else {
-              mergedTestsSinceChange = remoteSupplies.lancets.testsSinceChange;
-              mergedLastChangedAt = remoteLancetChangedAt;
-            }
-          } else if(localLancetChangedAt || remoteLancetChangedAt){
-            // only one side has ever recorded a change — trust that side's count
-            const useLocal = !!localLancetChangedAt;
-            mergedTestsSinceChange = useLocal ? supplies.lancets.testsSinceChange : remoteSupplies.lancets.testsSinceChange;
-            mergedLastChangedAt = useLocal ? localLancetChangedAt : remoteLancetChangedAt;
-          } else {
-            // neither side has ever explicitly reset it — safe to take the higher count
-            mergedTestsSinceChange = Math.max(supplies.lancets.testsSinceChange, remoteSupplies.lancets.testsSinceChange);
-            mergedLastChangedAt = null;
-          }
-          supplies = normalizeSupplies({
-            strips: {stock: Math.min(supplies.strips.stock, remoteSupplies.strips.stock)},
-            petTestStrips: {stock: Math.min(supplies.petTestStrips.stock, remoteSupplies.petTestStrips.stock)},
-            urinalysisStrips: {stock: Math.min(supplies.urinalysisStrips.stock, remoteSupplies.urinalysisStrips.stock)},
-            needles: {stock: Math.min(supplies.needles.stock, remoteSupplies.needles.stock)},
-            lancets: {
-              stock: Math.min(supplies.lancets.stock, remoteSupplies.lancets.stock),
-              testsSinceChange: mergedTestsSinceChange,
-              lastChangedAt: mergedLastChangedAt,
-              changeThreshold: supplies.lancets.changeThreshold
-            },
-            countSkipAsNeedleUse: supplies.countSkipAsNeedleUse,
-            sensor: pickMoreRecentlyModified(supplies.sensor, remoteSupplies.sensor),
-            insulinVial: pickMoreRecentlyModified(supplies.insulinVial, remoteSupplies.insulinVial)
-          });
-          saveSupplies();
+          // Merge per-item timestamps; never use Math.min(local,remote),
+          // which erased a real restock whenever a stale device still had 0.
+          supplies=mergeSupplyStates(supplies,remoteEnvelope.supplies);
+          localStorage.setItem(SUPPLIES_KEY,JSON.stringify(supplies));
         }
         if(remoteEnvelope.calEvents){
           const remoteNormalized = {};
@@ -8940,7 +9006,7 @@ async function syncFromDriveOnLogin(){
         // wrapper save*() functions, which all route through
         // markLocalChangeAndSync().
         if(remoteEnvelope.supplies){
-          supplies = loadSuppliesFromRemote(remoteEnvelope.supplies);
+          supplies = mergeSupplyStates(supplies,remoteEnvelope.supplies);
           localStorage.setItem(SUPPLIES_KEY, JSON.stringify(supplies));
         }
         if(remoteEnvelope.calEvents){
