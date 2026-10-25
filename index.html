@@ -6396,7 +6396,7 @@ function loadSuppliesFromRemote(remote){
 }
 const SUPPLY_STOCK_KEYS = ['strips','petTestStrips','urinalysisStrips','needles','lancets'];
 function supplyKeys(){return [...SUPPLY_STOCK_KEYS,...Object.keys((supplies&&supplies.customItems)||{})];}
-function supplyMeta(key){return SUPPLY_META[key]||{label:(supplies.customItems[key]||{}).label||key,unit:(supplies.customItems[key]||{}).unit||'個',threshold:Number((supplies.customItems[key]||{}).threshold)||30};}
+function supplyMeta(key){return SUPPLY_META[key]||{label:(supplies.customItems[key]||{}).label||key,unit:(supplies.customItems[key]||{}).unit||'個',threshold:Number.isFinite(Number((supplies.customItems[key]||{}).threshold))?Number(supplies.customItems[key].threshold):30};}
 function supplySettings(key){return (supplies.itemSettings||{})[key]||{};}
 function supplyIsArchived(key){return supplySettings(key).archived===true;}
 function supplyReminds(key){return supplySettings(key).remind!==false;}
@@ -6575,6 +6575,8 @@ function supplyAlerts(){
       alerts.push('⚠️ '+meta.label+'：多裝置庫存數字不一致，請盤點並用「修正為」確認');
     } else if(days!==null && days<=meta.threshold){
       alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完，請及時購買');
+    } else if(key.startsWith('custom_') && stock<=meta.threshold){
+      alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，已達提醒門檻 '+meta.threshold+' '+meta.unit);
     }
   });
   return alerts;
@@ -6617,7 +6619,8 @@ function renderSupplies(){
         <label style="display:flex;align-items:center;gap:5px;"><input type="checkbox" class="supply-remind-toggle" data-key="${key}" ${supplyReminds(key)?'checked':''}>首頁庫存提醒</label>
         <button type="button" class="tag-add-btn supply-archive-btn" data-key="${key}" style="background:none;color:var(--ink);border:1px solid var(--line);">封存</button>
       </div>
-      <div class="supply-stock">庫存：<b>${s.stock}</b> ${SUPPLY_META[key].unit}</div>
+      <div class="supply-stock">庫存：<b>${s.stock}</b> ${escapeHtml(meta.unit)}</div>
+      ${key.startsWith('custom_')?`<div class="supply-days">提醒門檻：<input type="number" min="0" class="supply-threshold-input" data-key="${key}" value="${meta.threshold}" style="width:75px;"> ${escapeHtml(meta.unit)}</div>`:''}
       <div class="supply-days">平均每天使用 <b>${dailyRate>0?dailyRate.toFixed(2):'—'}</b> ${SUPPLY_META[key].unit}${dailyRate>0?'（近30天有紀錄日平均）':''}</div>
       ${review?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點後按「修正為」確認</div>':''}
       ${daysLeft!=null ? `<div class="supply-days">照最近用量，估計還能用 <b>${daysLeft}</b> 天${warn?'　⚠️建議補貨':''}</div>` : `<div class="supply-days" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算</div>`}
@@ -6750,6 +6753,7 @@ function renderSupplies(){
     <div class="supply-card"><div class="supply-title">庫存異動紀錄</div>${auditHtml||'<div class="supply-days">更新後的進貨、消耗與盤點會記錄在這裡；過去未留存的數字無法由此還原。</div>'}</div>
   `;
   el.querySelectorAll('.supply-remind-toggle').forEach(x=>x.addEventListener('change',()=>setSupplySetting(x.dataset.key,{remind:x.checked})));
+  el.querySelectorAll('.supply-threshold-input').forEach(x=>x.addEventListener('change',()=>{const n=Number(x.value);if(Number.isInteger(n)&&n>=0){supplies.customItems[x.dataset.key].threshold=n;supplies.customItems[x.dataset.key].lastModifiedAt=Date.now();saveSupplies();renderSupplies();}}));
   el.querySelectorAll('.supply-archive-btn').forEach(x=>x.addEventListener('click',()=>{if(confirm('封存後仍保留庫存及歷史紀錄，確定封存？'))setSupplySetting(x.dataset.key,{archived:true});}));
   el.querySelectorAll('.supply-restore-btn').forEach(x=>x.addEventListener('click',()=>setSupplySetting(x.dataset.key,{archived:false})));
   document.getElementById('supplyNewBtn').addEventListener('click',()=>{
