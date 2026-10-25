@@ -6377,7 +6377,9 @@ function normalizeSupplies(parsed){
     insulinVial: Object.assign({}, SUPPLIES_DEFAULTS.insulinVial, parsed.insulinVial),
     stockAudit: Array.isArray(parsed.stockAudit) ? parsed.stockAudit.slice(-120) : [],
     stockReview: Object.assign({}, parsed.stockReview||{}),
-    stockConfirmedAt: Object.assign({}, parsed.stockConfirmedAt||{})
+    stockConfirmedAt: Object.assign({}, parsed.stockConfirmedAt||{}),
+    customItems: Object.assign({}, parsed.customItems||{}),
+    itemSettings: Object.assign({}, parsed.itemSettings||{})
   });
   normalized.sensor.activatedAt = repairDateTimeField(normalized.sensor.activatedAt);
   normalized.insulinVial.openedAt = repairDateTimeField(normalized.insulinVial.openedAt);
@@ -6393,6 +6395,13 @@ function loadSuppliesFromRemote(remote){
   return normalizeSupplies(remote);
 }
 const SUPPLY_STOCK_KEYS = ['strips','petTestStrips','urinalysisStrips','needles','lancets'];
+function supplyKeys(){return [...SUPPLY_STOCK_KEYS,...Object.keys((supplies&&supplies.customItems)||{})];}
+function supplyMeta(key){return SUPPLY_META[key]||{label:(supplies.customItems[key]||{}).label||key,unit:(supplies.customItems[key]||{}).unit||'個',threshold:Number((supplies.customItems[key]||{}).threshold)||30};}
+function supplySettings(key){return (supplies.itemSettings||{})[key]||{};}
+function supplyIsArchived(key){return supplySettings(key).archived===true;}
+function supplyReminds(key){return supplySettings(key).remind!==false;}
+function supplyItem(key){return SUPPLY_STOCK_KEYS.includes(key)?supplies[key]:supplies.customItems[key];}
+function setSupplySetting(key,patch){if(!supplies.itemSettings)supplies.itemSettings={};supplies.itemSettings[key]={...supplySettings(key),...patch,updatedAt:Date.now()};saveSupplies();renderSupplies();}
 const SUPPLY_META = {
   strips: {label:'AlphaTrak 試紙', unit:'張', threshold:60},
   petTestStrips: {label:'PetTest 試紙', unit:'張', threshold:60},
@@ -6402,13 +6411,14 @@ const SUPPLY_META = {
 };
 // Record every inventory adjustment for audit and per-item conflict resolution.
 function changeSupplyStock(key, newStock, reason){
-  if(!SUPPLY_STOCK_KEYS.includes(key)) return;
-  const before = Math.max(0, Number(supplies[key].stock)||0);
+  if(!supplyKeys().includes(key)) return;
+  const item=supplyItem(key);
+  const before = Math.max(0, Number(item.stock)||0);
   const after = Math.max(0, Math.round(Number(newStock)||0));
   if(before===after && reason==='使用') return;
   const stamp = Date.now();
-  supplies[key].stock = after;
-  supplies[key].lastModifiedAt = stamp;
+  item.stock = after;
+  item.lastModifiedAt = stamp;
   if(!Array.isArray(supplies.stockAudit)) supplies.stockAudit=[];
   supplies.stockAudit.push({id:stamp+'-'+Math.random().toString(36).slice(2,9),key,before,after,reason:reason||'調整',at:stamp});
   supplies.stockAudit = supplies.stockAudit.slice(-120);
@@ -6430,6 +6440,11 @@ function mergeSupplyStates(local, remote){
   }catch(e){}
   const a=normalizeSupplies(local), b=normalizeSupplies(remote);
   const merged=normalizeSupplies(a);
+  merged.customItems={};
+  const customKeys=new Set([...Object.keys(a.customItems||{}),...Object.keys(b.customItems||{})]);
+  customKeys.forEach(k=>{const x=a.customItems[k],y=b.customItems[k];merged.customItems[k]=!x?y:!y?x:(Number(x.lastModifiedAt)||0)>=(Number(y.lastModifiedAt)||0)?x:y;});
+  merged.itemSettings={};
+  new Set([...Object.keys(a.itemSettings||{}),...Object.keys(b.itemSettings||{})]).forEach(k=>{const x=a.itemSettings[k],y=b.itemSettings[k];merged.itemSettings[k]=!x?y:!y?x:(Number(x.updatedAt)||0)>=(Number(y.updatedAt)||0)?x:y;});
   const byId=new Map();
   [...(b.stockAudit||[]),...(a.stockAudit||[])].forEach(e=>{if(e&&e.id)byId.set(e.id,e);});
   merged.stockAudit=Array.from(byId.values()).sort((x,y)=>(x.at||0)-(y.at||0)).slice(-120);
@@ -6550,11 +6565,12 @@ function estimateSupplyRates(){
 function supplyAlerts(){
   const rates=estimateSupplyRates();
   const alerts=[];
-  SUPPLY_STOCK_KEYS.forEach(key=>{
-    const stock=Number(supplies[key].stock)||0;
+  supplyKeys().forEach(key=>{
+    if(supplyIsArchived(key)||!supplyReminds(key))return;
+    const stock=Number(supplyItem(key).stock)||0;
     const rate=rates[key]||0;
     const days=rate>0?Math.floor(stock/rate):null;
-    const meta=SUPPLY_META[key];
+    const meta=supplyMeta(key);
     if(supplies.stockReview && supplies.stockReview[key]){
       alerts.push('⚠️ '+meta.label+'：多裝置庫存數字不一致，請盤點並用「修正為」確認');
     } else if(days!==null && days<=meta.threshold){
@@ -6583,6 +6599,7 @@ function renderSupplies(){
     const shortfall = Math.max(0, neededTotal - supplies[key].stock);
     const size = PACKAGE_SIZE[key];
     const unit = PACKAGE_UNIT[key];
+    if(!size||!unit)return '';
     if(shortfall<=0){
       return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} ${stockUnit}，目前庫存夠用，暫時不用買。</div>`;
     }
@@ -6590,11 +6607,16 @@ function renderSupplies(){
     return `<div class="supply-buy">未來6個月預估用量約 ${Math.round(neededTotal)} ${stockUnit}，庫存還差 ${Math.round(shortfall)} ${stockUnit} → 建議買 <b>${packagesToBuy}</b> ${unit}（每${unit} ${size}個）</div>`;
   }
   function supplyCard(key, label, icon, daysLeft, dailyRate){
-    const s = supplies[key];
-    const warn = daysLeft!=null && daysLeft <= WARN_THRESHOLD[key];
+    const s = supplyItem(key);
+    const meta=supplyMeta(key);
+    const warn = daysLeft!=null && daysLeft <= (WARN_THRESHOLD[key]??meta.threshold);
     const review = !!(supplies.stockReview && supplies.stockReview[key]);
     return `<div class="supply-card${warn||review?' warn':''}">
-      <div class="supply-title">${icon} ${label}</div>
+      <div class="supply-title">${icon} ${escapeHtml(label)}</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;margin:6px 0;">
+        <label style="display:flex;align-items:center;gap:5px;"><input type="checkbox" class="supply-remind-toggle" data-key="${key}" ${supplyReminds(key)?'checked':''}>首頁庫存提醒</label>
+        <button type="button" class="tag-add-btn supply-archive-btn" data-key="${key}" style="background:none;color:var(--ink);border:1px solid var(--line);">封存</button>
+      </div>
       <div class="supply-stock">庫存：<b>${s.stock}</b> ${SUPPLY_META[key].unit}</div>
       <div class="supply-days">平均每天使用 <b>${dailyRate>0?dailyRate.toFixed(2):'—'}</b> ${SUPPLY_META[key].unit}${dailyRate>0?'（近30天有紀錄日平均）':''}</div>
       ${review?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點後按「修正為」確認</div>':''}
@@ -6643,7 +6665,7 @@ function renderSupplies(){
     vialStatusHtml = `<div class="supply-days" style="color:var(--ink-soft);">尚未記錄開瓶時間</div>`;
   }
   const auditHtml = (supplies.stockAudit||[]).slice(-12).reverse().map(e=>{
-    const meta=SUPPLY_META[e.key]||{label:e.key,unit:'個'};
+    const meta=supplyMeta(e.key);
     const when=new Date(e.at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
     return `<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--line);">${when}　${escapeHtml(meta.label)}　${escapeHtml(e.reason||'調整')}：${e.before} → ${e.after} ${meta.unit}</div>`;
   }).join('');
@@ -6688,12 +6710,13 @@ function renderSupplies(){
         <input type="text" inputmode="numeric" id="vialDurationInput" value="${supplies.insulinVial.durationDays}" style="width:70px;">
       </div>
     </div>
-    ${supplyCard('strips', '血糖試紙 (AlphaTrak)', '🩸', stripsDaysLeft, stripsRate)}
-    ${supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', rates.petTestStrips>0?Math.floor(supplies.petTestStrips.stock/rates.petTestStrips):null, rates.petTestStrips)}
-    ${supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', rates.urinalysisStrips>0?Math.floor(supplies.urinalysisStrips.stock/rates.urinalysisStrips):null, rates.urinalysisStrips)}
-    ${supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate)}
-    <div class="supply-card${lancetWarn?' warn':''}">
+    ${!supplyIsArchived('strips')?supplyCard('strips', '血糖試紙 (AlphaTrak)', '🩸', stripsDaysLeft, stripsRate):''}
+    ${!supplyIsArchived('petTestStrips')?supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', rates.petTestStrips>0?Math.floor(supplies.petTestStrips.stock/rates.petTestStrips):null, rates.petTestStrips):''}
+    ${!supplyIsArchived('urinalysisStrips')?supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', rates.urinalysisStrips>0?Math.floor(supplies.urinalysisStrips.stock/rates.urinalysisStrips):null, rates.urinalysisStrips):''}
+    ${!supplyIsArchived('needles')?supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate):''}
+    ${!supplyIsArchived('lancets')?`<div class="supply-card${lancetWarn?' warn':''}">
       <div class="supply-title">🔴 採血針</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;margin:6px 0;"><label style="display:flex;align-items:center;gap:5px;"><input type="checkbox" class="supply-remind-toggle" data-key="lancets" ${supplyReminds('lancets')?'checked':''}>首頁庫存提醒</label><button type="button" class="tag-add-btn supply-archive-btn" data-key="lancets" style="background:none;color:var(--ink);border:1px solid var(--line);">封存</button></div>
       <div class="supply-stock">庫存：<b>${supplies.lancets.stock}</b> 支</div>
       <div class="supply-days">平均每天使用 <b>${lancetChangeRate>0?lancetChangeRate.toFixed(2):'—'}</b> 支</div>
       ${supplies.stockReview&&supplies.stockReview.lancets?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點確認</div>':''}
@@ -6714,22 +6737,36 @@ function renderSupplies(){
         <input type="text" inputmode="numeric" class="supply-set-input" data-key="lancets" placeholder="打錯了？直接輸入正確庫存數">
         <button type="button" class="tag-add-btn supply-set-btn" data-key="lancets" style="background:none;border:1px solid var(--ink);color:var(--ink);">修正為</button>
       </div>
-    </div>
+    </div>`:''}
     <div class="supply-card">
       <label style="display:flex;align-items:center;gap:8px;margin:0;text-transform:none;font-family:'Inter',sans-serif;font-size:13px;color:var(--ink);">
         <input type="checkbox" id="countSkipToggle" ${supplies.countSkipAsNeedleUse?'checked':''} style="width:auto;flex:0 0 auto;">
         胰島素記錄「skip」時，也算用掉一根針管
       </label>
     </div>
+    <div class="supply-card"><div class="supply-title">自訂庫存產品</div><div style="display:flex;gap:6px;flex-wrap:wrap;"><input id="supplyNewName" placeholder="產品名稱" style="min-width:110px;flex:2;"><input id="supplyNewUnit" placeholder="單位（例：包）" style="width:95px;"><input id="supplyNewStock" type="number" min="0" placeholder="數量" style="width:75px;"><button id="supplyNewBtn" type="button" class="tag-add-btn">新增產品</button></div></div>
+    ${Object.keys(supplies.customItems||{}).filter(k=>!supplyIsArchived(k)).map(k=>supplyCard(k,supplyMeta(k).label,'📦',null,0)).join('')}
+    ${supplyKeys().filter(k=>supplyIsArchived(k)).length?`<div class="supply-card"><div class="supply-title">已封存產品</div>${supplyKeys().filter(k=>supplyIsArchived(k)).map(k=>`<div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;"><span>${escapeHtml(supplyMeta(k).label)}（${supplyItem(k).stock} ${escapeHtml(supplyMeta(k).unit)}）</span><button type="button" class="tag-add-btn supply-restore-btn" data-key="${k}">解除封存</button></div>`).join('')}</div>`:''}
     <div class="supply-card"><div class="supply-title">庫存異動紀錄</div>${auditHtml||'<div class="supply-days">更新後的進貨、消耗與盤點會記錄在這裡；過去未留存的數字無法由此還原。</div>'}</div>
   `;
+  el.querySelectorAll('.supply-remind-toggle').forEach(x=>x.addEventListener('change',()=>setSupplySetting(x.dataset.key,{remind:x.checked})));
+  el.querySelectorAll('.supply-archive-btn').forEach(x=>x.addEventListener('click',()=>{if(confirm('封存後仍保留庫存及歷史紀錄，確定封存？'))setSupplySetting(x.dataset.key,{archived:true});}));
+  el.querySelectorAll('.supply-restore-btn').forEach(x=>x.addEventListener('click',()=>setSupplySetting(x.dataset.key,{archived:false})));
+  document.getElementById('supplyNewBtn').addEventListener('click',()=>{
+    const name=document.getElementById('supplyNewName').value.trim(),unit=document.getElementById('supplyNewUnit').value.trim()||'個',qty=Number(document.getElementById('supplyNewStock').value||0);
+    if(!name||name.length>80||unit.length>12||!Number.isInteger(qty)||qty<0){alert('請輸入有效的產品名稱、單位及數量');return;}
+    if(supplyKeys().some(k=>supplyMeta(k).label===name)){alert('已有同名產品');return;}
+    const key='custom_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+    supplies.customItems[key]={label:name,unit,stock:qty,threshold:30,lastModifiedAt:Date.now()};
+    saveSupplies();renderSupplies();
+  });
   el.querySelectorAll('.supply-add-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const key = btn.dataset.key;
       const input = el.querySelector(`.supply-add-input[data-key="${key}"]`);
       const n = parseInt(input.value);
       if(!n || n<=0) return;
-      changeSupplyStock(key,(supplies[key].stock||0)+n,'進貨');
+      changeSupplyStock(key,(supplyItem(key).stock||0)+n,'進貨');
       renderSupplies();
     });
   });
@@ -6743,14 +6780,16 @@ function renderSupplies(){
       renderSupplies();
     });
   });
-  document.getElementById('lancetChangedBtn').addEventListener('click', ()=>{
+  const lancetChangedBtn=document.getElementById('lancetChangedBtn');
+  if(lancetChangedBtn)lancetChangedBtn.addEventListener('click', ()=>{
     changeSupplyStock('lancets',(supplies.lancets.stock||0)-1,'更換採血針');
     supplies.lancets.testsSinceChange = 0;
     supplies.lancets.lastChangedAt = Date.now();
     saveSupplies();
     renderSupplies();
   });
-  document.getElementById('lancetThresholdInput').addEventListener('change', (e)=>{
+  const lancetThresholdInput=document.getElementById('lancetThresholdInput');
+  if(lancetThresholdInput)lancetThresholdInput.addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
     if(n && n>0){ supplies.lancets.changeThreshold = n; saveSupplies(); renderSupplies(); }
   });
