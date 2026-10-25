@@ -2000,7 +2000,7 @@ function petbankStatus(plan,now=new Date(),state=loadPetbankState()){
     }
   }
   const slotsUsed=events*2;
-  const initial=Math.max(0,Math.min(16,Number(state.filledSlots)||0));
+  const initial=Math.max(0,Math.min(15,Number(state.filledSlots)||0));
   const remaining=Math.max(0,initial-slotsUsed);
   const position=((Number(state.anchorSlot)-1+slotsUsed)%16+16)%16+1;
   const refillAt=Math.max(0,Math.min(16,Number(state.refillAt) || 4));
@@ -8134,7 +8134,7 @@ function showFeedingPlanModal(){
       const st=petbankStatus(plan);
       const meals=petbankMeals(plan);
       const slot=st?st.position:(state?.anchorSlot||1);
-      const remain=st?st.remaining:(state?.filledSlots??16);
+      const remain=st?st.remaining:(state?.filledSlots??15);
       const last=state?.lastCheck;
       const nextLabel=st?.nextAt?st.nextAt.toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'—';
       panel.innerHTML=`
@@ -8142,7 +8142,7 @@ function showFeedingPlanModal(){
         <div style="font-size:12px;color:var(--ink-soft);margin:5px 0 9px;">每餐前進 2 格；先在上蓋依轉動方向標 1–16，並選定轉盤上的固定辨識點對照。勾選上方由 Petbank 執行的乾糧餐次。</div>
         ${!meals.length?'<div style="font-size:12px;color:#B23A48;margin-bottom:8px;">尚未勾選 Petbank 餵食時段，無法推算位置。</div>':''}
         ${st?`<div style="padding:9px;border-radius:8px;background:var(--paper-raised);font-size:13px;line-height:1.8;">
-          <b>🐟 目前位置：${st.position} 號</b><br>估計剩餘 ${st.remaining}／16 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
+          <b>🐟 目前位置：${st.position} 號</b><br>估計剩餘 ${st.remaining}／15 格（${Math.floor(st.remaining/2)} 餐）<br>下次排程：${nextLabel}
           ${st.warning?`<div style="color:#B23A48;font-weight:700;">${st.empty?'⚠️ 格數不足，下次餵食前必須補糧':'⚠️ 即將需要補糧'}</div>`:''}
         </div>`:'<div style="font-size:12px;margin:7px 0;">先設定起始位置及目前裝有食物的格數。</div>'}
         <label style="display:block;font-size:12px;margin-top:9px;">🐟 實際位置（1–16）</label>
@@ -8155,13 +8155,13 @@ function showFeedingPlanModal(){
           ${[2,4,6,8].map(n=>`<option value="${n}" ${(state?.refillAt??4)===n?'selected':''}>剩 ${n} 格（${n/2} 餐）提醒</option>`).join('')}
         </select>
         <label style="display:block;font-size:12px;">目前實際裝有食物的格數</label>
-        <input id="petbankFilled" type="number" min="0" max="16" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
+        <input id="petbankFilled" type="number" min="0" max="15" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
         <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">校正位置／剩餘格數</button>
-        <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 16 格，重新開始計算</button>
+        <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 15 格，重新開始計算</button>
         <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">位置不符時可隨時按「校正位置／剩餘格數」，不只第一次設定。核對不代表 Kleo 已吃下乾糧。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
       const observed=()=>{const v=Number(panel.querySelector('#petbankObserved').value);return Number.isInteger(v)&&v>=1&&v<=16?v:null;};
       const threshold=()=>Number(panel.querySelector('#petbankRefillAt').value)||4;
-      const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=16?v:null;};
+      const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=15?v:null;};
       panel.querySelector('#petbankCheckBtn').onclick=()=>{
         const v=observed();if(v===null){alert('請輸入 1–16 的格號。');return;}
         if(!st){alert('請先校正起始位置，並儲存有勾選 Petbank 的餵食計畫。');return;}
@@ -8174,14 +8174,14 @@ function showFeedingPlanModal(){
         renderPetbankPanel();
       };
       function calibrate(full){
-        const v=observed(),f=full?16:filled();
-        if(v===null||f===null){alert('請確認格號 1–16、剩餘格數 0–16。');return;}
+        const v=observed(),f=full?15:filled();
+        if(v===null||f===null){alert('請確認格號 1–16、剩餘格數 0–15。');return;}
         const next={anchorAt:new Date().toISOString(),anchorSlot:v,filledSlots:f,refillAt:threshold(),lastCheck:null};
         savePetbankState(next);renderPetbankPanel();window.render();
       }
       panel.querySelector('#petbankCalibrateBtn').onclick=()=>calibrate(false);
       panel.querySelector('#petbankRefilledBtn').onclick=()=>{
-        if(!confirm('確定已經補滿 16 格乾糧？這會將剩餘格數重置為 16。'))return;
+        if(!confirm('確定已經補滿 15 格乾糧？這會將剩餘格數重置為 15。'))return;
         calibrate(true);
       };
     }
