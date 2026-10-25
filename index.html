@@ -3039,7 +3039,7 @@ function renderPhotoPreview(){
   });
 }
 let editContext = null; // {date, cat, idx} when editing, null when creating new
-const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine','noteEntries'];
+const PHOTO_CATS = ['glucose','insulin','vomit','stool','urine','urinalysis','noteEntries'];
 
 let savedScrollY = 0;
 function openSheet(){
@@ -4685,7 +4685,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(cat==='urinalysis'){
       const ketoneEl = document.getElementById('fKetoneLevel');
       const glucoseEl = document.getElementById('fUrineGlucoseLevel');
-      updated = {time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined};
+      updated = {time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined, photos: photosToSave};
     } else if(cat==='insulin'){
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
@@ -4739,7 +4739,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else if(currentCat==='urinalysis'){
       const ketoneEl = document.getElementById('fKetoneLevel');
       const glucoseEl = document.getElementById('fUrineGlucoseLevel');
-      data[dateStr].urinalysis.push({time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined});
+      data[dateStr].urinalysis.push({time, ketone: (ketoneEl && ketoneEl.value) || undefined, glucose: (glucoseEl && glucoseEl.value) || undefined, note: detailRaw || undefined, photos: photosToSave});
       consumeSupplyOnUrinalysis();
     } else if(currentCat==='insulin'){
       const siteEl = document.getElementById('fSite');
