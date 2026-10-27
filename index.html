@@ -6475,10 +6475,8 @@ function mergeSupplyStates(local, remote){
     const picked=lt>rt?left:rt>lt?right:lv>=rv?left:right;
     merged[key]={...picked};
     if(lv===rv) merged.stockReview[key]=false;
-    if(lv!==rv && ((lt===0 && rt===0) || merged.stockConfirmedAt[key] < Math.max(lt,rt))){
-      // A conflict is not proof that both counts are correct.
-      merged.stockReview[key]=true;
-    }
+    // A newer item timestamp resolves a stale count. Flag only ambiguous ties.
+    merged.stockReview[key] = lv!==rv && lt===rt && (lt===0 || merged.stockConfirmedAt[key]<lt);
   });
   const lc=Number(a.lancets.lastChangedAt)||0, rc=Number(b.lancets.lastChangedAt)||0;
   merged.lancets.testsSinceChange = lc>rc ? a.lancets.testsSinceChange : rc>lc ? b.lancets.testsSinceChange : Math.max(a.lancets.testsSinceChange,b.lancets.testsSinceChange);
