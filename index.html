@@ -3414,6 +3414,12 @@ function mergeSyncableTagStorage(remoteBucket){
   const localTimes=JSON.parse(localBucket['kleo-tag-edit-times-v1']||'{}');
   const remoteTimes=JSON.parse(remoteBucket['kleo-tag-edit-times-v1']||'{}');
   allKeys.forEach(k=>{
+    if(k==='kleo-tag-edit-times-v1'){
+      const mergedTimes={...localTimes};
+      Object.keys(remoteTimes).forEach(name=>{mergedTimes[name]=Math.max(Number(mergedTimes[name])||0,Number(remoteTimes[name])||0);});
+      localStorage.setItem(k,JSON.stringify(mergedTimes));
+      return;
+    }
     const lRaw = localBucket[k], rRaw = remoteBucket[k];
     if(lRaw==null){ if(rRaw!=null) localStorage.setItem(k, rRaw); return; }
     if(rRaw==null) return; // local already has it, remote doesn't — keep local
