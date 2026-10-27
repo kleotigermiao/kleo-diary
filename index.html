@@ -3798,8 +3798,7 @@ function loadMedTags(){
   }catch(e){ return ['gabapentin','ondansetron']; }
 }
 function saveMedTags(tags){
-  try{ localStorage.setItem(MED_TAGS_KEY, JSON.stringify(tags)); }catch(e){}
-  markLocalChangeAndSync();
+  saveTagsGeneric(MED_TAGS_KEY,tags);
 }
 let medTags = loadMedTags();
 function renderMedTagButtons(){
