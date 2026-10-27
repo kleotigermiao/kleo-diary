@@ -6461,6 +6461,7 @@ function mergeSupplyStates(local, remote){
     const lv=Math.max(0,Number(left.stock)||0),rv=Math.max(0,Number(right.stock)||0);
     const picked=lt>rt?left:rt>lt?right:lv>=rv?left:right;
     merged[key]={...picked};
+    if(lv===rv) merged.stockReview[key]=false;
     if(lv!==rv && ((lt===0 && rt===0) || merged.stockConfirmedAt[key] < Math.max(lt,rt))){
       // A conflict is not proof that both counts are correct.
       merged.stockReview[key]=true;
