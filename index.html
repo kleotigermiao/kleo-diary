@@ -6420,11 +6420,11 @@ function supplyReminds(key){return supplySettings(key).remind!==false;}
 function supplyItem(key){return SUPPLY_STOCK_KEYS.includes(key)?supplies[key]:supplies.customItems[key];}
 function setSupplySetting(key,patch){if(!supplies.itemSettings)supplies.itemSettings={};supplies.itemSettings[key]={...supplySettings(key),...patch,updatedAt:Date.now()};saveSupplies();renderSupplies();}
 const SUPPLY_META = {
-  strips: {label:'AlphaTrak 試紙', unit:'張', threshold:60},
-  petTestStrips: {label:'PetTest 試紙', unit:'張', threshold:60},
-  urinalysisStrips: {label:'尿酮尿糖試紙', unit:'張', threshold:60},
-  needles: {label:'針管', unit:'支', threshold:30},
-  lancets: {label:'採血針', unit:'支', threshold:60}
+  strips: {label:'AlphaTrak 試紙', unit:'張', threshold:90},
+  petTestStrips: {label:'PetTest 試紙', unit:'張', threshold:90},
+  urinalysisStrips: {label:'尿酮尿糖試紙', unit:'張', threshold:90},
+  needles: {label:'針管', unit:'支', threshold:90},
+  lancets: {label:'採血針', unit:'支', threshold:90}
 };
 // Record every inventory adjustment for audit and per-item conflict resolution.
 function changeSupplyStock(key, newStock, reason){
@@ -6606,7 +6606,7 @@ function renderSupplies(){
   const needlesRate = rates.needles;
   const stripsDaysLeft = stripsRate>0 ? Math.floor(supplies.strips.stock/stripsRate) : null;
   const needlesDaysLeft = needlesRate>0 ? Math.floor(supplies.needles.stock/needlesRate) : null;
-  const WARN_THRESHOLD = {strips: 60, petTestStrips:60, urinalysisStrips:60, needles: 30, lancets: 60};
+  const WARN_THRESHOLD = {strips: 90, petTestStrips:90, urinalysisStrips:90, needles: 90, lancets: 90};
   const SIX_MONTHS_DAYS = 182;
   const PACKAGE_SIZE = {strips: 50, needles: 10, lancets: 50};
   const PACKAGE_UNIT = {strips: '罐', needles: '包', lancets: '盒'};
