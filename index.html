@@ -3427,8 +3427,9 @@ function mergeSyncableTagStorage(remoteBucket){
     try{
       const lVal = JSON.parse(lRaw), rVal = JSON.parse(rRaw);
       if(Array.isArray(lVal) && Array.isArray(rVal)){
-        const combined = [...lVal];
-        rVal.forEach(item=>{ if(!combined.includes(item)) combined.push(item); });
+        const remoteNewer=(Number(remoteTimes[k])||0)>(Number(localTimes[k])||0);
+        const combined = remoteNewer ? [...rVal] : [...lVal];
+        (remoteNewer?lVal:rVal).forEach(item=>{ if(!combined.includes(item)) combined.push(item); });
         localStorage.setItem(k, JSON.stringify(combined));
       } else if(lVal && rVal && typeof lVal==='object' && typeof rVal==='object' && !Array.isArray(lVal)){
         localStorage.setItem(k, JSON.stringify(Object.assign({}, lVal, rVal)));
