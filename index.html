@@ -3386,7 +3386,7 @@ function saveTagsGeneric(key, tags){
 // types, food brands per type — an open-ended, dynamically-named set of
 // localStorage keys). Matched by prefix so any NEW tag group added later is
 // automatically covered without needing individual sync wiring each time.
-const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags', 'kleo-food-type-units', 'kleo-glucose-meter-tags'];
+const SYNCED_TAG_KEY_PREFIXES = ['kleo-insulin-dose-tags', 'kleo-insulin-site-tags', 'kleo-insulin-needle-tags', 'kleo-food-types', 'kleo-food-brands-', 'kleo-med-tags', 'kleo-food-type-units', 'kleo-glucose-meter-tags', 'kleo-tag-edit-times-v1'];
 function collectSyncableTagStorage(){
   const bucket = {};
   for(let i=0;i<localStorage.length;i++){
