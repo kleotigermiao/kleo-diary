@@ -3374,7 +3374,12 @@ function loadTagsGeneric(key, defaults){
   }catch(e){ return defaults.slice(); }
 }
 function saveTagsGeneric(key, tags){
-  try{ localStorage.setItem(key, JSON.stringify(tags)); }catch(e){}
+  try{
+    localStorage.setItem(key, JSON.stringify(tags));
+    const times=JSON.parse(localStorage.getItem('kleo-tag-edit-times-v1')||'{}');
+    times[key]=Date.now();
+    localStorage.setItem('kleo-tag-edit-times-v1',JSON.stringify(times));
+  }catch(e){}
   markLocalChangeAndSync();
 }
 // Generic sync for ALL tag-group storage (insulin dose/site/needle, food
