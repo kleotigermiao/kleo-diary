@@ -3411,6 +3411,8 @@ function mergeSyncableTagStorage(remoteBucket){
   if(!remoteBucket) return;
   const localBucket = collectSyncableTagStorage();
   const allKeys = new Set([...Object.keys(localBucket), ...Object.keys(remoteBucket)]);
+  const localTimes=JSON.parse(localBucket['kleo-tag-edit-times-v1']||'{}');
+  const remoteTimes=JSON.parse(remoteBucket['kleo-tag-edit-times-v1']||'{}');
   allKeys.forEach(k=>{
     const lRaw = localBucket[k], rRaw = remoteBucket[k];
     if(lRaw==null){ if(rRaw!=null) localStorage.setItem(k, rRaw); return; }
