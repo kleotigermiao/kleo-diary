@@ -6589,7 +6589,9 @@ function supplyAlerts(){
     const meta=supplyMeta(key);
     if(supplies.stockReview && supplies.stockReview[key]){
       alerts.push('⚠️ '+meta.label+'：多裝置庫存數字不一致，請盤點並用「修正為」確認');
-    } else if(days!==null && days<=meta.threshold){
+    }
+    // Purchase reminders must remain visible even when a sync review is pending.
+    if(days!==null && days<=meta.threshold){
       alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完，請及時購買');
     } else if(key.startsWith('custom_') && stock<=meta.threshold){
       alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，已達提醒門檻 '+meta.threshold+' '+meta.unit);
