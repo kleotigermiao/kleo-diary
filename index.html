@@ -834,7 +834,7 @@ textarea{resize:vertical; min-height:64px;}
     <h2 style="margin:0;font-size:22px;">Kleo 照護 SOP</h2>
     <button type="button" id="sopBackBtn" class="sync-btn">← 返回日誌</button>
   </div>
-  <p style="font-size:12px;color:var(--ink-soft);margin:0 0 18px;">個人照護流程備忘 · 透過 Google Drive 跨裝置同步 · 不自動決定胰島素劑量</p>
+  <p style="font-size:12px;color:var(--ink-soft);margin:0 0 18px;">個人照護流程備忘 · 透過 Google Drive 跨裝置同步</p>
   <div id="sopPageContent"></div>
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:16px;">
     <button type="button" class="sync-btn" id="sopAddBtn">＋ 新增 SOP</button>
@@ -8457,7 +8457,11 @@ function renderSopPage(){
      <input data-sop-title="${i}" value="${escapeHtml(x.title)}" style="width:100%;box-sizing:border-box;padding:11px;font-size:16px;font-weight:600;margin-bottom:10px;">
      <label style="font-size:12px;display:block;margin-bottom:5px;">內容</label>
      <textarea data-sop-body="${i}" rows="7" style="width:100%;box-sizing:border-box;padding:11px;font-size:15px;line-height:1.65;resize:vertical;">${escapeHtml(x.body)}</textarea>
-     <button type="button" class="sync-btn sopDeleteBtn" data-index="${i}" style="margin-top:9px;">刪除這項</button>
+     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;">
+       <button type="button" class="sync-btn sopMoveBtn" data-index="${i}" data-direction="-1" ${i===0?'disabled':''}>↑ 上移</button>
+       <button type="button" class="sync-btn sopMoveBtn" data-index="${i}" data-direction="1" ${i===sopDraft.length-1?'disabled':''}>↓ 下移</button>
+       <button type="button" class="sync-btn sopDeleteBtn" data-index="${i}">刪除這項</button>
+     </div>
    </article>`).join('');
  }else{
    const items=loadSopItems()||SOP_DEFAULT_ITEMS;
@@ -8471,6 +8475,13 @@ function renderSopPage(){
  document.getElementById('sopSaveBtn').style.display=sopEditing?'':'none';
  document.getElementById('sopCancelBtn').style.display=sopEditing?'':'none';
  updateSopFloatingSave();
+ content.querySelectorAll('.sopMoveBtn').forEach(btn=>btn.addEventListener('click',()=>{
+   collectSopDraft();
+   const i=Number(btn.dataset.index), j=i+Number(btn.dataset.direction);
+   if(j<0||j>=sopDraft.length)return;
+   [sopDraft[i],sopDraft[j]]=[sopDraft[j],sopDraft[i]];
+   renderSopPage();
+ }));
  content.querySelectorAll('.sopDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>{
    collectSopDraft();
    if(confirm('刪除這項 SOP？')){sopDraft.splice(Number(btn.dataset.index),1);renderSopPage();}
