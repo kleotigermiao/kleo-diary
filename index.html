@@ -8164,6 +8164,7 @@ function showFeedingPlanModal(){
         </div>`:'<div style="font-size:12px;margin:7px 0;">先設定起始位置及目前裝有食物的格數。</div>'}
         <label style="display:block;font-size:12px;margin-top:9px;">🐟 實際位置（1–16）</label>
         <input id="petbankObserved" type="number" min="1" max="16" step="1" inputmode="numeric" value="${slot}" style="width:100%;box-sizing:border-box;">
+        <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">校正位置</button>
         <div style="border-top:1px solid var(--line);margin:12px 0 9px;"></div>
         <label style="display:block;font-size:12px;">補糧提醒門檻</label>
         <select id="petbankRefillAt" style="width:100%;margin:4px 0 9px;">
@@ -8171,9 +8172,8 @@ function showFeedingPlanModal(){
         </select>
         <label style="display:block;font-size:12px;">目前實際裝有食物的格數</label>
         <input id="petbankFilled" type="number" min="0" max="15" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
-        <button id="petbankCalibrateBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">校正位置／剩餘格數</button>
         <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 15 格，重新開始計算</button>
-        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">位置不符時請按「校正位置／剩餘格數」。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">位置不符時請按「校正位置」。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
       const observed=()=>{const v=Number(panel.querySelector('#petbankObserved').value);return Number.isInteger(v)&&v>=1&&v<=16?v:null;};
       const threshold=()=>Number(panel.querySelector('#petbankRefillAt').value)||4;
       const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=15?v:null;};
