@@ -8177,8 +8177,9 @@ function showFeedingPlanModal(){
         </select>
         <label style="display:block;font-size:12px;">目前實際裝有食物的格數</label>
         <input id="petbankFilled" type="number" min="0" max="15" step="1" inputmode="numeric" value="${remain}" style="width:100%;box-sizing:border-box;">
+        <button id="petbankSaveRemainingBtn" type="button" class="tag-add-btn" style="min-height:44px;width:100%;margin-top:8px;">儲存剩餘格數</button>
         <button id="petbankRefilledBtn" type="button" class="tag-add-btn" style="min-height:48px;width:100%;margin-top:8px;">✓ 已補滿 15 格，重新開始計算</button>
-        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">位置不符時請按「校正位置」。補糧後請按「已補滿」，否則剩餘格數不會重置。跨裝置需完成同步。</div>`;
+        <div style="font-size:11px;color:var(--ink-soft);margin-top:8px;">修改食物格數後請按「儲存剩餘格數」；位置不符時請按「校正位置」。補滿 15 格才按「已補滿」。跨裝置需完成同步。</div>`;
       const observed=()=>{const v=Number(panel.querySelector('#petbankObserved').value);return Number.isInteger(v)&&v>=1&&v<=16?v:null;};
       const threshold=()=>Number(panel.querySelector('#petbankRefillAt').value)||4;
       const filled=()=>{const v=Number(panel.querySelector('#petbankFilled').value);return Number.isInteger(v)&&v>=0&&v<=15?v:null;};
@@ -8194,6 +8195,15 @@ function showFeedingPlanModal(){
         savePetbankState(next);renderPetbankPanel();window.render();
       }
       panel.querySelector('#petbankCalibrateBtn').onclick=()=>calibrate(false);
+      panel.querySelector('#petbankSaveRemainingBtn').onclick=()=>{
+        const f=filled();
+        if(f===null){alert('請輸入 0–15 的整數格數。');return;}
+        const current=petbankStatus(plan);
+        const position=current?current.position:observed();
+        if(position===null){alert('請先設定實際位置（1–16）。');return;}
+        savePetbankState({...loadPetbankState(),anchorAt:new Date().toISOString(),anchorSlot:position,filledSlots:f,refillAt:threshold()});
+        renderPetbankPanel();window.render();
+      };
       panel.querySelector('#petbankRefilledBtn').onclick=()=>{
         if(!confirm('確定已經補滿 15 格乾糧？這會將剩餘格數重置為 15。'))return;
         calibrate(true);
