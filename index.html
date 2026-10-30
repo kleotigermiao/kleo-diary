@@ -213,6 +213,8 @@ main{max-width:640px;margin:0 auto;padding:14px 16px 0;}
   padding:10px 14px;margin-bottom:14px;
 }
 .reminder-line{font-size:12.5px;color:var(--ink);padding:3px 0;cursor:pointer;}
+.reminder-line.supply-prepare{background:#FFF0BD;color:#805600;border-radius:6px;padding:7px 9px;margin:3px 0;}
+.reminder-line.supply-urgent{background:#FCE4EC;color:#A62936;font-weight:600;border-radius:6px;padding:7px 9px;margin:3px 0;}
 .reminder-line.overdue{color:#C0392B;}
 .reminder-line.missing-today{color:#B5457A;}
 .reminder-hint{font-size:11px;color:var(--ink-soft);}
@@ -2478,7 +2480,7 @@ function buildRemindersBanner(){
   if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder) return '';
   const lines = [];
   if(feederReminder) lines.push(feederReminder);
-  stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder">${escapeHtml(msg)}</div>`));
+  stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder${msg.startsWith('🔴')?' supply-urgent':msg.startsWith('🟡')?' supply-prepare':''}">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
   overdue.forEach(o=> lines.push(`<div class="reminder-line overdue" data-date="${o.dateStr}">📌 <b>${Math.abs(o.diffDays)}天前（${o.dateStr}）</b>：${escapeHtml(o.ev.text)}　<span class="reminder-hint">可能忘了處理？</span></div>`));
@@ -6597,7 +6599,9 @@ function supplyAlerts(){
     }
     // Purchase reminders must remain visible even when a sync review is pending.
     if(days!==null && days<=meta.threshold){
-      alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完，請及時購買');
+      alerts.push((key.startsWith('custom_')?'🛒 ':'🔴 ')+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完，請儘快補貨');
+    } else if(!key.startsWith('custom_') && rate>0 && stock/rate<182){
+      alerts.push('🟡 '+meta.label+'：剩 '+stock+' '+meta.unit+'，約 '+days+' 天用完；不足 6 個月，請準備採購');
     } else if(key.startsWith('custom_') && stock<=meta.threshold){
       alerts.push('🛒 '+meta.label+'：剩 '+stock+' '+meta.unit+'，已達提醒門檻 '+meta.threshold+' '+meta.unit);
     }
