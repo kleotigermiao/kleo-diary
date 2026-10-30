@@ -2471,8 +2471,13 @@ function buildRemindersBanner(){
   });
   const missingTodayLines = buildMissingTodayLines();
   const stockAlerts = supplyAlerts();
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0) return '';
+  const feederStatus = petbankStatus(loadFeedingPlan());
+  const feederReminder = feederStatus && (feederStatus.empty || feederStatus.warning)
+    ? `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;padding:3px 0;cursor:pointer;">🐟 小魚餵食器：${feederStatus.empty?'剩餘格數不足一餐，請補糧':`剩 ${feederStatus.remaining} 格（${Math.floor(feederStatus.remaining/2)} 餐），請準備補糧`} ›</button>`
+    : '';
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder) return '';
   const lines = [];
+  if(feederReminder) lines.push(feederReminder);
   stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
