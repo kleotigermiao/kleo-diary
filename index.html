@@ -8442,12 +8442,101 @@ document.getElementById('checkStorageMenuItem').addEventListener('click', showSt
 document.getElementById('localHistoryMenuItem').addEventListener('click', showLocalHistoryModal);
 document.getElementById('dedupeMenuItem').addEventListener('click', showDedupeModal);
 document.getElementById('kcalSettingsMenuItem').addEventListener('click', showKcalSettingsModal);
+
+const ROUTINE_KEY='kleo-care-routine-v1';
+const ROUTINE_FIELDS=[
+ ['insulin','胰島素名稱／早晚施打時間'],
+ ['dose','接手者應打劑量（U）／卡尺（mm）'],
+ ['low','低於此血糖：不打（mmol/L）'],
+ ['retest','不打後多久再測／是否餵食'],
+ ['mid','半劑量血糖範圍（下限至未滿上限）'],
+ ['half','半劑量實際打多少（U）'],
+ ['normal','此血糖以上正常打（mmol/L）'],
+ ['exceptions','沒吃飯／不確定是否已打針：處理方式'],
+ ['followup','Fructosamine：每幾個月／上次及下次回診日期'],
+ ['feeder','🐟 餵食器操作／裝填／補糧／故障時手動補餐'],
+ ['emergency','低血糖、拒食或嘔吐處理／獸醫及急診電話'],
+ ['location','用品及急救食物放置位置']
+];
+function loadCareRoutine(){try{return JSON.parse(localStorage.getItem(ROUTINE_KEY)||'null')||{};}catch(e){return {};}}
+function applyRemoteRoutine(envelope){
+ const remote=envelope.careRoutine;
+ if(!remote || typeof remote!=='object' || !remote.updatedAt)return;
+ if(Number(remote.updatedAt)>Number(loadCareRoutine().updatedAt||0))
+   localStorage.setItem(ROUTINE_KEY,JSON.stringify(remote));
+}
+function recentRoutineDose(){
+ const entries=[];
+ Object.keys(data||{}).sort().reverse().slice(0,14).forEach(date=>{
+   (data[date].insulin||[]).forEach(e=>{
+     const dose=String(e.dose||'').trim();
+     if(/^\d+(?:\.\d+)?(?:\s*U)?$/i.test(dose)&&parseFloat(dose)>0)entries.push({date,dose:parseFloat(dose)});
+   });
+ });
+ const counts=new Map();
+ entries.forEach(e=>counts.set(e.dose,(counts.get(e.dose)||0)+1));
+ const sorted=[...counts].sort((a,b)=>b[1]-a[1]);
+ return sorted.length?sorted.filter(x=>x[1]===sorted[0][1]).map(x=>x[0]+' U').join('／')+'（最近 14 個有紀錄日期；僅供參考）':'尚無足夠劑量紀錄';
+}
+function routineMediaUrl(value){
+ try{const u=new URL(value);return u.protocol==='https:'?u.href:'';}catch(e){return '';}
+}
+function routineHtml(){
+ const r=loadCareRoutine(),plan=loadFeedingPlan();
+ return `<section id="routineCard" style="border:2px solid var(--ink);border-radius:12px;padding:16px;margin-bottom:20px;overflow-wrap:anywhere;">
+ <h2 style="margin:0 0 8px;">Routine｜接手照護</h2>
+ <div style="font-size:12px;">最後確認：${r.updatedAt?escapeHtml(new Date(r.updatedAt).toLocaleString('zh-TW')):'尚未確認'}<br>最近常用劑量：${escapeHtml(recentRoutineDose())}</div>
+ <button type="button" class="sync-btn" id="routineEditBtn" ${sopEditing?'disabled':''} style="margin:10px 0;">編輯 Routine</button>
+ ${ROUTINE_FIELDS.map(([key,label])=>`<div style="margin:12px 0;"><strong>${label}</strong><div style="white-space:pre-wrap;line-height:1.8;">${escapeHtml(r[key]||'待填寫／確認')}</div></div>`).join('')}
+ <h3>飲食｜目前餵食計畫</h3>
+ ${plan.length?plan.map(ev=>`<div style="padding:8px 0;border-bottom:1px solid var(--line);">${escapeHtml(ev.time||'未定時間')}｜${ev.feeder?'🐟 自動':'✋ 手動'}｜${escapeHtml(ev.type||'')} ${escapeHtml(ev.brand||'')} ${escapeHtml(String(ev.amount??''))} ${escapeHtml(ev.unit||foodTypeUnit(ev.type)||'g')}</div>`).join(''):'尚未設定餵食計畫'}
+ <p style="font-size:12px;">餵食內容直接帶出目前計畫；請至餵食計畫修改。</p>
+ ${(r.media||[]).map(m=>{const url=routineMediaUrl(m.url);if(!url)return '';return `<figure style="margin:16px 0;">${m.type==='video'?`<video controls playsinline preload="metadata" style="display:block;width:100%;max-height:70vh;" src="${escapeHtml(url)}"></video><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">開啟影片</a>`:`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="${escapeHtml(m.caption||'操作示範')}" loading="lazy" style="display:block;width:100%;height:auto;object-fit:contain;"></a>`}<figcaption style="white-space:pre-wrap;line-height:1.6;">${escapeHtml(m.caption||'')}</figcaption></figure>`;}).join('')}
+ </section>`;
+}
+function showRoutineEditor(){
+ const r=loadCareRoutine();
+ const overlay=document.createElement('div');
+ overlay.style.cssText='position:fixed;inset:0;z-index:400;background:var(--paper);overflow:auto;padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(30px + env(safe-area-inset-bottom,0px));';
+ overlay.innerHTML=`<div style="max-width:640px;margin:auto;"><h2>編輯 Routine</h2><p>依已確認的照護指示填寫；空白欄位會顯示「待填寫／確認」。</p>
+ ${ROUTINE_FIELDS.map(([key,label])=>`<label style="display:block;margin:14px 0;">${label}<textarea data-routine="${key}" rows="3" style="display:block;width:100%;font-size:16px;margin-top:6px;">${escapeHtml(r[key]||'')}</textarea></label>`).join('')}
+ <h3>照片／影片示範</h3><p>使用 HTTPS 圖片或影片直連；影片須為瀏覽器可播放格式。每項可加說明。</p>
+ <div id="routineMediaRows"></div><button type="button" id="routineAddMedia" class="sync-btn">＋加入照片／影片</button>
+ <div style="display:flex;gap:10px;margin-top:22px;"><button type="button" id="routineSave" class="sync-btn">儲存並確認</button><button type="button" id="routineCancel" class="sync-btn">取消</button></div></div>`;
+ document.body.appendChild(overlay);
+ function addMedia(m={}){
+  const row=document.createElement('div');row.style.cssText='border:1px solid var(--line);padding:10px;margin:10px 0;';
+  row.innerHTML=`<select data-media-type><option value="image">照片</option><option value="video">影片</option></select><input data-media-url type="url" placeholder="https://… 圖片／影片直連" style="display:block;width:100%;margin:8px 0;"><textarea data-media-caption placeholder="操作說明" style="width:100%;"></textarea><button type="button" class="sync-btn">移除這項</button>`;
+  row.querySelector('select').value=m.type==='video'?'video':'image';
+  row.querySelector('input').value=m.url||'';row.querySelector('textarea').value=m.caption||'';
+  row.querySelector('button').onclick=()=>row.remove();
+  overlay.querySelector('#routineMediaRows').appendChild(row);
+ }
+ (r.media||[]).forEach(addMedia);
+ overlay.querySelector('#routineAddMedia').onclick=()=>addMedia();
+ overlay.querySelector('#routineCancel').onclick=()=>overlay.remove();
+ overlay.querySelector('#routineSave').onclick=()=>{
+  const next={updatedAt:Date.now(),media:[]};
+  overlay.querySelectorAll('[data-routine]').forEach(el=>next[el.dataset.routine]=el.value.trim());
+  for(const row of overlay.querySelector('#routineMediaRows').children){
+   const raw=row.querySelector('input').value.trim();
+   if(!raw)continue;
+   const url=routineMediaUrl(raw);
+   if(!url){alert('照片／影片請使用有效的 HTTPS 連結。');return;}
+   next.media.push({type:row.querySelector('select').value,url,caption:row.querySelector('textarea').value.trim()});
+  }
+  try{localStorage.setItem(ROUTINE_KEY,JSON.stringify(next));markLocalChangeAndSync();overlay.remove();renderSopPage();}
+  catch(e){alert('Routine 儲存失敗：'+e.message);}
+ };
+}
+
 const SOP_KEY='kleo-care-sop-v1';
 const SOP_UPDATED_KEY='kleo-care-sop-updated-at';
 function loadSopItems(){
  try{const value=JSON.parse(localStorage.getItem(SOP_KEY)||'null');return Array.isArray(value)?value:null;}catch(e){return null;}
 }
 function applyRemoteSop(envelope,force=false){
+ applyRemoteRoutine(envelope);
  if(!Array.isArray(envelope.careSop))return;
  const remoteTs=Number(envelope.careSopUpdatedAt||envelope._meta?.lastModified||0);
  const localTs=Number(localStorage.getItem(SOP_UPDATED_KEY)||0);
@@ -8482,6 +8571,8 @@ function renderSopPage(){
      <div style="font-size:15px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(x.body)}</div>
    </article>`).join(''):'<p>目前沒有 SOP。按「新增 SOP」建立。</p>';
  }
+ content.insertAdjacentHTML('afterbegin',routineHtml());
+ content.querySelector('#routineEditBtn').addEventListener('click',showRoutineEditor);
  document.getElementById('sopAddBtn').style.display=sopEditing?'':'none';
  document.getElementById('sopEditBtn').style.display=sopEditing?'none':'';
  document.getElementById('sopSaveBtn').style.display=sopEditing?'':'none';
@@ -9301,7 +9392,7 @@ function buildSyncEnvelope(){
   //   (tag groups like insulin dose/site/needle and food types/brands are
   //   the exception — they're covered generically via tagStorage/
   //   collectSyncableTagStorage, no per-tag-group wiring needed)
-  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), petbankState: loadPetbankState(), wetBowl: loadWetBowl(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage(), foodAliases: loadFoodAliases() };
+  return { _meta: { lastModified }, diary: hydratedDiary, supplies, calEvents, dailyKcalTarget: loadDailyKcalTarget(), dailyTreatsCount: loadDailyTreatsCount(), foodBrandKcal: loadFoodBrandKcal(), feedingPlan: loadFeedingPlan(), petbankState: loadPetbankState(), wetBowl: loadWetBowl(), feedingPlanUpdatedAt: parseInt(localStorage.getItem(FEEDING_PLAN_UPDATED_KEY)||'0'), careRoutine: loadCareRoutine(), careSop: loadSopItems(), careSopUpdatedAt: Number(localStorage.getItem(SOP_UPDATED_KEY)||0), lockStates: collectDayLockStates(hydratedDiary), todos, tagStorage: collectSyncableTagStorage(), foodAliases: loadFoodAliases() };
 }
 function pushToDrive(immediate){
   if(!gAccessToken || !driveFileId){
