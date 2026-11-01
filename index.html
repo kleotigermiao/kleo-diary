@@ -863,6 +863,7 @@ textarea{resize:vertical; min-height:64px;}
     <button class="cat-btn" data-cat="vomit"><span class="ic">🤮</span>嘔吐</button>
     <button class="cat-btn" data-cat="med"><span class="ic">💊</span>用藥</button>
     <button class="cat-btn" data-cat="respRate"><span class="ic">🫁</span>呼吸率</button>
+    <button class="cat-btn" data-cat="bloodKetone"><span class="ic">🧬</span>血酮 Keto-Mojo</button>
     <button class="cat-btn" data-cat="urinalysis"><span class="ic">🧪</span>尿酮尿糖</button>
     <button class="cat-btn" data-cat="urine"><span class="ic">🚽</span>排尿</button>
     <button class="cat-btn" data-cat="water"><span class="ic">💧</span>飲水</button>
@@ -1317,9 +1318,9 @@ function buildStrip(glucoseEntries){
     <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
 }
 
-const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',urinalysis:'🧪',mood:'😺',appetite:'🍖',noteEntries:'📝'};
+const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',bloodKetone:'🧬',urinalysis:'🧪',mood:'😺',appetite:'🍖',noteEntries:'📝'};
 const TREND_ARROWS = {up_fast:'↑', up:'↗', stable:'→', down:'↘', down_fast:'↓'};
-const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',urinalysis:'尿酮尿糖',mood:'精神',appetite:'食慾',noteEntries:'備註'};
+const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',bloodKetone:'血酮（Keto-Mojo）',urinalysis:'尿酮尿糖',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
   if(!entries || entries.length===0) return null;
@@ -1343,7 +1344,7 @@ function deltaSpan(diff, formatFn){
   return `<span class="delta ${cls}">${arrow} ${formatFn(Math.abs(diff))}</span>`;
 }
 const CUSTOM_SLOTS_KEY = 'kleo-custom-status-slots-v1';
-const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med','respRate','urinalysis'];
+const CUSTOM_SLOT_ASSIGNABLE = ['glucose','insulin','food','stool','vomit','med','respRate','bloodKetone','urinalysis'];
 const CUSTOM_SLOT_COUNT = 4;
 function loadCustomSlots(){
   try{
@@ -1810,6 +1811,8 @@ function renderRowHtml(dateStr, cat, e, idx){
   } else if(cat==='respRate'){
     const rrDetail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     valHtml = `<span class="tag normal">${e.value} 次/分</span>${rrDetail}`;
+  } else if(cat==='bloodKetone'){
+    valHtml = `<span class="tag">血酮 ${escapeHtml(String(e.value))} mmol/L</span> <span>Keto-Mojo</span>${e.note?' · '+escapeHtml(e.note):''}`;
   } else if(cat==='urinalysis'){
     const uDetail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     const ketoneAbnormal = e.ketone && e.ketone!=='NEG.';
@@ -2162,7 +2165,7 @@ function showWetFoodWeighModal(){
           storeWetBowl(bowl);markLocalChangeAndSync();draw();return;
         }
         const grams=Math.round(eaten*100)/100;
-        const day=data[date]||(data[date]={glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
+        const day=data[date]||(data[date]={glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
         day.food=day.food||[];
         const previousWeight=bowl.lastWeight;
         const recordedWater=extraWater+(Number(bowl.pendingWater)||0);
@@ -2420,7 +2423,7 @@ function openPlannedMealDialog(dateStr,key){
 }
 
 function renderDayRows(dateStr, day){
-  const cats = ['mood','appetite','food','water','glucose','weight','respRate','urinalysis','insulin','urine','stool','vomit','med','noteEntries'];
+  const cats = ['mood','appetite','food','water','glucose','weight','respRate','bloodKetone','urinalysis','insulin','urine','stool','vomit','med','noteEntries'];
   const all = [];
   cats.forEach(cat=>{
     (day[cat]||[]).forEach((e, idx)=>{
@@ -2568,7 +2571,7 @@ let renderedDaysLimit = 30; // how many of the most recent days are currently re
 function render(){
   const main = document.getElementById('main');
   if(!data[todayStr()]){
-    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
   const allDates = Object.keys(data).sort().reverse();
   if(allDates.length===0){
@@ -3304,6 +3307,9 @@ function openSheetForEdit(dateStr, cat, idx){
       });
     }
     else if(cat==='weight') valEl.value = entry.value;
+    else if(cat==='bloodKetone'){
+      valEl.value = entry.value ?? ''; document.getElementById('fDetail').value=entry.note||'';
+    }
     else if(cat==='respRate'){
       valEl.value = entry.value;
       const detailEl = document.getElementById('fDetail');
@@ -3883,8 +3889,8 @@ function getOptionsForCat(cat){
 
 const GLUCOSE_METER_TAG_KEY = 'kleo-glucose-meter-tags-v1';
 function loadGlucoseMeterTags(){
-  const tags=loadTagsGeneric(GLUCOSE_METER_TAG_KEY,['AlphaTrak','PetTest','Libre']);
-  return Array.isArray(tags)?tags.filter(t=>typeof t==='string'&&t.trim()):['AlphaTrak','PetTest','Libre'];
+  const tags=loadTagsGeneric(GLUCOSE_METER_TAG_KEY,['AlphaTrak','PetTest','Libre','Keto-Mojo']);
+  return Array.isArray(tags)?[...new Set([...tags.filter(t=>typeof t==='string'&&t.trim()),'Keto-Mojo'])]:['AlphaTrak','PetTest','Libre','Keto-Mojo'];
 }
 function ensureGlucoseMeterTag(name){
   if(!name)return;
@@ -4013,6 +4019,8 @@ function setCategory(cat){
     dynamicFields.innerHTML = `<label>呼吸率 (次/分鐘)</label><input type="text" inputmode="numeric" id="fVal" placeholder="例如 30">
       <label>補充說明（可選）</label>
       <textarea id="fDetail" placeholder="例如睡眠中量測、剛活動完…" style="height:44px;"></textarea>`;
+  } else if(cat==='bloodKetone'){
+    dynamicFields.innerHTML = '<label>Keto-Mojo 血酮（mmol/L）</label><input type="text" inputmode="decimal" id="fVal" placeholder="例如 0.2"><label>備註</label><textarea id="fDetail"></textarea>';
   } else if(cat==='urinalysis'){
     const ketoneLevels = [
       {label:'NEG.', value:'NEG.'},
@@ -4628,6 +4636,7 @@ clearPhotoBtn.addEventListener('click', ()=>{
 function glucoseMeterKey(label){
   const s = (label||'').trim().toLowerCase();
   if(s.includes('pettest') || s.includes('pet test')) return 'petTest';
+  if(s.replace(/[^a-z]/g,'').includes('ketomojo')) return 'ketoMojo';
   if(s.includes('libre')) return 'libre';
   if(s.includes('alpha')) return 'alphatrak';
   return 'custom';
@@ -4670,6 +4679,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   // moving an existing record into a locked date.
   if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
   if(editContext && editContext.date && isDayLocked(editContext.date)){ lockedDayWarning(editContext.date); return; }
+  if(effectiveCat==='bloodKetone' && (numRaw==='' || !Number.isFinite(Number(numRaw)) || Number(numRaw)<0)){alert('請輸入有效血酮數值（mmol/L，0 或以上）。');return;}
   if(effectiveCat==='insulin'){
     const reactionEl = document.getElementById('fReaction');
     if(!reactionEl || !reactionEl.value){
@@ -4680,7 +4690,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   if(effectiveCat==='glucose' && !readGlucoseForm(time, detailRaw, currentPhotos.length ? currentPhotos.slice() : undefined)){
     alert('請至少輸入一台血糖機的有效數值（mmol/L）。'); return;
   }
-  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
+  const blankDay = ()=>({glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''});
 
   if(isDayNoteEdit){
     // Overwrite (not append) the day's notes text
@@ -4704,6 +4714,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       updated = {time, value: parseInt(rawVal)};
     } else if(cat==='weight'){
       updated = {time, value: parseFloat(rawVal)};
+    } else if(cat==='bloodKetone'){
+      updated = {time,value:Number(numRaw),meter:'ketoMojo',note:detailRaw||undefined};
     } else if(cat==='respRate'){
       updated = {time, value: parseFloat(numRaw), note: detailRaw || undefined};
     } else if(cat==='urinalysis'){
@@ -4724,6 +4736,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     } else {
       updated = {time, note: rawVal, photos: photosToSave};
     }
+    if(cat==='glucose')reconcileGlucoseSupplyEdit(origEntry,updated);
     // Give this entry a stable identity across edits: keep its existing _id if
     // it has one (assign one now if it's an older entry that predates this),
     // and bump _updatedAt so a future multi-device merge can tell which edit
@@ -4751,13 +4764,17 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
     if(currentCat==='glucose'){
       const glucoseEntry = readGlucoseForm(time, detailRaw, photosToSave);
       data[dateStr].glucose.push(glucoseEntry);
-      if(glucoseEntry.meter==='alphatrak' || glucoseEntry.meter==='petTest') consumeSupplyOnGlucose(glucoseEntry.meter);
+      glucoseReadings(glucoseEntry).forEach(r=>{const meter=glucoseMeterKey(r.meterLabel);if(['alphatrak','petTest','ketoMojo'].includes(meter))consumeSupplyOnGlucose(meter);});
     } else if(currentCat==='urine'){
       data[dateStr].urine.push({time, ml: parseFloat(numRaw), note: detailRaw || undefined, photos: photosToSave});
     } else if(currentCat==='mood' || currentCat==='appetite'){
       data[dateStr][currentCat].push({time, value: parseInt(rawVal)});
     } else if(currentCat==='weight'){
       data[dateStr].weight.push({time, value: parseFloat(rawVal)});
+    } else if(currentCat==='bloodKetone'){
+      if(!data[dateStr].bloodKetone)data[dateStr].bloodKetone=[];
+      data[dateStr].bloodKetone.push({time,value:Number(numRaw),meter:'ketoMojo',note:detailRaw||undefined});
+      changeSupplyStock('ketoKetoneStrips',(supplies.ketoKetoneStrips.stock||0)-1,'血酮測量');
     } else if(currentCat==='respRate'){
       data[dateStr].respRate.push({time, value: parseFloat(numRaw), note: detailRaw || undefined});
     } else if(currentCat==='urinalysis'){
@@ -4910,7 +4927,7 @@ document.querySelectorAll('.layout-btn').forEach(btn=>{
 let selectedMeterFilter = 'all';
 function meterNameKey(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g,''); }
 function glucoseReadings(e){
-  const primaryName = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : e.meter==='custom' ? '其他血糖機' : 'AlphaTrak');
+  const primaryName = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : e.meter==='ketoMojo' ? 'Keto-Mojo' : e.meter==='custom' ? '其他血糖機' : 'AlphaTrak');
   const result = [{...e, meterLabel:primaryName, meterNameKey:meterNameKey(primaryName), _readingSource:'primary'}];
   if(e.secondaryValue!=null && Number.isFinite(Number(e.secondaryValue))){
     const secondaryName=e.secondaryMeterLabel||'Libre';
@@ -5136,6 +5153,7 @@ const REPORT_COLUMNS = [
   {key:'glucose', label:'血糖', icon:'🩸'},
   {key:'glucoseNote', label:'血糖備註', icon:'📝'},
   {key:'weight', label:'體重', icon:'⚖️'},
+  {key:'bloodKetone', label:'血酮 Keto-Mojo', icon:'🧬'},
   {key:'respRate', label:'呼吸率', icon:'🫁'},
   {key:'urinalysis', label:'尿酮尿糖', icon:'🧪'},
   {key:'insulin', label:'胰島素', icon:'💉'},
@@ -5209,6 +5227,7 @@ function reportCellLines(day, catKey, dateStr){
     });
   }
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
+  if(catKey==='bloodKetone') return entries.map(e=>`${e.time} 血酮 ${e.value} mmol/L (Keto-Mojo)`);
   if(catKey==='respRate') return entries.map(e=>`${e.time} → ${e.value}次/分`);
   if(catKey==='urinalysis') return entries.map(e=>`${e.time} 酮${e.ketone||'--'}/糖${e.glucose||'--'}`);
   if(catKey==='insulin') return entries.map(e=>`${e.time} ${e.dose}`);
@@ -5928,7 +5947,7 @@ function renderWeeklySummary(){
   const allDatesSorted = Object.keys(data).sort().reverse();
   const content = document.getElementById('weeklySummaryContent');
   content.innerHTML = weekDates.map(dateStr=>{
-    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = data[dateStr] || {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     const idx = allDatesSorted.indexOf(dateStr);
     const stats = computeDayReportStats(dateStr, day, allDatesSorted, idx);
     const chartHtml = buildMiniDayChart(day);
@@ -6373,6 +6392,8 @@ backFromGallery.addEventListener('click', ()=>{
 const SUPPLIES_KEY = 'kleo-supplies-v1';
 const SUPPLIES_DEFAULTS = {
   strips: {stock: 0}, // AlphaTrak 3 glucose test strips
+  ketoKetoneStrips: {stock:0},
+  ketoGlucoseStrips: {stock:0},
   petTestStrips: {stock: 0}, // PetTest glucose meter test strips — separate meter, not compatible with AlphaTrak strips
   urinalysisStrips: {stock: 0}, // ketone/glucose reagent strips for urinalysis
   needles: {stock: 0},
@@ -6393,6 +6414,8 @@ function normalizeSupplies(parsed){
   if(!parsed) return JSON.parse(JSON.stringify(SUPPLIES_DEFAULTS));
   const normalized = Object.assign({}, SUPPLIES_DEFAULTS, parsed, {
     strips: Object.assign({}, SUPPLIES_DEFAULTS.strips, parsed.strips),
+    ketoKetoneStrips: Object.assign({}, SUPPLIES_DEFAULTS.ketoKetoneStrips, parsed.ketoKetoneStrips),
+    ketoGlucoseStrips: Object.assign({}, SUPPLIES_DEFAULTS.ketoGlucoseStrips, parsed.ketoGlucoseStrips),
     petTestStrips: Object.assign({}, SUPPLIES_DEFAULTS.petTestStrips, parsed.petTestStrips),
     urinalysisStrips: Object.assign({}, SUPPLIES_DEFAULTS.urinalysisStrips, parsed.urinalysisStrips),
     needles: Object.assign({}, SUPPLIES_DEFAULTS.needles, parsed.needles),
@@ -6418,7 +6441,7 @@ function loadSupplies(){
 function loadSuppliesFromRemote(remote){
   return normalizeSupplies(remote);
 }
-const SUPPLY_STOCK_KEYS = ['strips','petTestStrips','urinalysisStrips','needles','lancets'];
+const SUPPLY_STOCK_KEYS = ['strips','petTestStrips','urinalysisStrips','needles','lancets','ketoKetoneStrips','ketoGlucoseStrips'];
 function supplyKeys(){return [...SUPPLY_STOCK_KEYS,...Object.keys((supplies&&supplies.customItems)||{})];}
 function supplyMeta(key){return SUPPLY_META[key]||{label:(supplies.customItems[key]||{}).label||key,unit:(supplies.customItems[key]||{}).unit||'個',threshold:Number.isFinite(Number((supplies.customItems[key]||{}).threshold))?Number(supplies.customItems[key].threshold):30};}
 function supplySettings(key){return (supplies.itemSettings||{})[key]||{};}
@@ -6428,6 +6451,8 @@ function supplyItem(key){return SUPPLY_STOCK_KEYS.includes(key)?supplies[key]:su
 function setSupplySetting(key,patch){if(!supplies.itemSettings)supplies.itemSettings={};supplies.itemSettings[key]={...supplySettings(key),...patch,updatedAt:Date.now()};saveSupplies();renderSupplies();}
 const SUPPLY_META = {
   strips: {label:'AlphaTrak 試紙', unit:'張', threshold:90},
+  ketoKetoneStrips: {label:'Keto-Mojo 血酮試紙',unit:'張',threshold:90},
+  ketoGlucoseStrips: {label:'Keto-Mojo 血糖試紙',unit:'張',threshold:90},
   petTestStrips: {label:'PetTest 試紙', unit:'張', threshold:90},
   urinalysisStrips: {label:'尿酮尿糖試紙', unit:'張', threshold:90},
   needles: {label:'針管', unit:'支', threshold:90},
@@ -6512,8 +6537,29 @@ let supplies = loadSupplies();
   }catch(e){}
 })();
 
+
+function glucoseSupplyCounts(entry){
+ const out={};
+ if(!entry)return out;
+ glucoseReadings(entry).forEach(r=>{
+   const meter=glucoseMeterKey(r.meterLabel);
+   const key={alphatrak:'strips',petTest:'petTestStrips',ketoMojo:'ketoGlucoseStrips'}[meter];
+   if(key)out[key]=(out[key]||0)+1;
+ });
+ return out;
+}
+function reconcileGlucoseSupplyEdit(before,after){
+ const a=glucoseSupplyCounts(before),b=glucoseSupplyCounts(after);
+ new Set([...Object.keys(a),...Object.keys(b)]).forEach(key=>{
+   const delta=(a[key]||0)-(b[key]||0);
+   if(delta)changeSupplyStock(key,(supplies[key].stock||0)+delta,'修改血糖紀錄');
+ });
+ const delta=Object.values(b).reduce((x,y)=>x+y,0)-Object.values(a).reduce((x,y)=>x+y,0);
+ if(delta){supplies.lancets.testsSinceChange=Math.max(0,(supplies.lancets.testsSinceChange||0)+delta);saveSupplies();}
+}
+
 function consumeSupplyOnGlucose(meter){
-  const key = meter==='petTest'?'petTestStrips':'strips';
+  const key = meter==='ketoMojo'?'ketoGlucoseStrips':meter==='petTest'?'petTestStrips':'strips';
   changeSupplyStock(key, (supplies[key].stock||0)-1, '血糖測量');
   supplies.lancets.testsSinceChange = (supplies.lancets.testsSinceChange||0) + 1;
   saveSupplies();
@@ -6533,10 +6579,12 @@ function consumeSupplyOnUrinalysis(){
 }
 function refundSupplyOnDelete(cat, entry){
   if(cat==='glucose'){
-    if(entry && entry.meter==='petTest') changeSupplyStock('petTestStrips',(supplies.petTestStrips.stock||0)+1,'刪除紀錄退回');
-    else if(!entry || !entry.meter || entry.meter==='alphatrak') changeSupplyStock('strips',(supplies.strips.stock||0)+1,'刪除紀錄退回');
-    if(!entry || !entry.meter || entry.meter==='alphatrak' || entry.meter==='petTest') supplies.lancets.testsSinceChange = Math.max(0, (supplies.lancets.testsSinceChange||0) - 1);
+    const counts=glucoseSupplyCounts(entry);
+    Object.entries(counts).forEach(([key,n])=>changeSupplyStock(key,(supplies[key].stock||0)+n,'刪除紀錄退回'));
+    supplies.lancets.testsSinceChange=Math.max(0,(supplies.lancets.testsSinceChange||0)-Object.values(counts).reduce((a,b)=>a+b,0));
     saveSupplies();
+  } else if(cat==='bloodKetone'){
+    changeSupplyStock('ketoKetoneStrips',(supplies.ketoKetoneStrips.stock||0)+1,'刪除紀錄退回');
   } else if(cat==='urinalysis'){
     changeSupplyStock('urinalysisStrips',(supplies.urinalysisStrips.stock||0)+1,'刪除紀錄退回');
   } else if(cat==='insulin'){
@@ -6562,27 +6610,29 @@ function estimateDailyUsage(cat){
 function estimateSupplyRates(){
   const now=new Date();now.setHours(23,59,59,999);
   const cutoff=new Date(now);cutoff.setDate(cutoff.getDate()-29);cutoff.setHours(0,0,0,0);
-  const totals={strips:0,petTestStrips:0,urinalysisStrips:0,needles:0};
+  const totals={strips:0,petTestStrips:0,urinalysisStrips:0,needles:0,ketoKetoneStrips:0,ketoGlucoseStrips:0};
   let activeDays=0;
   Object.keys(data||{}).forEach(d=>{
     const dt=new Date(d+'T00:00:00');
     if(dt<cutoff||dt>now)return;
     const day=data[d]||{};
-    const all=(day.glucose||[]).length+(day.insulin||[]).length+(day.urinalysis||[]).length;
+    const all=(day.bloodKetone||[]).length+(day.glucose||[]).length+(day.insulin||[]).length+(day.urinalysis||[]).length;
     if(!all)return;
     activeDays++;
     (day.glucose||[]).forEach(e=>{
       glucoseReadings(e).forEach(r=>{
         if(r.meterNameKey==='alphatrak')totals.strips++;
         if(r.meterNameKey==='pettest')totals.petTestStrips++;
+        if(glucoseMeterKey(r.meterLabel)==='ketoMojo')totals.ketoGlucoseStrips++;
       });
     });
+    totals.ketoKetoneStrips+=(day.bloodKetone||[]).length;
     totals.urinalysisStrips+=(day.urinalysis||[]).length;
     totals.needles+=(day.insulin||[]).filter(e=>supplies.countSkipAsNeedleUse||String(e.dose||'').toLowerCase().trim()!=='skip').length;
   });
   const rates={};
   Object.keys(totals).forEach(k=>rates[k]=activeDays?totals[k]/activeDays:0);
-  rates.lancets=(rates.strips+rates.petTestStrips)/Math.max(1,Number(supplies.lancets.changeThreshold)||5);
+  rates.lancets=(rates.strips+rates.petTestStrips+rates.ketoGlucoseStrips)/Math.max(1,Number(supplies.lancets.changeThreshold)||5);
   return rates;
 }
 function supplyAlerts(){
@@ -6741,6 +6791,7 @@ function renderSupplies(){
       </div>
     </div>
     ${!supplyIsArchived('strips')?supplyCard('strips', '血糖試紙 (AlphaTrak)', '🩸', stripsDaysLeft, stripsRate):''}
+    ${['ketoKetoneStrips','ketoGlucoseStrips'].map(key=>!supplyIsArchived(key)?supplyCard(key,SUPPLY_META[key].label,'🧬',rates[key]>0?Math.floor(supplies[key].stock/rates[key]):null,rates[key]):'').join('')}
     ${!supplyIsArchived('petTestStrips')?supplyCard('petTestStrips', '血糖試紙 (PetTest)', '🩸', rates.petTestStrips>0?Math.floor(supplies.petTestStrips.stock/rates.petTestStrips):null, rates.petTestStrips):''}
     ${!supplyIsArchived('urinalysisStrips')?supplyCard('urinalysisStrips', '尿酮尿糖試紙', '🧪', rates.urinalysisStrips>0?Math.floor(supplies.urinalysisStrips.stock/rates.urinalysisStrips):null, rates.urinalysisStrips):''}
     ${!supplyIsArchived('needles')?supplyCard('needles', '針管', '💉', needlesDaysLeft, needlesRate):''}
@@ -6948,7 +6999,7 @@ let calViewYear, calViewMonth; // calViewMonth is 0-indexed
 
 function jumpToMainDate(dateStr){
   if(!data[dateStr]){
-    data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
   const allDates = Object.keys(data).sort().reverse();
   const targetIdx = allDates.indexOf(dateStr);
@@ -7122,7 +7173,7 @@ function showQuickEntryModal(){
     document.getElementById('quickEntryConfirmBtn').addEventListener('click', ()=>{
       const today = todayStr();
       if(isDayLocked(today)){ lockedDayWarning(today); return; }
-      if(!data[today]) data[today] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      if(!data[today]) data[today] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
       const time = nowTime();
       if(parsedItems.length===0){
         data[today].noteEntries.push({time, note:text});
@@ -7247,7 +7298,7 @@ function renderCalendar(){
         else bg = 'background:#F9C9D6;';
       } else {
         // has a day object but not enough data for a score: still show a faint marker if it has any real entries
-        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
+        const hasAnyEntry = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','bloodKetone','urinalysis','mood','appetite','noteEntries'].some(c=>(day[c]||[]).length>0) || (day.notes && day.notes.trim());
         if(hasAnyEntry) bg = 'background:#00000012;';
       }
     }
@@ -7820,7 +7871,7 @@ function parseCsvToImportData(csvText){
     if(row.every(c=>(c||'').trim()==='')) continue;
     const dateStr = (row[dateIdx]||'').trim();
     if(!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
-    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+    const day = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     headerKeys.forEach((key, i)=>{
       if(key==null || key==='date') return;
       const cell = (row[i]||'').trim();
@@ -7886,10 +7937,10 @@ function mergeImportedData(incoming){
   let addedDays = 0, addedEntries = 0;
   Object.keys(incoming).forEach(dateStr=>{
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
       addedDays++;
     }
-    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite'].forEach(cat=>{
+    ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','bloodKetone','urinalysis','mood','appetite'].forEach(cat=>{
       if(!data[dateStr][cat]) data[dateStr][cat] = [];
       (incoming[dateStr][cat]||[]).forEach(entry=>{
         data[dateStr][cat].push(entry);
@@ -8812,7 +8863,7 @@ async function findOrCreateDriveFile(){
 
 const LAST_SYNCED_KEY = 'kleo-last-synced-modified';
 
-const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','urinalysis','mood','appetite','noteEntries'];
+const ALL_DIARY_CATS = ['glucose','insulin','vomit','stool','urine','water','med','food','weight','respRate','bloodKetone','urinalysis','mood','appetite','noteEntries'];
 function entryIdentityKey(e){
   // Photos are represented differently locally (short IndexedDB ref ids)
   // vs on the cloud copy (hydrated base64 strings) for the exact same
@@ -9361,7 +9412,7 @@ function applyRemoteLockStates(remoteStates){
     // A lock state can arrive for a date that is not yet present locally.
     // Do not depend on a non-existent ensureDay() helper during cloud parsing.
     if(!data[dateStr]){
-      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
+      data[dateStr] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
     }
     const localDay = data[dateStr];
     const localTs = localDay._lockStateUpdatedAt || 0;
