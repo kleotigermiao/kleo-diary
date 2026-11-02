@@ -6056,6 +6056,32 @@ function buildCarbGlucoseInsulinChart(dates){
   return `<div style="overflow-x:auto">${svg}</div><div style="font-size:12px;color:var(--ink-soft);line-height:1.7">藍線：AT3 血糖｜綠柱：每次估算碳水｜紅虛線：胰島素（移至標記可看時間與劑量）。已知食品估算碳水合計 ${total.toFixed(2)}g。DMB 使用你提供的數值，水分依標示上限估算；YA 以 10% 水分估算。未涵蓋食品不當作 0g。</div>${unknown}`;
 }
 
+
+function buildWaterIntakeChart(dates){
+ const points=dates.map(date=>{
+   const valid=(data[date]?.water||[]).map(e=>Number(e.ml)).filter(v=>Number.isFinite(v)&&v>=0);
+   return {date,value:valid.length?valid.reduce((a,b)=>a+b,0):null};
+ });
+ const recorded=points.filter(p=>p.value!==null);
+ if(!recorded.length)return '<p class="no-data-msg">此區間沒有飲水紀錄。</p>';
+ const width=Math.max(560,points.length*36+80),height=250,left=55,top=20,bottom=55,plotH=height-top-bottom;
+ const max=Math.max(1,...recorded.map(p=>p.value))*1.1;
+ const step=(width-left-20)/Math.max(1,points.length);
+ const bars=points.map((p,i)=>{
+   const x=left+step*(i+.5),y=top+plotH;
+   const label=i%Math.max(1,Math.ceil(points.length/14))===0?'<text x="'+x+'" y="'+(y+21)+'" text-anchor="middle" font-size="10">'+p.date.slice(5)+'</text>':'';
+   if(p.value===null)return label+'<text x="'+x+'" y="'+(y-5)+'" text-anchor="middle" font-size="10" fill="#8a8a8a">—</text>';
+   const h=p.value/max*plotH;
+   return '<rect x="'+(x-step*.32)+'" y="'+(y-h)+'" width="'+(step*.64)+'" height="'+h+'" fill="#3B6E8F"><title>'+p.date+'：'+p.value.toFixed(1)+' ml</title></rect>'+label;
+ }).join('');
+ const grid=Array.from({length:5},(_,i)=>{
+   const value=max*i/4,y=top+plotH-value/max*plotH;
+   return '<line x1="'+left+'" x2="'+(width-20)+'" y1="'+y+'" y2="'+y+'" stroke="#C8D3C9"/><text x="'+(left-7)+'" y="'+(y+4)+'" text-anchor="end" font-size="10">'+value.toFixed(0)+'</text>';
+ }).join('');
+ const total=recorded.reduce((sum,p)=>sum+p.value,0);
+ return '<div style="font-size:12px;margin-bottom:8px;">已記錄 '+recorded.length+' 天｜總量 '+total.toFixed(1)+' ml｜有紀錄日平均 '+(total/recorded.length).toFixed(1)+' ml／日</div><div style="overflow-x:auto;"><svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="每日記錄飲水量，單位毫升" viewBox="0 0 '+width+' '+height+'" style="display:block;width:100%;min-width:'+width+'px;height:auto;color:var(--ink);fill:currentColor;"><text x="12" y="14" font-size="11">ml</text>'+grid+bars+'</svg></div><p style="font-size:11px;color:var(--ink-soft);">僅加總飲水欄位的紀錄，不含罐頭與加水；— 代表無紀錄。</p>';
+}
+
 function generateReport(){
   const {start, end} = getRangeDates();
   if(!start || !end){ alert('請選擇完整的日期範圍'); return; }
@@ -6197,6 +6223,7 @@ function generateReport(){
     ${collapsibleChart("碳水攝取 × AT3 血糖 × 胰島素對照（估算）", buildCarbGlucoseInsulinChart(dates), "carbGlucoseChartBody")}
     ${glucoseChartHtml}
     ${weightChartHtml}
+    ${showCat('water')?collapsibleChart('💧 每日飲水量',buildWaterIntakeChart(dates),'waterChartBody'):''}
     ${daysHtml}
   `;
 
