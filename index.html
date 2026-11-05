@@ -2514,13 +2514,15 @@ function buildRemindersBanner(){
   });
   const missingTodayLines = buildMissingTodayLines();
   const stockAlerts = supplyAlerts();
+  const hydrationReminder=hydrationHomeReminderHtml();
   const feederStatus = petbankStatus(loadFeedingPlan());
   const feederReminder = feederStatus && (feederStatus.empty || feederStatus.warning)
     ? `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;padding:3px 0;cursor:pointer;">🐟 小魚餵食器：${feederStatus.empty?'剩餘格數不足一餐，請補糧':`剩 ${feederStatus.remaining} 格（${Math.floor(feederStatus.remaining/2)} 餐），請準備補糧`} ›</button>`
     : '';
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder) return '';
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder && !hydrationReminder) return '';
   const lines = [];
   if(feederReminder) lines.push(feederReminder);
+  if(hydrationReminder)lines.push(hydrationReminder);
   stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder${msg.startsWith('🔴')?' supply-urgent':msg.startsWith('🟡')?' supply-prepare':''}">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
@@ -6118,6 +6120,40 @@ function hydrationDay(date,settings=loadHydrationSettings()){
  const status=date===todayStr()?'今日尚未結束':!complete?'資料不足，暫不判斷':!kg?'未設定體重':total<low?'記錄量低於參考':total>high?'記錄量高於參考':'記錄量落在參考範圍';
  return {date,direct,canned,added,total,missing:[...missing],kg,low,high,hasData,complete,status};
 }
+
+function hydrationRollingWindow(days,anchor=todayStr()){
+ const settings=loadHydrationSettings(),rows=[];
+ const day=new Date(anchor+'T12:00:00');
+ for(let i=0;i<days;i++){
+  day.setDate(day.getDate()-1);
+  const date=day.getFullYear()+'-'+String(day.getMonth()+1).padStart(2,'0')+'-'+String(day.getDate()).padStart(2,'0');
+  rows.push(hydrationDay(date,settings));
+ }
+ const valid=rows.filter(r=>r.complete&&r.kg>0);
+ const ready=valid.length===days;
+ const average=ready?rows.reduce((sum,r)=>sum+r.total,0)/days:null;
+ const lower=ready?rows.reduce((sum,r)=>sum+r.low,0)/days:null;
+ return {days,ready,count:valid.length,average,lower,low:ready&&average<lower};
+}
+function hydrationRoutineSummaryHtml(){
+ const today=hydrationDay(todayStr()),week=hydrationRollingWindow(7),fortnight=hydrationRollingWindow(14);
+ const line=r=>r.ready?`${r.days} 日平均 ${r.average.toFixed(1)} ml／日（參考下限 ${r.lower.toFixed(0)} ml／日）`:`${r.days} 日平均：完整資料 ${r.count}／${r.days} 天，暫不判斷`;
+ return `<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;font-size:13px;line-height:1.8;">
+ <strong>💧 今天目前總攝水量：${today.hasData?today.total.toFixed(1)+' ml':'尚無紀錄'}</strong>
+ <div>直接飲水 ${today.direct.toFixed(1)}＋罐頭含水 ${today.canned.toFixed(1)}＋加水攝取 ${today.added.toFixed(1)} ml</div>
+ ${today.missing.length?`<div style="font-size:12px;">缺少含水率：${escapeHtml(today.missing.join('、'))}，目前僅加總已知部分。</div>`:''}
+ <div>${line(week)}</div><div>${line(fortnight)}</div>
+ <button type="button" class="sync-btn hydration-plan-settings">設定體重／罐頭含水率</button>
+ <div style="font-size:11px;color:var(--ink-soft);">平均只看昨天起連續 7／14 日；每天需有飲水、飲食、含水率與體重資料。今天不判定不足。未計乾糧含水；加水攝取為推估。</div></div>`;
+}
+function hydrationHomeReminderHtml(){
+ const week=hydrationRollingWindow(7),fortnight=hydrationRollingWindow(14);
+ const urgent=week.low&&fortnight.low;
+ if(!week.low)return '';
+ const row=urgent?fortnight:week;
+ return `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:8px 9px;margin:3px 0;font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;cursor:pointer;background:${urgent?'#FCE4EC':'#FFF0BD'};color:${urgent?'#A62936':'#805600'};">${urgent?'🔴':'🟡'} 總攝水量：最近 ${row.days} 個完整日平均 ${row.average.toFixed(1)} ml／日，低於參考下限 ${row.lower.toFixed(0)} ml／日，${urgent?'持續偏低，請留意':'請留意近期攝水'} ›</button>`;
+}
+
 function hydrationSummaryHtml(dates){
  const rows=dates.map(d=>hydrationDay(d)),recorded=rows.filter(r=>r.hasData&&r.date<todayStr());
  const means=key=>recorded.length?(recorded.reduce((sum,r)=>sum+r[key],0)/recorded.length).toFixed(1):'—';
@@ -6129,7 +6165,7 @@ function hydrationSummaryHtml(dates){
  <p style="font-size:11px;color:var(--ink-soft);">平均僅加總已知攝取，漏記不是 0；* 表示未設定含水率，總量尚未完整。未計乾糧含水。罐頭加水為秤重推估，非實測；已加入直接飲水欄位的同一份水請勿重複登記。舊版只喝水的備註若未留計算數值，無法自動補算。</p>
  <p style="font-size:11px;">每日總水分參考 40–60 ml／kg（含食物水分）；高於範圍不代表越多越好，這是攝取紀錄對照，不能單憑此判斷水合狀態。<a href="https://ovcpetnutrition.uoguelph.ca/2023/07/03/beat-the-heat-your-guide-to-pet-hydration/" target="_blank" rel="noopener noreferrer">參考：University of Guelph</a></p>`;
 }
-function showHydrationSettings(){
+function showHydrationSettings(onSaved){
  const settings=loadHydrationSettings();
  const names=new Set(loadFoodBrands('罐頭').map(b=>resolveFoodBrand('罐頭',b)));
  Object.values(data).forEach(day=>(day.food||[]).forEach(e=>parseFoodEntryGroups(e.note).filter(g=>String(g.type).includes('罐頭')).forEach(g=>g.brands.forEach(b=>names.add(resolveFoodBrand(g.type,b))))));
@@ -6150,7 +6186,7 @@ function showHydrationSettings(){
    next.moisture[el.dataset.hydrName]=n;
   });
   if(!valid){alert('含水率請填 0–100%。');return;}
-  try{localStorage.setItem(HYDRATION_KEY,JSON.stringify(next));markLocalChangeAndSync();overlay.remove();generateReport();}
+  try{localStorage.setItem(HYDRATION_KEY,JSON.stringify(next));markLocalChangeAndSync();overlay.remove();if(typeof onSaved==='function')onSaved();else generateReport();}
   catch(e){alert('水分設定儲存失敗：'+e.message);}
  };
 }
@@ -8335,6 +8371,7 @@ function showFeedingPlanModal(){
     box.innerHTML = `
       <h3 style="margin:0 0 4px;font-family:'Archivo Narrow',sans-serif;font-size:16px;color:var(--ink);">餵食計畫</h3>
       <p style="margin:0 0 12px;font-size:12px;color:var(--ink-soft);">設定固定的每日餵食時間表，熱量進度會照這個時間表計算「目前該吃到多少」，餐點數量不限。</p>
+      ${hydrationRoutineSummaryHtml()}
       <div id="feedingPlanRows"></div>
       <button type="button" id="addFeedingPlanRowBtn" class="tag-add-btn" style="width:100%;margin-top:8px;">+ 新增餐點</button>
       <div id="feedingPlanTotalBox" style="margin-top:14px;padding:10px;border-radius:8px;background:var(--paper-raised);font-size:13px;">
@@ -8345,6 +8382,7 @@ function showFeedingPlanModal(){
       <button type="button" id="clearFeedingPlanBtn" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-soft);font-size:12px;text-decoration:underline;cursor:pointer;">清空計畫（改回手動目標）</button>
       <button type="button" class="modal-close-btn" style="margin-top:10px;">關閉</button>
     `;
+    box.querySelector('.hydration-plan-settings').onclick=()=>showHydrationSettings(()=>{render();window.render();});
     const rowsEl = document.getElementById('feedingPlanRows');
     const totalBoxEl = document.getElementById('feedingPlanTotalBox');
     function refreshTotalOnly(){
