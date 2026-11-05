@@ -1826,7 +1826,7 @@ function renderRowHtml(dateStr, cat, e, idx){
     const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(extra.join(' · '))})</span>` : '';
     valHtml = `<span class="tag insulin-dose">${e.dose}</span>${detail}`;
   } else if(cat==='water'){
-    const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining})</span>` : '';
+    const detail = (e.base!=null && e.remaining!=null) ? ` <span style="color:var(--ink-soft);font-weight:400;">(${e.base}-${e.remaining}${e.transferred?'－取出 '+e.transferred:''})</span>` : '';
     valHtml = `<span class="tag normal">${e.ml} ml</span>${detail}`;
   } else if(cat==='urine'){
     if(e.ml!=null){
@@ -3174,10 +3174,11 @@ function openSheetForEdit(dateStr, cat, idx){
     } else {
       remEl.value = '';
     }
+    document.getElementById('fWaterTransferred').value=entry.transferred??'';
     valEl.value = entry.ml;
     document.getElementById('waterResultDisplay').textContent =
       (entry.base!=null && entry.remaining!=null)
-        ? `本次飲水量：${entry.base} - ${entry.remaining} = ${entry.ml} ml`
+        ? `本次飲水量：${entry.base} - ${entry.remaining} - ${entry.transferred||0} = ${entry.ml} ml`
         : `本次飲水量：${entry.ml} ml`;
   } else if(cat==='insulin'){
     valEl.value = entry.dose || '';
@@ -3903,14 +3904,19 @@ function wireWaterInputs(){
   const baseEl = document.getElementById('fWaterBase');
   const remEl = document.getElementById('fRemaining');
   const valEl = document.getElementById('fVal');
+  const transferEl=document.getElementById('fWaterTransferred');
   const displayEl = document.getElementById('waterResultDisplay');
   function recompute(){
     const base = parseFloat(baseEl.value);
     const rem = parseFloat(remEl.value);
-    if(!isNaN(base) && !isNaN(rem)){
-      const consumed = base - rem;
+    const transferred=transferEl.value.trim()===''?0:Number(transferEl.value);
+    if(Number.isFinite(base) && Number.isFinite(rem) && Number.isFinite(transferred)){
+      if(base<0||rem<0||transferred<0||rem+transferred>base){
+        valEl.value='';displayEl.textContent='請確認：起始水量須大於或等於剩餘＋取出水量。';return;
+      }
+      const consumed = Math.round((base-rem-transferred)*100)/100;
       valEl.value = consumed;
-      displayEl.textContent = `本次飲水量：${base} - ${rem} = ${consumed} ml`;
+      displayEl.textContent = `本次飲水量：${base} - ${rem} - ${transferred} = ${consumed} ml`;
     } else {
       valEl.value = '';
       displayEl.textContent = '本次飲水量：— ml';
@@ -3921,6 +3927,7 @@ function wireWaterInputs(){
     recompute();
   });
   remEl.addEventListener('input', recompute);
+  transferEl.addEventListener('input',recompute);
 }
 
 function getOptionsForCat(cat){
@@ -4176,6 +4183,9 @@ function setCategory(cat){
       <input type="text" inputmode="numeric" id="fWaterBase" value="${currentBase}">
       <label>剩餘水量 (ml)</label>
       <input type="text" inputmode="numeric" id="fRemaining" placeholder="例如 50">
+      <label>從這碗取出拌食物的水量 (ml，可留空)</label>
+      <input type="text" inputmode="decimal" id="fWaterTransferred" placeholder="例如 20">
+      <div style="font-size:11px;color:var(--ink-soft);">只填已包含在本次水碗重量差的取出量。直接飲水＝起始－剩餘－取出；罐頭加水由罐頭秤重另計。</div>
       <input type="hidden" id="fVal">
       <input type="hidden" id="fWaterPeriod" value="${isNewEntry ? defaultPeriod : ((editContext && data[editContext.date] && data[editContext.date].water && data[editContext.date].water[editContext.idx] && data[editContext.date].water[editContext.idx].period) || '')}">
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
@@ -4715,6 +4725,17 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit && (editContext ? editContext.cat : currentCat)!=='glucose'){ valEl && valEl.focus(); return; }
   const effectiveCat = editContext ? editContext.cat : currentCat;
+  if(effectiveCat==='water'){
+    const transferRaw=document.getElementById('fWaterTransferred').value.trim();
+    const transferred=transferRaw===''?0:Number(transferRaw);
+    const baseRaw=document.getElementById('fWaterBase').value.trim(),remRaw=document.getElementById('fRemaining').value.trim();
+    const base=baseRaw===''?NaN:Number(baseRaw),rem=remRaw===''?NaN:Number(remRaw);
+    if(!Number.isFinite(transferred)||transferred<0){alert('取出水量請填 0 或以上。');return;}
+    if(Number.isFinite(base)&&Number.isFinite(rem)){
+      if(base<0||rem<0||rem+transferred>base){alert('剩餘＋取出水量不能超過起始水量。');return;}
+      rawVal=String(Math.round((base-rem-transferred)*100)/100);
+    }else if(transferred>0){alert('請先填起始與剩餘水量，才能扣除取出量。');return;}
+  }
   // Enforce the lock at the write layer as well as the UI. This also blocks
   // moving an existing record into a locked date.
   if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
@@ -4772,7 +4793,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const remEl = document.getElementById('fRemaining');
       const periodEl = document.getElementById('fWaterPeriod');
       const origEntryWater = (data[oldDate] && data[oldDate].water && data[oldDate].water[idx]) || null;
-      updated = {time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntryWater && origEntryWater.period) || undefined};
+      updated = {time, ml: parseFloat(rawVal), transferred:Number(document.getElementById('fWaterTransferred').value)||0, base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntryWater && origEntryWater.period) || undefined};
     } else {
       updated = {time, note: rawVal, photos: photosToSave};
     }
@@ -4832,7 +4853,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
       const periodEl = document.getElementById('fWaterPeriod');
-      data[dateStr].water.push({time, ml: parseFloat(rawVal), base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || undefined});
+      data[dateStr].water.push({time, ml: parseFloat(rawVal), transferred:Number(document.getElementById('fWaterTransferred').value)||0, base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || undefined});
     } else if(currentCat==='note'){
       const wantTimestamp = document.getElementById('fNoteTimestamp') ? document.getElementById('fNoteTimestamp').checked : false;
       if(!data[dateStr].noteEntries) data[dateStr].noteEntries = [];
@@ -6165,7 +6186,7 @@ function hydrationSummaryHtml(dates){
  <div style="overflow:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>日期</th><th>直接飲水</th><th>罐頭含水</th><th>乾糧含水</th><th>加水攝取</th><th>總量 ml</th><th>參考 ml／日</th><th>對照</th></tr></thead><tbody>
  ${rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${r.direct.toFixed(1)}</td><td>${r.canned.toFixed(1)}${r.missing.length?' *':''}</td><td>${r.dry.toFixed(1)}</td><td>${r.added.toFixed(1)}</td><td><b>${r.total.toFixed(1)}</b></td><td>${r.kg?r.low.toFixed(0)+'–'+r.high.toFixed(0)+'（'+r.kg+'kg）':'待填體重'}</td><td>${r.hasData?r.status:'無紀錄'}${r.missing.length?'；缺含水率：'+escapeHtml(r.missing.join('、')):''}</td></tr>`).join('')}
  </tbody></table></div>
- <p style="font-size:11px;color:var(--ink-soft);">平均僅加總已知攝取，漏記不是 0；* 表示未設定含水率，總量尚未完整。罐頭加水為秤重推估，非實測；已加入直接飲水欄位的同一份水請勿重複登記。舊版只喝水的備註若未留計算數值，無法自動補算。</p>
+ <p style="font-size:11px;color:var(--ink-soft);">平均僅加總已知攝取，漏記不是 0；* 表示未設定含水率，總量尚未完整。罐頭加水為秤重推估，非實測；從水碗取出拌食物的水，請在該筆飲水紀錄填「取出拌食物的水量」，避免重複。舊版只喝水的備註若未留計算數值，無法自動補算。</p>
  <p style="font-size:11px;">每日總水分參考 40–60 ml／kg（含食物水分）；高於範圍不代表越多越好，這是攝取紀錄對照，不能單憑此判斷水合狀態。<a href="https://ovcpetnutrition.uoguelph.ca/2023/07/03/beat-the-heat-your-guide-to-pet-hydration/" target="_blank" rel="noopener noreferrer">參考：University of Guelph</a></p>`;
 }
 function showHydrationSettings(onSaved){
