@@ -2085,6 +2085,16 @@ function wetBowlDiaryNote(date,time,text,bowlId){
  day.noteEntries.push(entry);return entry;
 }
 
+
+function wetBowlConsumption(bowl,remaining,extraWater=0){
+  const food=wetBowlFoodRemaining(bowl);
+  const mixture=Math.max(0,bowl.lastWeight-bowl.empty)+extraWater;
+  const water=Math.max(0,mixture-food);
+  const consumed=Math.max(0,Math.min(mixture,bowl.lastWeight+extraWater-remaining));
+  const eaten=bowl.mixed===false?Math.max(0,consumed-water):(mixture>0?consumed*food/mixture:0);
+  return {foodConsumed:Math.min(food,eaten),waterConsumed:Math.max(0,consumed-eaten)};
+}
+
 function showWetFoodWeighModal(){
   let bowl=loadWetBowl();let newMode=!bowl;
   const overlay=document.createElement('div');
@@ -2105,8 +2115,10 @@ function showWetFoodWeighModal(){
       <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}" ${b===preferredBrand?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
       <label>罐頭＋碗 (g)</label><input id="wbFood" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
       <label>加水後＋碗 (g)</label><input id="wbMixed" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
+      <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbIsMixed" type="checkbox" checked style="width:20px;height:20px;flex:0 0 auto;"> 水與罐頭已混合</label>
+      <p style="font-size:12px;color:var(--ink-soft)">勾選：按比例扣除。未勾選：重量減少先算喝水，超過剩餘水量才算吃罐頭。</p>
       <p style="font-size:12px;color:var(--ink-soft)">先儲存備餐；等 Kleo 吃過後再回來輸入剩餘重量。</p>`:
-      `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g</p>
+      `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g<br>計算方式：${bowl.mixed===false?'未混合（假設先喝水）':'已混合（按比例扣除）'}</p>
       <div style="border:1px solid var(--line,#ddd);border-radius:10px;padding:12px;margin:10px 0;font-size:14px">
         <div>目前剩餘罐頭（估算）</div>
         <strong style="font-size:22px" id="wbCurrentFood">${wetBowlFoodRemaining(bowl).toFixed(2)} g</strong>
@@ -2116,7 +2128,7 @@ function showWetFoodWeighModal(){
       <div id="wbRemainingPreview" style="font-size:14px;margin:7px 0;color:var(--ink);font-weight:600">輸入最新秤重後，先預覽這次吃掉的罐頭量。</div>
       <label>測量日期</label><input id="wbDate" type="date" value="${todayStr()}">
       <label>測量時間 (HH:MM)</label><input id="wbTime" type="text" inputmode="numeric" maxlength="5" autocomplete="off" data-clock-time="true" value="${nowTime()}">
-      <p style="font-size:12px;color:var(--ink-soft)">只計算本次重量差 × 原始罐頭比例；不重複計入前次食量。</p>`}
+      <p style="font-size:12px;color:var(--ink-soft)">${bowl.mixed===false?'依「先喝水、再吃罐頭」估算；追加水也先扣水。':'依目前剩餘罐頭與水的比例估算。' }不重複計入前次食量。</p>`}
       <div id="wbStatus" style="font-size:12px;margin:8px 0"></div>
       <button type="button" class="tag-add-btn" id="wbSave" style="width:100%;min-height:48px;margin-top:10px">${newMode?'儲存備餐（尚未進食）':'計算並新增飲食紀錄'}</button>
       <button type="button" class="modal-close-btn" id="wbClose" style="margin-top:10px">關閉</button>`;
@@ -2129,14 +2141,13 @@ function showWetFoodWeighModal(){
         const waterRaw=panel.querySelector('#wbExtraWater').value;
         const extraWater=waterRaw.trim()===''?0:Number(waterRaw);
         if(!Number.isFinite(extraWater)||extraWater<0){target.textContent='追加水量不可為負數。';return;}
-        const beforeFood=wetBowlFoodRemaining(bowl), beforeMixture=Math.max(0,bowl.lastWeight-bowl.empty);
-        const ratio=(beforeMixture+extraWater)>0?beforeFood/(beforeMixture+extraWater):0;
+        const beforeFood=wetBowlFoodRemaining(bowl);
         if(raw.trim()===''){
           target.textContent=extraWater>0?`追加水 ${extraWater.toFixed(1)}g；可只儲存加水，或輸入吃完重量。`:'輸入最新秤重後，先預覽這次吃掉的罐頭量。';return;
         }
         const value=Number(raw);
         if(!Number.isFinite(value)||value<bowl.empty-0.11||value>bowl.lastWeight+extraWater){target.textContent='最新重量須介於空碗與加水後的重量之間。';return;}
-        const eaten=(bowl.lastWeight+extraWater-value)*ratio;
+        const eaten=wetBowlConsumption(bowl,value,extraWater).foodConsumed;
         target.textContent=`本次吃了罐頭 ${eaten.toFixed(2)}g｜吃完剩餘 ${(beforeFood-eaten).toFixed(2)}g（尚未儲存）`;
       };
       panel.querySelector('#wbRemaining').addEventListener('input',preview);
@@ -2155,9 +2166,10 @@ function showWetFoodWeighModal(){
         const prepDate=todayStr(),prepTime=nowTime();
         if(isDayLocked(prepDate)){lockedDayWarning(prepDate);return;}
         const previousBowl=bowl;
-        bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,foodRemaining:food-empty,waterRemaining:mixed-food,lastWeight:mixed,brand,updatedAt:Date.now()};
+        const isMixed=panel.querySelector('#wbIsMixed').checked;
+        bowl={id:'bowl-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),empty,foodG:food-empty,waterG:mixed-food,foodRemaining:food-empty,waterRemaining:mixed-food,lastWeight:mixed,brand,mixed:isMixed,updatedAt:Date.now()};
         bowl.preparedAt=new Date().toISOString();bowl.initialFoodWeight=food;bowl.initialMixedWeight=mixed;bowl.weighings=[];
-        const prepNote=wetBowlDiaryNote(prepDate,prepTime,`新一碗｜罐頭：${brand}｜空碗 ${empty.toFixed(1)}g｜罐頭＋碗 ${food.toFixed(1)}g｜加水後＋碗 ${mixed.toFixed(1)}g｜罐頭共 ${(food-empty).toFixed(2)}g`,bowl.id);
+        const prepNote=wetBowlDiaryNote(prepDate,prepTime,`新一碗｜罐頭：${brand}｜空碗 ${empty.toFixed(1)}g｜罐頭＋碗 ${food.toFixed(1)}g｜加水後＋碗 ${mixed.toFixed(1)}g｜罐頭共 ${(food-empty).toFixed(2)}g｜${isMixed?'已混合':'未混合（假設先喝水）'}`,bowl.id);
         if(!save('罐頭備餐備註')){data[prepDate].noteEntries=data[prepDate].noteEntries.filter(e=>e!==prepNote);bowl=previousBowl;return;}
         storeWetBowl(bowl);markLocalChangeAndSync();render();newMode=false;draw();
       }else{
@@ -2172,8 +2184,9 @@ function showWetFoodWeighModal(){
         const mixtureBefore=Math.max(0,bowl.lastWeight-bowl.empty);
         const afterWaterWeight=bowl.lastWeight+extraWater;
         const consumed=waterOnly?0:afterWaterWeight-remaining;
-        const eaten=consumed*(mixtureBefore+extraWater>0?beforeFood/(mixtureBefore+extraWater):0);
-        if(!waterOnly&&(eaten<=0||eaten>beforeFood+0.01)){status.textContent='重量不合理，請重新確認。';return;}
+        const consumption=waterOnly?{foodConsumed:0,waterConsumed:0}:wetBowlConsumption(bowl,remaining,extraWater);
+        const eaten=consumption.foodConsumed;
+        if(!waterOnly&&(eaten<0||eaten>beforeFood+0.01)){status.textContent='重量不合理，請重新確認。';return;}
         if(waterOnly){
           const waterNote=wetBowlDiaryNote(date,time,`罐頭追加水 ${extraWater.toFixed(1)}g｜加水後＋碗 ${afterWaterWeight.toFixed(1)}g`,bowl.id);
           if(!save('罐頭加水備註')){data[date].noteEntries=data[date].noteEntries.filter(e=>e!==waterNote);return;}
@@ -2188,11 +2201,12 @@ function showWetFoodWeighModal(){
         day.food=day.food||[];
         const previousWeight=bowl.lastWeight;
         const recordedWater=extraWater+(Number(bowl.pendingWater)||0);
-        const weighing={date,time,previousWeight,addedWater:recordedWater,remainingWeight:remaining,mixtureConsumed:Math.round(consumed*100)/100,foodConsumed:grams};
-        const entry={time,note:`罐頭：${bowl.brand} ${grams}g（本次進食 ${grams.toFixed(2)}g｜剩餘 ${Math.max(0,beforeFood-eaten).toFixed(2)}g）`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id,wetBowlWeighing:weighing,wetBowlInitial:{empty:bowl.empty,foodWeight:bowl.initialFoodWeight??bowl.empty+bowl.foodG,mixedWeight:bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG}};
-        day.food.push(entry);
+        const weighing={date,time,previousWeight,addedWater:recordedWater,remainingWeight:remaining,mixtureConsumed:Math.round(consumed*100)/100,foodConsumed:grams,waterConsumed:consumption.waterConsumed,mixed:bowl.mixed!==false};
+        const entry={time,note:`罐頭：${bowl.brand} ${grams}g（本次進食 ${grams.toFixed(2)}g｜剩餘 ${Math.max(0,beforeFood-eaten).toFixed(2)}g）`,_id:Date.now()+'-'+Math.random().toString(36).slice(2,8),_updatedAt:Date.now(),wetBowlId:bowl.id,wetBowlWeighing:weighing,wetBowlInitial:{mixed:bowl.mixed!==false,empty:bowl.empty,foodWeight:bowl.initialFoodWeight??bowl.empty+bowl.foodG,mixedWeight:bowl.initialMixedWeight??bowl.empty+bowl.foodG+bowl.waterG}};
+        const noFoodNote=grams===0?wetBowlDiaryNote(date,time,`罐頭秤重｜本次進食 0g｜剩餘 ${beforeFood.toFixed(2)}g｜推估喝水 ${consumption.waterConsumed.toFixed(2)}g`,bowl.id):null;
+        if(grams>0)day.food.push(entry);
         const waterNote=extraWater>0?wetBowlDiaryNote(date,time,`罐頭追加水 ${extraWater.toFixed(1)}g｜加水後＋碗 ${afterWaterWeight.toFixed(1)}g`,bowl.id):null;
-        if(!save('罐頭秤重')){day.food.pop();if(waterNote)day.noteEntries=day.noteEntries.filter(e=>e!==waterNote);return;}
+        if(!save('罐頭秤重')){if(grams>0)day.food.pop();if(noFoodNote)day.noteEntries=day.noteEntries.filter(e=>e!==noFoodNote);if(waterNote)day.noteEntries=day.noteEntries.filter(e=>e!==waterNote);return;}
         bowl.lastWeight=remaining;bowl.pendingWater=0;bowl.foodRemaining=Math.max(0,beforeFood-eaten);bowl.waterRemaining=Math.max(0,remaining-bowl.empty-bowl.foodRemaining);bowl.weighings=Array.isArray(bowl.weighings)?bowl.weighings:[];bowl.weighings.push(weighing);bowl.updatedAt=Date.now();storeWetBowl(bowl);markLocalChangeAndSync();
         render();alert(`本次進食 ${grams.toFixed(2)}g｜剩餘 ${Math.max(0,beforeFood-eaten).toFixed(2)}g`);draw();
       }
