@@ -6089,16 +6089,19 @@ function hydrationDay(date,settings=loadHydrationSettings()){
  const day=data[date]||{},missing=new Set();
  const drinks=(day.water||[]).filter(e=>e.ml!==null&&e.ml!==''&&Number.isFinite(Number(e.ml))&&Number(e.ml)>=0);
  const direct=drinks.reduce((sum,e)=>sum+Number(e.ml),0);
- let canned=0,added=0;
+ let canned=0,dry=0,added=0;
  (day.food||[]).forEach(e=>{
   parseFoodEntryGroups(e.note).forEach(g=>{
-   if(!String(g.type).includes('罐頭') || g.unit!=='g' || !(g.grams>0))return;
-   if(!g.brands.length){missing.add('未指定罐頭');return;}
+   const isCanned=String(g.type).includes('罐頭'),isDry=String(g.type).includes('乾糧');
+   if((!isCanned&&!isDry) || g.unit!=='g' || !(g.grams>0))return;
+   if(!g.brands.length){missing.add('未指定'+g.type);return;}
    g.brands.forEach(brand=>{
-    const name=resolveFoodBrand(g.type,brand),raw=settings.moisture?.[name];
+    const name=resolveFoodBrand(g.type,brand),key=g.type+'::'+name;
+    const raw=settings.moisture?.[key]??(isCanned?settings.moisture?.[name]:undefined);
     const m=raw==null||raw===''?NaN:Number(raw);
-    if(!Number.isFinite(m)||m<0||m>100){missing.add(name);return;}
-    canned+=g.grams/g.brands.length*m/100;
+    if(!Number.isFinite(m)||m<0||m>100){missing.add(g.type+'－'+name);return;}
+    const amount=g.grams/g.brands.length*m/100;
+    if(isCanned)canned+=amount;else dry+=amount;
    });
   });
  });
@@ -6114,11 +6117,11 @@ function hydrationDay(date,settings=loadHydrationSettings()){
   const wd=Object.keys(data).filter(d=>d<=date).sort().reverse().find(d=>(data[d].weight||[]).some(e=>Number(e.value)>0));
   if(wd){const weights=[...data[wd].weight].filter(e=>Number(e.value)>0).sort((a,b)=>(a.time||'').localeCompare(b.time||''));kg=Number(weights[weights.length-1].value);}
  }
- const total=direct+canned+added,low=kg*40,high=kg*60;
+ const total=direct+canned+dry+added,low=kg*40,high=kg*60;
  const hasData=drinks.length>0||(day.food||[]).length>0||added>0;
  const complete=drinks.length>0&&(day.food||[]).length>0&&!missing.size;
  const status=date===todayStr()?'今日尚未結束':!complete?'資料不足，暫不判斷':!kg?'未設定體重':total<low?'記錄量低於參考':total>high?'記錄量高於參考':'記錄量落在參考範圍';
- return {date,direct,canned,added,total,missing:[...missing],kg,low,high,hasData,complete,status};
+ return {date,direct,canned,dry,added,total,missing:[...missing],kg,low,high,hasData,complete,status};
 }
 
 function hydrationRollingWindow(days,anchor=todayStr()){
@@ -6140,11 +6143,11 @@ function hydrationRoutineSummaryHtml(){
  const line=r=>r.ready?`${r.days} 日平均 ${r.average.toFixed(1)} ml／日（參考下限 ${r.lower.toFixed(0)} ml／日）`:`${r.days} 日平均：完整資料 ${r.count}／${r.days} 天，暫不判斷`;
  return `<div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;font-size:13px;line-height:1.8;">
  <strong>💧 今天目前總攝水量：${today.hasData?today.total.toFixed(1)+' ml':'尚無紀錄'}</strong>
- <div>直接飲水 ${today.direct.toFixed(1)}＋罐頭含水 ${today.canned.toFixed(1)}＋加水攝取 ${today.added.toFixed(1)} ml</div>
+ <div>直接飲水 ${today.direct.toFixed(1)}＋罐頭含水 ${today.canned.toFixed(1)}＋乾糧含水 ${today.dry.toFixed(1)}＋加水攝取 ${today.added.toFixed(1)} ml</div>
  ${today.missing.length?`<div style="font-size:12px;">缺少含水率：${escapeHtml(today.missing.join('、'))}，目前僅加總已知部分。</div>`:''}
  <div>${line(week)}</div><div>${line(fortnight)}</div>
- <button type="button" class="sync-btn hydration-plan-settings">設定體重／罐頭含水率</button>
- <div style="font-size:11px;color:var(--ink-soft);">平均只看昨天起連續 7／14 日；每天需有飲水、飲食、含水率與體重資料。今天不判定不足。未計乾糧含水；加水攝取為推估。</div></div>`;
+ <button type="button" class="sync-btn hydration-plan-settings">設定體重／食物含水率</button>
+ <div style="font-size:11px;color:var(--ink-soft);">平均只看昨天起連續 7／14 日；每天需有飲水、飲食、含水率與體重資料。今天不判定不足。加水攝取為推估。</div></div>`;
 }
 function hydrationHomeReminderHtml(){
  const week=hydrationRollingWindow(7),fortnight=hydrationRollingWindow(14);
@@ -6157,22 +6160,24 @@ function hydrationHomeReminderHtml(){
 function hydrationSummaryHtml(dates){
  const rows=dates.map(d=>hydrationDay(d)),recorded=rows.filter(r=>r.hasData&&r.date<todayStr());
  const means=key=>recorded.length?(recorded.reduce((sum,r)=>sum+r[key],0)/recorded.length).toFixed(1):'—';
- return `<button type="button" id="hydrationSettingsBtn" class="sync-btn">設定體重／罐頭含水率</button>
- <p style="font-size:13px;">已結束且有紀錄日平均（${recorded.length} 天）：直接飲水 ${means('direct')} ml＋罐頭含水 ${means('canned')} ml＋罐頭加水攝取 ${means('added')} ml＝<b>${means('total')} ml／日</b></p>
- <div style="overflow:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>日期</th><th>直接飲水</th><th>罐頭含水</th><th>加水攝取</th><th>總量 ml</th><th>參考 ml／日</th><th>對照</th></tr></thead><tbody>
- ${rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${r.direct.toFixed(1)}</td><td>${r.canned.toFixed(1)}${r.missing.length?' *':''}</td><td>${r.added.toFixed(1)}</td><td><b>${r.total.toFixed(1)}</b></td><td>${r.kg?r.low.toFixed(0)+'–'+r.high.toFixed(0)+'（'+r.kg+'kg）':'待填體重'}</td><td>${r.hasData?r.status:'無紀錄'}${r.missing.length?'；缺含水率：'+escapeHtml(r.missing.join('、')):''}</td></tr>`).join('')}
+ return `<button type="button" id="hydrationSettingsBtn" class="sync-btn">設定體重／食物含水率</button>
+ <p style="font-size:13px;">已結束且有紀錄日平均（${recorded.length} 天）：直接飲水 ${means('direct')} ml＋罐頭含水 ${means('canned')} ml＋乾糧含水 ${means('dry')} ml＋罐頭加水攝取 ${means('added')} ml＝<b>${means('total')} ml／日</b></p>
+ <div style="overflow:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>日期</th><th>直接飲水</th><th>罐頭含水</th><th>乾糧含水</th><th>加水攝取</th><th>總量 ml</th><th>參考 ml／日</th><th>對照</th></tr></thead><tbody>
+ ${rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${r.direct.toFixed(1)}</td><td>${r.canned.toFixed(1)}${r.missing.length?' *':''}</td><td>${r.dry.toFixed(1)}</td><td>${r.added.toFixed(1)}</td><td><b>${r.total.toFixed(1)}</b></td><td>${r.kg?r.low.toFixed(0)+'–'+r.high.toFixed(0)+'（'+r.kg+'kg）':'待填體重'}</td><td>${r.hasData?r.status:'無紀錄'}${r.missing.length?'；缺含水率：'+escapeHtml(r.missing.join('、')):''}</td></tr>`).join('')}
  </tbody></table></div>
- <p style="font-size:11px;color:var(--ink-soft);">平均僅加總已知攝取，漏記不是 0；* 表示未設定含水率，總量尚未完整。未計乾糧含水。罐頭加水為秤重推估，非實測；已加入直接飲水欄位的同一份水請勿重複登記。舊版只喝水的備註若未留計算數值，無法自動補算。</p>
+ <p style="font-size:11px;color:var(--ink-soft);">平均僅加總已知攝取，漏記不是 0；* 表示未設定含水率，總量尚未完整。罐頭加水為秤重推估，非實測；已加入直接飲水欄位的同一份水請勿重複登記。舊版只喝水的備註若未留計算數值，無法自動補算。</p>
  <p style="font-size:11px;">每日總水分參考 40–60 ml／kg（含食物水分）；高於範圍不代表越多越好，這是攝取紀錄對照，不能單憑此判斷水合狀態。<a href="https://ovcpetnutrition.uoguelph.ca/2023/07/03/beat-the-heat-your-guide-to-pet-hydration/" target="_blank" rel="noopener noreferrer">參考：University of Guelph</a></p>`;
 }
 function showHydrationSettings(onSaved){
  const settings=loadHydrationSettings();
- const names=new Set(loadFoodBrands('罐頭').map(b=>resolveFoodBrand('罐頭',b)));
- Object.values(data).forEach(day=>(day.food||[]).forEach(e=>parseFoodEntryGroups(e.note).filter(g=>String(g.type).includes('罐頭')).forEach(g=>g.brands.forEach(b=>names.add(resolveFoodBrand(g.type,b))))));
+ const names=new Map();
+ const add=(type,brand)=>{if(!brand)return;const name=resolveFoodBrand(type,brand),key=type+'::'+name;names.set(key,{type,name});};
+ loadFoodTypes().filter(t=>String(t).includes('罐頭')||String(t).includes('乾糧')).forEach(type=>loadFoodBrands(type).forEach(b=>add(type,b)));
+ Object.values(data).forEach(day=>(day.food||[]).forEach(e=>parseFoodEntryGroups(e.note).filter(g=>String(g.type).includes('罐頭')||String(g.type).includes('乾糧')).forEach(g=>g.brands.forEach(b=>add(g.type,b)))));
  const overlay=document.createElement('div');
  overlay.style.cssText='position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.4);padding:20px;display:flex;align-items:center;justify-content:center;';
- overlay.innerHTML=`<div style="background:var(--paper);padding:20px;border-radius:12px;width:100%;max-width:500px;max-height:85vh;overflow:auto;"><h3>水分計算設定</h3><label>體重 kg（留空則帶出當日或之前最近體重）</label><input id="hydrWeight" type="number" step="0.01" min="0.1" value="${escapeHtml(String(settings.weight||''))}"><p>含水率依罐頭包裝填寫；標示的最高含水率僅作估算。</p>
- ${[...names].map((name,i)=>`<label style="display:block;margin:10px 0;">${escapeHtml(name)}<input data-hydr-name="${escapeHtml(name)}" type="number" min="0" max="100" step="0.1" placeholder="含水率 %" value="${escapeHtml(String(settings.moisture?.[name]??''))}"></label>`).join('')}
+ overlay.innerHTML=`<div style="background:var(--paper);padding:20px;border-radius:12px;width:100%;max-width:500px;max-height:85vh;overflow:auto;"><h3>水分計算設定</h3><label>體重 kg（留空則帶出當日或之前最近體重）</label><input id="hydrWeight" type="number" step="0.01" min="0.1" value="${escapeHtml(String(settings.weight||''))}"><p>罐頭與乾糧含水率依包裝填寫；標示的最高含水率僅作估算。</p>
+ ${[...names].map(([key,{type,name}])=>`<label style="display:block;margin:10px 0;">${escapeHtml(type)}－${escapeHtml(name)}<input data-hydr-name="${escapeHtml(key)}" type="number" min="0" max="100" step="0.1" placeholder="含水率 %" value="${escapeHtml(String(settings.moisture?.[key]??(String(type).includes('罐頭')?settings.moisture?.[name]:undefined)??''))}"></label>`).join('')}
  <button id="hydrSave" class="sync-btn">儲存</button> <button id="hydrCancel" class="sync-btn">取消</button></div>`;
  document.body.appendChild(overlay);
  overlay.querySelector('#hydrCancel').onclick=()=>overlay.remove();
