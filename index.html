@@ -1319,7 +1319,7 @@ function buildStrip(glucoseEntries){
 }
 
 const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',bloodKetone:'🧬',urinalysis:'🧪',mood:'😺',appetite:'🍖',noteEntries:'📝'};
-const TREND_ARROWS = {up_fast:'↑', up:'↗', stable:'→', down:'↘', down_fast:'↓'};
+const TREND_ARROWS = {up_fast:'⬆️', up:'↗️', stable:'➡️', down:'↘️', down_fast:'⬇️'};
 const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',bloodKetone:'血酮（Keto-Mojo）',urinalysis:'尿酮尿糖',mood:'精神',appetite:'食慾',noteEntries:'備註'};
 
 function latestEntry(entries){
@@ -1794,7 +1794,7 @@ function renderRowHtml(dateStr, cat, e, idx){
     if(prev && typeof prev.value==='number' && prev.value>0){
       const delta = e.value - prev.value;
       const pct = (delta/prev.value)*100;
-      const arrow = delta>0 ? '↑' : (delta<0 ? '↓' : '→');
+      const arrow = delta>0 ? '⬆️' : (delta<0 ? '⬇️' : '➡️');
       const deltaColor = delta<0 ? '#3B6E8F' : (delta>0 ? '#D6622C' : 'var(--ink-soft)');
       deltaHtml = ` <span style="font-size:11px;color:${deltaColor};">(${arrow}${Math.abs(delta).toFixed(1)}, ${Math.abs(pct).toFixed(0)}%)</span>`;
     }
@@ -4030,11 +4030,11 @@ function setCategory(cat){
       <div style="font-size:12px;color:var(--ink-soft);margin-top:5px;">兩台同時測量可記在同一筆；下方可附上 Libre 截圖。血糖分析仍以 AlphaTrak 為主。</div>
       <label>趨勢箭頭（可選）</label>
       <div class="option-grid" id="glucoseTrendGrid">
-        <button type="button" class="option-btn glucose-trend-btn" data-trend="up_fast">↑</button>
-        <button type="button" class="option-btn glucose-trend-btn" data-trend="up">↗</button>
-        <button type="button" class="option-btn glucose-trend-btn" data-trend="stable">→</button>
-        <button type="button" class="option-btn glucose-trend-btn" data-trend="down">↘</button>
-        <button type="button" class="option-btn glucose-trend-btn" data-trend="down_fast">↓</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="up_fast">⬆️</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="up">↗️</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="stable">➡️</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="down">↘️</button>
+        <button type="button" class="option-btn glucose-trend-btn" data-trend="down_fast">⬇️</button>
       </div>
       <input type="hidden" id="fGlucoseTrend">
       <label>補充說明（可選）</label>
