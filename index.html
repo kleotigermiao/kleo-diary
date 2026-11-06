@@ -2115,7 +2115,7 @@ function showWetFoodWeighModal(){
       <label>罐頭品項</label><select id="wbBrand">${brands.map(b=>`<option value="${escapeHtml(b)}" ${b===preferredBrand?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
       <label>罐頭＋碗 (g)</label><input id="wbFood" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
       <label>加水後＋碗 (g)</label><input id="wbMixed" type="number" inputmode="decimal" step="0.1" placeholder="秤重結果">
-      <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbIsMixed" type="checkbox" checked style="width:20px;height:20px;flex:0 0 auto;"> 水與罐頭已混合</label>
+      <label style="display:flex;align-items:center;gap:8px;text-transform:none"><input id="wbIsMixed" type="checkbox" style="width:20px;height:20px;flex:0 0 auto;"> 水與罐頭已混合</label>
       <p style="font-size:12px;color:var(--ink-soft)">勾選：按比例扣除。未勾選：重量減少先算喝水，超過剩餘水量才算吃罐頭。</p>
       <p style="font-size:12px;color:var(--ink-soft)">先儲存備餐；等 Kleo 吃過後再回來輸入剩餘重量。</p>`:
       `<p style="font-size:13px">品項：${escapeHtml(bowl.brand||'罐頭')}<br>原始罐頭：${bowl.foodG.toFixed(1)}g ／ 加水：${bowl.waterG.toFixed(1)}g<br>上次連碗重量：${bowl.lastWeight.toFixed(1)}g<br>計算方式：${bowl.mixed===false?'未混合（假設先喝水）':'已混合（按比例扣除）'}</p>
