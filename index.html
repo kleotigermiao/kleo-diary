@@ -2515,14 +2515,18 @@ function buildRemindersBanner(){
   const missingTodayLines = buildMissingTodayLines();
   const stockAlerts = supplyAlerts();
   const hydrationReminder=hydrationHomeReminderHtml();
+  const lancetDue=(Number(supplies.lancets.testsSinceChange)||0)>=(Number(supplies.lancets.changeThreshold)||5);
+  const lancetReminder=lancetDue?`<div style="padding:5px 0;font-size:12.5px;color:#A62936;">🔴 採血針已測 ${Number(supplies.lancets.testsSinceChange)||0} 次，該換針了 <button type="button" class="tag-add-btn" id="homeLancetChangedBtn" style="min-height:44px;margin-left:6px;">✅ 已更換採血針</button></div>`:'';
+
   const feederStatus = petbankStatus(loadFeedingPlan());
   const feederReminder = feederStatus && (feederStatus.empty || feederStatus.warning)
     ? `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;padding:3px 0;cursor:pointer;">🐟 小魚餵食器：${feederStatus.empty?'剩餘格數不足一餐，請補糧':`剩 ${feederStatus.remaining} 格（${Math.floor(feederStatus.remaining/2)} 餐），請準備補糧`} ›</button>`
     : '';
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder && !hydrationReminder) return '';
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder && !hydrationReminder && !lancetReminder) return '';
   const lines = [];
   if(feederReminder) lines.push(feederReminder);
   if(hydrationReminder)lines.push(hydrationReminder);
+  if(lancetReminder)lines.push(lancetReminder);
   stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder${msg.startsWith('🔴')?' supply-urgent':msg.startsWith('🟡')?' supply-prepare':''}">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
@@ -2659,6 +2663,7 @@ function render(){
     });
   }
 
+  main.querySelector('#homeLancetChangedBtn')?.addEventListener('click',recordLancetReplacement);
   main.querySelectorAll('.reminder-line').forEach(line=>{
     line.addEventListener('click', ()=>{
       if(line.classList.contains('supply-reminder')){
@@ -3327,6 +3332,7 @@ function openSheetForEdit(dateStr, cat, idx){
       ensureGlucoseMeterTag(entry.secondaryMeterLabel || 'Libre');
       document.getElementById('fGlucoseSecondaryLabel').value = entry.secondaryMeterLabel || 'Libre';
       initGlucoseMeterPicker();
+    refreshLancetQuickControl();
       document.getElementById('fGlucoseSecondaryValue').value = entry.secondaryValue == null ? '' : entry.secondaryValue;
     }
     else if(cat==='urine'){
@@ -4016,6 +4022,7 @@ function setCategory(cat){
     });
   } else if(cat==='glucose'){
     dynamicFields.innerHTML = `
+      <div id="lancetQuickControl"></div>
       <label>血糖機</label>
       <div class="option-grid" id="glucosePrimaryGrid"></div>
       <input type="hidden" id="fGlucoseMeterLabel" value="AlphaTrak">
@@ -6759,6 +6766,42 @@ function reconcileGlucoseSupplyEdit(before,after){
  if(delta){supplies.lancets.testsSinceChange=Math.max(0,(supplies.lancets.testsSinceChange||0)+delta);saveSupplies();}
 }
 
+
+let lancetReplaceLastClick=0;
+function lancetQuickHtml(){
+ const count=Number(supplies.lancets.testsSinceChange)||0;
+ const limit=Number(supplies.lancets.changeThreshold)||5;
+ return `<div style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.6;">
+ <span>採血針：已測 ${count}／${limit} 次${count>=limit?'，該換針了':''}</span>
+ <button type="button" class="tag-add-btn" id="glucoseLancetChangedBtn" style="display:block;min-height:44px;margin-top:6px;">✅ 已更換採血針</button>
+ <small style="color:var(--ink-soft);">實際換針後再按；庫存扣 1 支，使用次數歸零。</small></div>`;
+}
+function refreshLancetQuickControl(){
+ const host=document.getElementById('lancetQuickControl');
+ if(!host)return;
+ host.innerHTML=editContext?'':lancetQuickHtml();
+ const btn=host.querySelector('#glucoseLancetChangedBtn');
+ if(btn)btn.onclick=recordLancetReplacement;
+}
+function recordLancetReplacement(){
+ const stamp=Date.now();
+ if(stamp-lancetReplaceLastClick<1500)return false;
+ const next=JSON.parse(JSON.stringify(supplies));
+ const before=Math.max(0,Number(next.lancets.stock)||0),after=Math.max(0,before-1);
+ next.lancets={...next.lancets,stock:after,testsSinceChange:0,lastChangedAt:stamp,lastModifiedAt:stamp};
+ next.stockAudit=[...(next.stockAudit||[]),{id:stamp+'-'+Math.random().toString(36).slice(2,9),key:'lancets',before,after,reason:'更換採血針',at:stamp}].slice(-120);
+ if(next.stockReview)next.stockReview.lancets=false;
+ try{
+   localStorage.setItem(SUPPLIES_KEY,JSON.stringify(next));
+ }catch(e){alert('更換採血針儲存失敗：'+e.message);return false;}
+ supplies=next;lancetReplaceLastClick=stamp;
+ markLocalChangeAndSync();
+ render();refreshLancetQuickControl();
+ if(document.getElementById('lancetChangedBtn'))renderSupplies();
+ showSavedToast();
+ return true;
+}
+
 function consumeSupplyOnGlucose(meter){
   const key = meter==='ketoMojo'?'ketoGlucoseStrips':meter==='petTest'?'petTestStrips':'strips';
   changeSupplyStock(key, (supplies[key].stock||0)-1, '血糖測量');
@@ -6766,7 +6809,7 @@ function consumeSupplyOnGlucose(meter){
   saveSupplies();
   if(supplies.lancets.testsSinceChange >= supplies.lancets.changeThreshold){
     setTimeout(()=>{
-      alert(`已經測了 ${supplies.lancets.testsSinceChange} 次血糖，該換採血針囉！可以到「耗材庫存」按「已更換」重新計算。`);
+      alert(`已經測了 ${supplies.lancets.testsSinceChange} 次血糖，該換採血針囉！換針後可直接在血糖畫面或首頁提醒按「已更換採血針」。`);
     }, 300);
   }
 }
@@ -7064,13 +7107,7 @@ function renderSupplies(){
     });
   });
   const lancetChangedBtn=document.getElementById('lancetChangedBtn');
-  if(lancetChangedBtn)lancetChangedBtn.addEventListener('click', ()=>{
-    changeSupplyStock('lancets',(supplies.lancets.stock||0)-1,'更換採血針');
-    supplies.lancets.testsSinceChange = 0;
-    supplies.lancets.lastChangedAt = Date.now();
-    saveSupplies();
-    renderSupplies();
-  });
+  if(lancetChangedBtn)lancetChangedBtn.addEventListener('click',recordLancetReplacement);
   const lancetThresholdInput=document.getElementById('lancetThresholdInput');
   if(lancetThresholdInput)lancetThresholdInput.addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
