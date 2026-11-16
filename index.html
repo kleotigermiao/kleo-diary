@@ -1315,9 +1315,14 @@ function buildStrip(glucoseEntries){
   svg += `</svg>`;
   const lastVal = sorted[sorted.length-1];
   return `<div class="strip"><div class="seg" style="flex:1;min-width:${w}px">${svg}</div></div>
-    <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L</div>`;
+    <div class="strip-label">${sorted.length} 次量測 · 最後 ${lastVal.time} → ${lastVal.value} mmol/L${glucoseMgDisplay(lastVal.value)}</div>`;
 }
 
+// Display conversion only; stored readings and analysis remain in mmol/L.
+function glucoseMgDisplay(value){
+  if(value==null||String(value).trim()===''||!Number.isFinite(Number(value))||Number(value)<0)return '';
+  return `（${Math.round(Number(value)*18)} mg/dL）`;
+}
 const ICONS = {glucose:'🩸',insulin:'💉',vomit:'🤮',stool:'💩',urine:'🚽',water:'💧',med:'💊',food:'🍽️',weight:'⚖️',respRate:'🫁',bloodKetone:'🧬',urinalysis:'🧪',mood:'😺',appetite:'🍖',noteEntries:'📝'};
 const TREND_ARROWS = {up_fast:'⬆️', up:'↗️', stable:'➡️', down:'↘️', down_fast:'⬇️'};
 const CAT_LABELS = {glucose:'血糖',insulin:'胰島素',vomit:'嘔吐',stool:'排便',urine:'排尿',water:'飲水',med:'用藥',food:'飲食',weight:'體重',respRate:'呼吸率',bloodKetone:'血酮（Keto-Mojo）',urinalysis:'尿酮尿糖',mood:'精神',appetite:'食慾',noteEntries:'備註'};
@@ -1368,7 +1373,7 @@ function renderGenericStatusValue(cat, day){
     const lvl = glucoseLevel(latest.value);
     const trendArrow = TREND_ARROWS[latest.trend] || '';
     const suffix = entries.length>1 ? `（共${entries.length}筆）` : '';
-    return {hasData:true, html:`<span class="tag ${lvl}">${latest.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${suffix}`};
+    return {hasData:true, html:`<span class="tag ${lvl}">${latest.value} mmol/L${glucoseMgDisplay(latest.value)}${trendArrow ? ' '+trendArrow : ''}</span>${suffix}`};
   }
   if(cat==='insulin'){
     const entries = day.insulin || [];
@@ -1801,8 +1806,8 @@ function renderRowHtml(dateStr, cat, e, idx){
     const detail = e.note ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(e.note)})</span>` : '';
     const meterName = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : 'AlphaTrak');
     const meterHtml = ` <span style="font-size:10px;color:var(--ink-soft);border:1px solid var(--line);border-radius:4px;padding:1px 4px;">${escapeHtml(meterName)}</span>`;
-    const secondaryHtml = e.secondaryValue!=null ? ` <span style="font-size:12px;color:var(--ink-soft);">${escapeHtml(e.secondaryMeterLabel||'Libre')} ${e.secondaryValue} mmol/L</span>` : '';
-    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${trendArrow ? ' '+trendArrow : ''}</span>${meterHtml}${secondaryHtml}${hoursHtml}${deltaHtml}${detail}`;
+    const secondaryHtml = e.secondaryValue!=null ? ` <span style="font-size:12px;color:var(--ink-soft);">${escapeHtml(e.secondaryMeterLabel||'Libre')} ${e.secondaryValue} mmol/L${glucoseMgDisplay(e.secondaryValue)}</span>` : '';
+    valHtml = `<span class="tag ${glucoseLevel(e.value)}">${e.value} mmol/L${glucoseMgDisplay(e.value)}${trendArrow ? ' '+trendArrow : ''}</span>${meterHtml}${secondaryHtml}${hoursHtml}${deltaHtml}${detail}`;
   } else if(cat==='mood' || cat==='appetite'){
     const level = MOOD_LEVELS.find(l=>l.v===e.value);
     valHtml = level ? `<span class="tag normal">${level.emoji} ${level.label}</span>` : '';
@@ -1822,6 +1827,8 @@ function renderRowHtml(dateStr, cat, e, idx){
     const extra = [];
     if(e.site) extra.push(e.site);
     if(e.needle) extra.push(e.needle);
+    if(Array.isArray(e.drawTags)&&e.drawTags.length) extra.push('抽取：'+e.drawTags.join('、'));
+    if(Array.isArray(e.injectionTags)&&e.injectionTags.length) extra.push('注射：'+e.injectionTags.join('、'));
     if(e.note) extra.push(e.note);
     const detail = extra.length ? ` <span style="color:var(--ink-soft);font-weight:400;">(${escapeHtml(extra.join(' · '))})</span>` : '';
     valHtml = `<span class="tag insulin-dose">${e.dose}</span>${detail}`;
@@ -3189,11 +3196,14 @@ function openSheetForEdit(dateStr, cat, idx){
     document.querySelectorAll('#doseTagGrid .option-btn').forEach(b=>{
       b.classList.toggle('active', b.dataset.val===entry.dose);
     });
+    [['insulinDrawTags',entry.drawTags],['insulinInjectionTags',entry.injectionTags]].forEach(([id,tags])=>{
+      document.querySelectorAll('#'+id+' input').forEach(el=>{el.checked=Array.isArray(tags)&&tags.includes(el.value);});
+    });
     const insulinDetailEl = document.getElementById('fDetail');
     if(insulinDetailEl) insulinDetailEl.value = entry.note || '';
     if(entry.site){
       document.getElementById('fSite').value = entry.site;
-      if(/^[A-F][1-6]$/.test(entry.site)){
+      if(isInjectionSite(entry.site)){
         const gridEl = document.getElementById('siteGridPicker');
         if(gridEl){ gridEl.innerHTML = buildSiteGridHtml(entry.site); wireSiteGridPicker(); }
       }
@@ -3550,13 +3560,22 @@ function showTagManageModal(currentName, onRename, onDelete, onMove){
     close();
   });
 }
+const SCAPULA_SITES = ['肩胛骨1','肩胛骨2','肩胛骨3'];
+function isInjectionSite(site){ return /^[A-F][1-6]$/.test(site)||SCAPULA_SITES.includes(site); }
+function insulinOperationFields(){
+  const read=id=>Array.from(document.querySelectorAll('#'+id+' input:checked'),el=>el.value);
+  return {drawTags:read('insulinDrawTags'),injectionTags:read('insulinInjectionTags')};
+}
+function insulinOperationHtml(id,tags){
+  return `<div class="option-grid" id="${id}">${tags.map(tag=>`<label style="display:flex;align-items:center;gap:6px;margin:0;padding:8px;"><input type="checkbox" value="${tag}" style="width:auto;">${tag}</label>`).join('')}</div>`;
+}
 const INJECTION_GRID_ROWS = ['A','B','C','D','E','F'];
 const INJECTION_GRID_COLS = [1,2,3,4,5,6];
 function computeSiteUsageRecency(){
   const usage = {}; // site label -> {lastUsedDate, count}
   Object.keys(data).sort().forEach(dateStr=>{
     (data[dateStr].insulin||[]).forEach(e=>{
-      if(e.site && /^[A-F][1-6]$/.test(e.site)){
+      if(e.site && isInjectionSite(e.site)){
         const prev = usage[e.site];
         usage[e.site] = { lastUsedDate: dateStr, count: (prev?prev.count:0)+1 };
       }
@@ -3576,7 +3595,7 @@ function computeSiteReactionAverage(){
   const sums = {}; // site -> {total, count}
   Object.keys(data).forEach(dateStr=>{
     (data[dateStr].insulin||[]).forEach(e=>{
-      if(e.site && /^[A-F][1-6]$/.test(e.site) && e.reaction){
+      if(e.site && isInjectionSite(e.site) && e.reaction){
         if(!sums[e.site]) sums[e.site] = {total:0, count:0};
         sums[e.site].total += e.reaction;
         sums[e.site].count += 1;
@@ -3729,6 +3748,12 @@ function buildSiteGridHtml(selectedSite, showLabels){
         : `background:${color};`;
       html += `<button type="button" class="site-grid-cell${isSelected?' selected':''}${c===3?' site-grid-divider':''}" data-site="${label}" style="${cellStyle}" title="${title}">${cellText}</button>`;
     });
+  });
+  html += `<div style="grid-column:1 / -1;margin-top:8px;">肩胛骨</div>`;
+  SCAPULA_SITES.forEach((site,index)=>{
+    const info=usage[site], color=siteRecencyColor(info?.lastUsedDate,false);
+    const selected=selectedSite===site;
+    html += `<button type="button" class="site-grid-cell${selected?' selected':''}" data-site="${site}" style="grid-column:span 2;min-height:40px;${selected?`background:#fff;color:${color};border-color:${color};`:`background:${color};`}" title="${escapeHtml(buildSiteInfoText(site))}">${index+1}</button>`;
   });
   html += `</div>`;
   return html;
@@ -4129,6 +4154,11 @@ function setCategory(cat){
         <span><i style="background:#F59E0B;"></i>其他休息≥4天的位置</span>
         <span><i style="background:#B91C1C;"></i>0–3天內用過</span>
       </div>
+      <label style="margin-top:12px;">胰島素操作標籤（可複選）</label>
+      <label>抽取相關</label>
+      ${insulinOperationHtml('insulinDrawTags',['輕晃','無注回','彈針'])}
+      <label>注射相關</label>
+      ${insulinOperationHtml('insulinInjectionTags',['無殘留'])}
       <label>針管型號（可選）</label>
       <div class="option-grid" id="needleTagGrid">${renderTagButtons(needleTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -4784,7 +4814,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
       const reactionEl = document.getElementById('fReaction');
-      updated = {time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave};
+      updated = {time, dose: numRaw, ...insulinOperationFields(), note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave};
     } else if(cat==='water'){
       const baseEl = document.getElementById('fWaterBase');
       const remEl = document.getElementById('fRemaining');
@@ -4844,7 +4874,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const siteEl = document.getElementById('fSite');
       const needleEl = document.getElementById('fNeedle');
       const reactionEl = document.getElementById('fReaction');
-      data[dateStr].insulin.push({time, dose: numRaw, note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave});
+      data[dateStr].insulin.push({time, dose: numRaw, ...insulinOperationFields(), note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave});
       consumeSupplyOnInsulin(numRaw);
     } else if(currentCat==='water'){
       const baseEl = document.getElementById('fWaterBase');
@@ -5052,7 +5082,7 @@ function buildGlucoseChart(allEntries, allInsulin){
   const skippedNote = skippedEntries.length>0 ? `<div class="no-data-msg">
       <p>另有 ${skippedEntries.length} 筆記錄因時間格式無法辨識，未顯示在圖表中，但仍計入上方統計數字：</p>
       <ul style="margin:4px 0 0 18px;padding:0;">
-        ${skippedEntries.map(e=>`<li>${e.date} 「${e.time}」 → ${e.value} mmol/L</li>`).join('')}
+        ${skippedEntries.map(e=>`<li>${e.date} 「${e.time}」 → ${e.value} mmol/L${glucoseMgDisplay(e.value)}</li>`).join('')}
       </ul>
     </div>` : '';
   const tsMin = toTs(sorted[0]), tsMax = toTs(sorted[sorted.length-1]);
@@ -5130,7 +5160,7 @@ function buildGlucoseChart(allEntries, allInsulin){
     const x = xFor(toTs(e)), y = yFor(e.value);
     const d = new Date(toTs(e));
     const dateLabel = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} ${escapeHtml(e.meterLabel||'AlphaTrak')} → ${e.value} mmol/L${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}</title></circle>`;
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${colors[glucoseLevel(e.value)]}" stroke="#F8FAF7" stroke-width="1.2"><title>${dateLabel} ${escapeHtml(e.meterLabel||'AlphaTrak')} → ${e.value} mmol/L${glucoseMgDisplay(e.value)}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}</title></circle>`;
   });
 
   svg += `</svg>`;
@@ -5281,7 +5311,7 @@ function reportCellLines(day, catKey, dateStr){
       const hoursHtml = hoursSince!=null ? ` (+${hoursSince.toFixed(1)}h)` : '';
       const name = e.meterLabel || (e.meter==='petTest' ? 'PetTest' : e.meter==='libre' ? 'Libre' : 'AlphaTrak');
       const second = e._readingSource==='primary' && e.secondaryValue!=null && selectedMeterFilter==='all' ? '' : '';
-      return `${e.time} → ${name} ${e.value}${second}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${hoursHtml}`;
+      return `${e.time} → ${name} ${e.value} mmol/L${glucoseMgDisplay(e.value)}${second}${TREND_ARROWS[e.trend] ? ' '+TREND_ARROWS[e.trend] : ''}${hoursHtml}`;
     });
   }
   if(catKey==='weight') return entries.map(e=>`${e.time} → ${e.value}kg`);
