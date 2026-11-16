@@ -3753,7 +3753,7 @@ function buildSiteGridHtml(selectedSite, showLabels){
   SCAPULA_SITES.forEach((site,index)=>{
     const info=usage[site], color=siteRecencyColor(info?.lastUsedDate,false);
     const selected=selectedSite===site;
-    html += `<button type="button" class="site-grid-cell${selected?' selected':''}" data-site="${site}" style="grid-column:span 2;min-height:40px;${selected?`background:#fff;color:${color};border-color:${color};`:`background:${color};`}" title="${escapeHtml(buildSiteInfoText(site))}">${index+1}</button>`;
+    html += `<button type="button" class="site-grid-cell${selected?' selected':''}" data-site="${site}" style="grid-column:${2+index*2} / span 2;width:100%;aspect-ratio:1;min-height:0;transform:none;${selected?`background:#fff;color:${color};border-color:${color};`:`background:${color};`}" title="${escapeHtml(buildSiteInfoText(site))}">${index+1}</button>`;
   });
   html += `</div>`;
   return html;
