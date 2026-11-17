@@ -4158,7 +4158,7 @@ function setCategory(cat){
       <label>抽取相關</label>
       ${insulinOperationHtml('insulinDrawTags',['輕晃','無注回','彈針'])}
       <label>注射相關</label>
-      ${insulinOperationHtml('insulinInjectionTags',['無殘留'])}
+      ${insulinOperationHtml('insulinInjectionTags',['無殘留','有殘留','有血'])}
       <label>針管型號（可選）</label>
       <div class="option-grid" id="needleTagGrid">${renderTagButtons(needleTags)}</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
@@ -4177,6 +4177,14 @@ function setCategory(cat){
       <input type="hidden" id="fSite">
       <input type="hidden" id="fNeedle">
     `;
+    document.querySelectorAll('#insulinInjectionTags input').forEach(input=>{
+      input.addEventListener('change',()=>{
+        if(!input.checked||!['無殘留','有殘留'].includes(input.value))return;
+        document.querySelectorAll('#insulinInjectionTags input').forEach(other=>{
+          if(other!==input&&['無殘留','有殘留'].includes(other.value))other.checked=false;
+        });
+      });
+    });
     wireTagGroup('doseTagGrid','fVal', doseTags, INSULIN_DOSE_KEY);
     wireTagGroup('needleTagGrid','fNeedle', needleTags, INSULIN_NEEDLE_KEY);
     wireAddTag('newDoseInput','addDoseBtn','doseTagGrid', doseTags, INSULIN_DOSE_KEY, 'fVal');
