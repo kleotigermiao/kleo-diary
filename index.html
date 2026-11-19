@@ -3182,14 +3182,14 @@ function openSheetForEdit(dateStr, cat, idx){
     const remEl = document.getElementById('fRemaining');
     if(entry.base!=null && entry.remaining!=null){
       baseEl.value = entry.base;
-      remEl.value = entry.remaining;
+      remEl.value = Math.round((entry.remaining + WATER_BOWL_WEIGHT)*100)/100;
     } else {
       remEl.value = '';
     }
     valEl.value = entry.base!=null&&entry.remaining!=null?Math.round((entry.base-entry.remaining)*100)/100:waterBowlMeasuredAmount(entry);
     document.getElementById('waterResultDisplay').textContent =
       (entry.base!=null && entry.remaining!=null)
-        ? `本次飲水量：${entry.base} - ${entry.remaining} = ${valEl.value} ml`
+        ? `本次飲水量：${Math.round((entry.base + WATER_BOWL_WEIGHT)*100)/100} − ${remEl.value} = ${valEl.value} ml`
         : `本次飲水量：${valEl.value} ml`;
   } else if(cat==='insulin'){
     valEl.value = entry.dose || '';
@@ -3424,6 +3424,7 @@ document.getElementById('catGrid').addEventListener('click', (e)=>{
   setCategory(btn.dataset.cat);
 });
 
+const WATER_BOWL_WEIGHT = 294;
 const WATER_BASE_KEY = 'kleo-water-base-v1';
 function loadWaterBase(){
   try{
@@ -3433,7 +3434,6 @@ function loadWaterBase(){
 }
 function saveWaterBase(v){
   try{ localStorage.setItem(WATER_BASE_KEY, String(v)); }catch(e){}
-  markLocalChangeAndSync();
 }
 
 function loadTagsGeneric(key, defaults){
@@ -3930,30 +3930,36 @@ function wireMedTagButtons(){
   });
 }
 
+function readWaterWeights(){
+  const baseRaw = document.getElementById('fWaterBase').value.trim();
+  const grossRaw = document.getElementById('fRemaining').value.trim();
+  if(!baseRaw || !grossRaw) return null;
+  const base = Number(baseRaw);
+  const gross = Number(grossRaw);
+  const remaining = Math.round((gross - WATER_BOWL_WEIGHT)*100)/100;
+  if(!Number.isFinite(base) || !Number.isFinite(gross) || base<0 ||
+     gross<WATER_BOWL_WEIGHT || gross>WATER_BOWL_WEIGHT+base) return null;
+  return {base, remaining, ml:Math.round((base-remaining)*100)/100};
+}
+
 function wireWaterInputs(){
   const baseEl = document.getElementById('fWaterBase');
   const remEl = document.getElementById('fRemaining');
   const valEl = document.getElementById('fVal');
   const displayEl = document.getElementById('waterResultDisplay');
   function recompute(){
-    const base = parseFloat(baseEl.value);
-    const rem = parseFloat(remEl.value);
-    if(Number.isFinite(base) && Number.isFinite(rem)){
-      if(base<0||rem<0||rem>base){
-        valEl.value='';displayEl.textContent='請確認：起始水量須大於或等於剩餘水量。';return;
-      }
-      const consumed = Math.round((base-rem)*100)/100;
-      valEl.value = consumed;
-      displayEl.textContent = `本次飲水量：${base} - ${rem} = ${consumed} ml`;
+    const weights = readWaterWeights();
+    valEl.value = weights?.ml ?? '';
+    if(weights){
+      const start = Math.round((WATER_BOWL_WEIGHT+weights.base)*100)/100;
+      displayEl.textContent = `本次飲水量：${start} − ${remEl.value.trim()} = ${weights.ml} ml`;
     } else {
-      valEl.value = '';
-      displayEl.textContent = '本次飲水量：— ml';
+      displayEl.textContent = remEl.value.trim()
+        ? '請確認秤重介於空碗與加水後的總重。'
+        : '本次飲水量：— ml';
     }
   }
-  baseEl.addEventListener('input', ()=>{
-    saveWaterBase(baseEl.value);
-    recompute();
-  });
+  baseEl.addEventListener('input', recompute);
   remEl.addEventListener('input', recompute);
 }
 
@@ -4220,10 +4226,11 @@ function setCategory(cat){
         <button type="button" class="option-btn water-period-btn${defaultPeriod==='lateevening'?' active':''}" data-period="lateevening">${periodLabels.lateevening}</button>
         <button type="button" class="option-btn water-period-btn${defaultPeriod==='midnight'?' active':''}" data-period="midnight">${periodLabels.midnight}</button>
       </div>
-      <label>固定水量 (ml)</label>
-      <input type="text" inputmode="numeric" id="fWaterBase" value="${currentBase}">
-      <label>剩餘水量 (ml)</label>
-      <input type="text" inputmode="numeric" id="fRemaining" placeholder="例如 50">
+      <label>起始加水量（g）</label>
+      <input type="text" inputmode="decimal" id="fWaterBase" value="${currentBase}">
+      <label>水碗＋剩水總重（g）</label>
+      <input type="text" inputmode="decimal" id="fRemaining" placeholder="例如 500">
+      <p style="font-size:12px;color:var(--ink-soft)">空碗 ${WATER_BOWL_WEIGHT} g。請直接輸入秤上顯示的總重。</p>
       <input type="hidden" id="fVal">
       <input type="hidden" id="fWaterPeriod" value="${isNewEntry ? defaultPeriod : ((editContext && data[editContext.date] && data[editContext.date].water && data[editContext.date].water[editContext.idx] && data[editContext.date].water[editContext.idx].period) || '')}">
       <div id="waterResultDisplay" style="margin-top:10px;padding:9px 11px;background:#00000005;border-radius:6px;font-size:13px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;">本次飲水量：— ml</div>
@@ -4763,14 +4770,8 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const isDayNoteEdit = editContext && editContext.isDayNote;
   if(!rawVal && !isDayNoteEdit && (editContext ? editContext.cat : currentCat)!=='glucose'){ valEl && valEl.focus(); return; }
   const effectiveCat = editContext ? editContext.cat : currentCat;
-  if(effectiveCat==='water'){
-    const baseRaw=document.getElementById('fWaterBase').value.trim(),remRaw=document.getElementById('fRemaining').value.trim();
-    if(baseRaw!==''&&remRaw!==''){
-      const base=Number(baseRaw),rem=Number(remRaw);
-      if(!Number.isFinite(base)||!Number.isFinite(rem)||base<0||rem<0||rem>base){alert('請確認起始與剩餘水量。');return;}
-      rawVal=String(Math.round((base-rem)*100)/100);
-    }
-  }
+  const waterWeights = effectiveCat==='water' ? readWaterWeights() : null;
+  if(effectiveCat==='water' && waterWeights) rawVal = String(waterWeights.ml);
   // Enforce the lock at the write layer as well as the UI. This also blocks
   // moving an existing record into a locked date.
   if(isDayLocked(dateStr)){ lockedDayWarning(dateStr); return; }
@@ -4824,11 +4825,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       const reactionEl = document.getElementById('fReaction');
       updated = {time, dose: numRaw, ...insulinOperationFields(), note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave};
     } else if(cat==='water'){
-      const baseEl = document.getElementById('fWaterBase');
-      const remEl = document.getElementById('fRemaining');
       const periodEl = document.getElementById('fWaterPeriod');
       const origEntryWater = (data[oldDate] && data[oldDate].water && data[oldDate].water[idx]) || null;
-      updated = {time, ml: parseFloat(rawVal), transferred:0, base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || (origEntryWater && origEntryWater.period) || undefined};
+      updated = {time, ml: parseFloat(rawVal), transferred:0, base: waterWeights?.base, remaining: waterWeights?.remaining, period: (periodEl && periodEl.value) || (origEntryWater && origEntryWater.period) || undefined};
     } else {
       updated = {time, note: rawVal, photos: photosToSave};
     }
@@ -4885,10 +4884,9 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
       data[dateStr].insulin.push({time, dose: numRaw, ...insulinOperationFields(), note: detailRaw || undefined, site: siteEl?siteEl.value||undefined:undefined, needle: needleEl?needleEl.value||undefined:undefined, reaction: reactionEl && reactionEl.value ? parseFloat(reactionEl.value) : undefined, photos: photosToSave});
       consumeSupplyOnInsulin(numRaw);
     } else if(currentCat==='water'){
-      const baseEl = document.getElementById('fWaterBase');
-      const remEl = document.getElementById('fRemaining');
       const periodEl = document.getElementById('fWaterPeriod');
-      data[dateStr].water.push({time, ml: parseFloat(rawVal), transferred:0, base: baseEl?parseFloat(baseEl.value):undefined, remaining: remEl?parseFloat(remEl.value):undefined, period: (periodEl && periodEl.value) || undefined});
+      if(waterWeights) saveWaterBase(waterWeights.base);
+      data[dateStr].water.push({time, ml: parseFloat(rawVal), transferred:0, base: waterWeights?.base, remaining: waterWeights?.remaining, period: (periodEl && periodEl.value) || undefined});
     } else if(currentCat==='note'){
       const wantTimestamp = document.getElementById('fNoteTimestamp') ? document.getElementById('fNoteTimestamp').checked : false;
       if(!data[dateStr].noteEntries) data[dateStr].noteEntries = [];
