@@ -6182,9 +6182,10 @@ function hydrationDay(date,settings=loadHydrationSettings()){
  return {date,direct,canned,dry,added,total,missing:[...missing],kg,low,high,hasData,complete,status};
 }
 
-function hydrationRollingWindow(days,anchor=todayStr()){
+function hydrationRollingWindow(days,anchor=todayStr(),offsetDays=0){
  const settings=loadHydrationSettings(),rows=[];
  const day=new Date(anchor+'T12:00:00');
+ day.setDate(day.getDate()-offsetDays);
  for(let i=0;i<days;i++){
   day.setDate(day.getDate()-1);
   const date=day.getFullYear()+'-'+String(day.getMonth()+1).padStart(2,'0')+'-'+String(day.getDate()).padStart(2,'0');
@@ -6196,6 +6197,13 @@ function hydrationRollingWindow(days,anchor=todayStr()){
  const lower=ready?rows.reduce((sum,r)=>sum+r.low,0)/days:null;
  return {days,ready,count:valid.length,average,lower,low:ready&&average<lower};
 }
+function hydrationTrendText(recent,previous){
+ if(!recent.ready||!previous.ready)return '趨勢待累積（需連續 14 天完整資料）';
+ const change=Math.round((recent.average-previous.average)*10)/10;
+ const direction=change>=5?'⬆️ 上升':change<=-5?'⬇️ 下降':'➡️ 持平';
+ const difference=(change>0?'+':change<0?'−':'')+Math.abs(change).toFixed(1);
+ return `${direction} ${difference} ml／日（近 7 日比前 7 日）`;
+}
 function hydrationRoutineSummaryHtml(){
  const today=hydrationDay(todayStr()),week=hydrationRollingWindow(7),fortnight=hydrationRollingWindow(14);
  const line=r=>r.ready?`${r.days} 日平均 ${r.average.toFixed(1)} ml／日（參考下限 ${r.lower.toFixed(0)} ml／日）`:`${r.days} 日平均：完整資料 ${r.count}／${r.days} 天，暫不判斷`;
@@ -6204,15 +6212,20 @@ function hydrationRoutineSummaryHtml(){
  <div>水碗減少量 ${today.direct.toFixed(1)}＋罐頭含水 ${today.canned.toFixed(1)}＋乾糧含水 ${today.dry.toFixed(1)} ml</div>
  ${today.missing.length?`<div style="font-size:12px;">缺少含水率：${escapeHtml(today.missing.join('、'))}，目前僅加總已知部分。</div>`:''}
  <div>${line(week)}</div><div>${line(fortnight)}</div>
+ <div>${hydrationTrendText(week,hydrationRollingWindow(7,todayStr(),7))}</div>
  <button type="button" class="sync-btn hydration-plan-settings">設定體重／食物含水率</button>
- <div style="font-size:11px;color:var(--ink-soft);">平均只看昨天起連續 7／14 日；每天需有飲水、飲食、含水率與體重資料。今天不判定不足。罐頭加水已含於水碗減少量，不另外加總。</div></div>`;
+ <div style="font-size:11px;color:var(--ink-soft);">平均只看昨天起連續 7／14 日；每天需有飲水、飲食、含水率與體重資料。每日日均差距小於 5 ml 視為持平。今天不判定不足。罐頭加水已含於水碗減少量，不另外加總。</div></div>`;
 }
 function hydrationHomeReminderHtml(){
  const week=hydrationRollingWindow(7),fortnight=hydrationRollingWindow(14);
  const urgent=week.low&&fortnight.low;
- if(!week.low)return '';
+ const trend=hydrationTrendText(week,hydrationRollingWindow(7,todayStr(),7));
+ if(!week.low){
+  if(!fortnight.ready)return '';
+  return `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:8px 9px;margin:3px 0;font:inherit;font-size:12.5px;line-height:1.6;cursor:pointer;background:var(--card);color:var(--ink);">💧 總攝水量：近 7 日平均 ${week.average.toFixed(1)} ml／日<br>${trend} ›</button>`;
+ }
  const row=urgent?fortnight:week;
- return `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:8px 9px;margin:3px 0;font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;cursor:pointer;background:${urgent?'#FCE4EC':'#FFF0BD'};color:${urgent?'#A62936':'#805600'};">${urgent?'🔴':'🟡'} 總攝水量：最近 ${row.days} 個完整日平均 ${row.average.toFixed(1)} ml／日，低於參考下限 ${row.lower.toFixed(0)} ml／日，${urgent?'持續偏低，請留意':'請留意近期攝水'} ›</button>`;
+ return `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:8px 9px;margin:3px 0;font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;cursor:pointer;background:${urgent?'#FCE4EC':'#FFF0BD'};color:${urgent?'#A62936':'#805600'};">${urgent?'🔴':'🟡'} 總攝水量：最近 ${row.days} 個完整日平均 ${row.average.toFixed(1)} ml／日，低於參考下限 ${row.lower.toFixed(0)} ml／日，${urgent?'持續偏低，請留意':'請留意近期攝水'}<br>${trend} ›</button>`;
 }
 
 function hydrationSummaryHtml(dates){
