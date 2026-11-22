@@ -6728,7 +6728,7 @@ function changeSupplyStock(key, newStock, reason){
   const item=supplyItem(key);
   const before = Math.max(0, Number(item.stock)||0);
   const after = Math.max(0, Math.round(Number(newStock)||0));
-  if(before===after && reason==='使用') return;
+  if(before===after && reason!=='盤點修正') return;
   const stamp = Date.now();
   item.stock = after;
   item.lastModifiedAt = stamp;
@@ -6768,11 +6768,16 @@ function mergeSupplyStates(local, remote){
     const left=a[key],right=b[key];
     const lt=Number(left.lastModifiedAt)||0, rt=Number(right.lastModifiedAt)||0;
     const lv=Math.max(0,Number(left.stock)||0),rv=Math.max(0,Number(right.stock)||0);
-    const picked=lt>rt?left:rt>lt?right:lv>=rv?left:right;
+    let picked=lt>rt?left:rt>lt?right:lv>=rv?left:right;
+    const pickedAt=Number(picked.lastModifiedAt)||0;
+    const zeroConfirmed=pickedAt>0 && (merged.stockConfirmedAt[key]===pickedAt ||
+      merged.stockAudit.some(e=>e.key===key&&Number(e.at)===pickedAt&&Number(e.after)===0&&Number(e.before)>0));
+    const unconfirmedZero=lv!==rv && Number(picked.stock)===0 && !zeroConfirmed;
+    if(unconfirmedZero) picked=lv>0?left:right;
     merged[key]={...picked};
-    if(lv===rv) merged.stockReview[key]=false;
-    // A newer item timestamp resolves a stale count. Flag only ambiguous ties.
-    merged.stockReview[key] = lv!==rv && lt===rt && (lt===0 || merged.stockConfirmedAt[key]<lt);
+    merged.stockReview[key] = unconfirmedZero ||
+      (lv!==rv && lt===rt && (lt===0 || merged.stockConfirmedAt[key]<lt)) ||
+      (lv===rv && !!(a.stockReview[key]||b.stockReview[key]) && merged.stockConfirmedAt[key]<Math.max(lt,rt));
   });
   const lc=Number(a.lancets.lastChangedAt)||0, rc=Number(b.lancets.lastChangedAt)||0;
   merged.lancets.testsSinceChange = lc>rc ? a.lancets.testsSinceChange : rc>lc ? b.lancets.testsSinceChange : Math.max(a.lancets.testsSinceChange,b.lancets.testsSinceChange);
@@ -6994,6 +6999,9 @@ function renderSupplies(){
     const meta=supplyMeta(key);
     const warn = daysLeft!=null && daysLeft <= (WARN_THRESHOLD[key]??meta.threshold);
     const review = !!(supplies.stockReview && supplies.stockReview[key]);
+    const lastStockChange=[...(supplies.stockAudit||[])].reverse().find(e=>e.key===key&&
+      (e.reason==='盤點修正'||Number(e.before)!==Number(e.after)));
+    const priorStock=lastStockChange&&Number(lastStockChange.after);
     return `<div class="supply-card${warn||review?' warn':''}">
       <div class="supply-title">${icon} ${escapeHtml(label)}</div>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;margin:6px 0;">
@@ -7004,6 +7012,7 @@ function renderSupplies(){
       ${key.startsWith('custom_')?`<div class="supply-days">提醒門檻：<input type="number" min="0" class="supply-threshold-input" data-key="${key}" value="${meta.threshold}" style="width:75px;"> ${escapeHtml(meta.unit)}</div>`:''}
       <div class="supply-days">平均每天使用 <b>${dailyRate>0?dailyRate.toFixed(2):'—'}</b> ${SUPPLY_META[key].unit}${dailyRate>0?'（近30天有紀錄日平均）':''}</div>
       ${review?'<div class="supply-days warn-text">⚠️ 同步庫存不一致，請盤點後按「修正為」確認</div>':''}
+      ${Number(s.stock)===0&&priorStock>0?`<div class="supply-days warn-text">上次庫存異動後為 ${priorStock} ${escapeHtml(meta.unit)}，請盤點後按「修正為」確認。</div>`:''}
       ${daysLeft!=null ? `<div class="supply-days">照最近用量，估計還能用 <b>${daysLeft}</b> 天${warn?'　⚠️建議補貨':''}</div>` : `<div class="supply-days" style="color:var(--ink-soft);">用量資料還不夠，暫時無法估算</div>`}
       ${sixMonthBuyHtml(key, dailyRate)}
       <div style="display:flex;gap:8px;margin-top:10px;">
@@ -9763,6 +9772,17 @@ function pushToDrive(immediate){
   clearTimeout(drivePushTimer);
   const doPush = async ()=>{
     try{
+      // A reminder change can trigger a full sync from a device with stale stock.
+      // Reconcile inventory against Drive's current copy before sending the envelope.
+      const current = await driveApiFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
+      if(!current.ok) throw new Error(`讀取雲端庫存失敗（HTTP ${current.status}）`);
+      const currentEnvelope = await current.json();
+      if(!currentEnvelope?._meta || !currentEnvelope.diary) throw new Error('雲端同步檔內容無法辨識');
+      if(currentEnvelope.supplies && JSON.stringify(currentEnvelope.supplies)!==JSON.stringify(supplies)){
+        supplies=mergeSupplyStates(supplies,currentEnvelope.supplies);
+        localStorage.setItem(SUPPLIES_KEY,JSON.stringify(supplies));
+        if(document.querySelector('.supply-remind-toggle'))renderSupplies();
+      }
       const envelope = buildSyncEnvelope();
       const lastModified = envelope._meta.lastModified;
       const res = await driveApiFetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media&fields=modifiedTime,size`, {
