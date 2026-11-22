@@ -2523,7 +2523,7 @@ function buildRemindersBanner(){
   const missingTodayLines = buildMissingTodayLines();
   const stockAlerts = supplyAlerts();
   const hydrationReminder=hydrationHomeReminderHtml();
-  const lancetDue=(Number(supplies.lancets.testsSinceChange)||0)>=(Number(supplies.lancets.changeThreshold)||5);
+  const lancetDue=(Number(supplies.lancets.testsSinceChange)||0)>=(Number(supplies.lancets.changeThreshold)||SUPPLIES_DEFAULTS.lancets.changeThreshold);
   const lancetReminder=lancetDue?`<div style="padding:5px 0;font-size:12.5px;color:#A62936;">🔴 採血針已測 ${Number(supplies.lancets.testsSinceChange)||0} 次，該換針了 <button type="button" class="tag-add-btn" id="homeLancetChangedBtn" style="min-height:44px;margin-left:6px;">✅ 已更換採血針</button></div>`:'';
 
   const feederStatus = petbankStatus(loadFeedingPlan());
@@ -6655,7 +6655,7 @@ const SUPPLIES_DEFAULTS = {
   petTestStrips: {stock: 0}, // PetTest glucose meter test strips — separate meter, not compatible with AlphaTrak strips
   urinalysisStrips: {stock: 0}, // ketone/glucose reagent strips for urinalysis
   needles: {stock: 0},
-  lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 5, lastChangedAt: null},
+  lancets: {stock: 0, testsSinceChange: 0, changeThreshold: 10, changeThresholdUpdatedAt: 0, lastChangedAt: null},
   countSkipAsNeedleUse: true,
   sensor: {activatedAt: null, durationDays: 14, lastModifiedAt: null}, // Libre-style sensor: activatedAt is a date string 'YYYY-MM-DD'
   insulinVial: {openedAt: null, durationDays: 28, lastModifiedAt: null} // insulin vial/pen: openedAt is when this vial was started
@@ -6686,6 +6686,12 @@ function normalizeSupplies(parsed){
     customItems: Object.assign({}, parsed.customItems||{}),
     itemSettings: Object.assign({}, parsed.itemSettings||{})
   });
+  const threshold=Number(normalized.lancets.changeThreshold);
+  const thresholdUpdatedAt=Number(normalized.lancets.changeThresholdUpdatedAt)||0;
+  // An untimestamped five may be the old default written back by another device.
+  normalized.lancets.changeThreshold=Number.isInteger(threshold)&&threshold>0&&(threshold!==5||thresholdUpdatedAt)
+    ?threshold:SUPPLIES_DEFAULTS.lancets.changeThreshold;
+  normalized.lancets.changeThresholdUpdatedAt=thresholdUpdatedAt;
   normalized.sensor.activatedAt = repairDateTimeField(normalized.sensor.activatedAt);
   normalized.insulinVial.openedAt = repairDateTimeField(normalized.insulinVial.openedAt);
   return normalized;
@@ -6771,7 +6777,11 @@ function mergeSupplyStates(local, remote){
   const lc=Number(a.lancets.lastChangedAt)||0, rc=Number(b.lancets.lastChangedAt)||0;
   merged.lancets.testsSinceChange = lc>rc ? a.lancets.testsSinceChange : rc>lc ? b.lancets.testsSinceChange : Math.max(a.lancets.testsSinceChange,b.lancets.testsSinceChange);
   merged.lancets.lastChangedAt = Math.max(lc,rc)||null;
-  merged.lancets.changeThreshold = a.lancets.changeThreshold;
+  const leftThresholdAt=a.lancets.changeThresholdUpdatedAt, rightThresholdAt=b.lancets.changeThresholdUpdatedAt;
+  const preferRemoteThreshold=rightThresholdAt>leftThresholdAt ||
+    (!leftThresholdAt&&!rightThresholdAt&&a.lancets.changeThreshold===SUPPLIES_DEFAULTS.lancets.changeThreshold);
+  merged.lancets.changeThreshold=(preferRemoteThreshold?b:a).lancets.changeThreshold;
+  merged.lancets.changeThresholdUpdatedAt=Math.max(leftThresholdAt,rightThresholdAt);
   merged.countSkipAsNeedleUse = a.countSkipAsNeedleUse;
   ['sensor','insulinVial'].forEach(key=>{
     merged[key]=(Number(b[key].lastModifiedAt)||0)>(Number(a[key].lastModifiedAt)||0)?b[key]:a[key];
@@ -6820,7 +6830,7 @@ function reconcileGlucoseSupplyEdit(before,after){
 let lancetReplaceLastClick=0;
 function lancetQuickHtml(){
  const count=Number(supplies.lancets.testsSinceChange)||0;
- const limit=Number(supplies.lancets.changeThreshold)||5;
+ const limit=Number(supplies.lancets.changeThreshold)||SUPPLIES_DEFAULTS.lancets.changeThreshold;
  return `<div style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.6;">
  <span>採血針：已測 ${count}／${limit} 次${count>=limit?'，該換針了':''}</span>
  <button type="button" class="tag-add-btn" id="glucoseLancetChangedBtn" style="display:block;min-height:44px;margin-top:6px;">✅ 已更換採血針</button>
@@ -6926,7 +6936,7 @@ function estimateSupplyRates(){
   });
   const rates={};
   Object.keys(totals).forEach(k=>rates[k]=activeDays?totals[k]/activeDays:0);
-  rates.lancets=(rates.strips+rates.petTestStrips+rates.ketoGlucoseStrips)/Math.max(1,Number(supplies.lancets.changeThreshold)||5);
+  rates.lancets=(rates.strips+rates.petTestStrips+rates.ketoGlucoseStrips)/Math.max(1,Number(supplies.lancets.changeThreshold)||SUPPLIES_DEFAULTS.lancets.changeThreshold);
   return rates;
 }
 function supplyAlerts(){
@@ -7161,7 +7171,12 @@ function renderSupplies(){
   const lancetThresholdInput=document.getElementById('lancetThresholdInput');
   if(lancetThresholdInput)lancetThresholdInput.addEventListener('change', (e)=>{
     const n = parseInt(e.target.value);
-    if(n && n>0){ supplies.lancets.changeThreshold = n; saveSupplies(); renderSupplies(); }
+    if(n && n>0){
+      supplies.lancets.changeThreshold = n;
+      supplies.lancets.changeThresholdUpdatedAt = Date.now();
+      saveSupplies();
+      renderSupplies();
+    }
   });
   document.getElementById('countSkipToggle').addEventListener('change', (e)=>{
     supplies.countSkipAsNeedleUse = e.target.checked;
