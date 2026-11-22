@@ -2505,6 +2505,16 @@ function buildMissingTodayLines(){
   });
   return missing.map(m=>`<div class="reminder-line missing-today" data-date="${todayStrVal}" data-cat="${m.cat}">📝 今天還沒記錄<b>${escapeHtml(m.label)}</b></div>`);
 }
+function weightReminderHtml(date,now=Date.now()){
+  const cutoff=now-48*60*60*1000;
+  const hasRecentWeight=Object.keys(data).some(day=>day<=date&&(data[day].weight||[]).some(entry=>{
+    if(!Number.isFinite(Number(entry.value))||Number(entry.value)<=0)return false;
+    const time=/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(entry.time)?entry.time+':00':'23:59:59';
+    const measuredAt=Math.min(now,new Date(day+'T'+time).getTime());
+    return measuredAt>=cutoff;
+  }));
+  return hasRecentWeight?'':`<div class="reminder-line missing-today" data-date="${date}" data-cat="weight">⚖️ 近 48 小時未記錄體重，點此新增 ›</div>`;
+}
 function buildRemindersBanner(){
   const todayStrVal = todayStr();
   const allDates = Object.keys(calEvents).sort();
@@ -2523,6 +2533,7 @@ function buildRemindersBanner(){
   const missingTodayLines = buildMissingTodayLines();
   const stockAlerts = supplyAlerts();
   const hydrationReminder=hydrationHomeReminderHtml();
+  const weightReminder=weightReminderHtml(todayStrVal);
   const lancetDue=(Number(supplies.lancets.testsSinceChange)||0)>=(Number(supplies.lancets.changeThreshold)||SUPPLIES_DEFAULTS.lancets.changeThreshold);
   const lancetReminder=lancetDue?`<div style="padding:5px 0;font-size:12.5px;color:#A62936;">🔴 採血針已測 ${Number(supplies.lancets.testsSinceChange)||0} 次，該換針了 <button type="button" class="tag-add-btn" id="homeLancetChangedBtn" style="min-height:44px;margin-left:6px;">✅ 已更換採血針</button></div>`:'';
 
@@ -2530,11 +2541,12 @@ function buildRemindersBanner(){
   const feederReminder = feederStatus && (feederStatus.empty || feederStatus.warning)
     ? `<button type="button" class="edit-feeding-plan-link" style="display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:inherit;font-size:12.5px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;padding:3px 0;cursor:pointer;">🐟 小魚餵食器：${feederStatus.empty?'剩餘格數不足一餐，請補糧':`剩 ${feederStatus.remaining} 格（${Math.floor(feederStatus.remaining/2)} 餐），請準備補糧`} ›</button>`
     : '';
-  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder && !hydrationReminder && !lancetReminder) return '';
+  if(todayEvents.length===0 && upcoming.length===0 && overdue.length===0 && missingTodayLines.length===0 && stockAlerts.length===0 && !feederReminder && !hydrationReminder && !lancetReminder && !weightReminder) return '';
   const lines = [];
   if(feederReminder) lines.push(feederReminder);
   if(hydrationReminder)lines.push(hydrationReminder);
   if(lancetReminder)lines.push(lancetReminder);
+  if(weightReminder)lines.push(weightReminder);
   stockAlerts.forEach(msg=>lines.push(`<div class="reminder-line supply-reminder${msg.startsWith('🔴')?' supply-urgent':msg.startsWith('🟡')?' supply-prepare':''}">${escapeHtml(msg)}</div>`));
   missingTodayLines.forEach(l=> lines.push(l));
   todayEvents.forEach(ev=> lines.push(`<div class="reminder-line" data-date="${todayStrVal}">📌 <b>今天</b>：${escapeHtml(ev.text)}</div>`));
