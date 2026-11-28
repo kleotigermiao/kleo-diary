@@ -2662,6 +2662,8 @@ function openBatchLockDialog(){
 let renderedDaysLimit = 30; // how many of the most recent days are currently rendered
 function render(){
   const main = document.getElementById('main');
+  const openDayCurve = main.querySelector('#homeDayCurve')?.open;
+  const dayCurveMeter = main.querySelector('#homeDayCurveMeter')?.value;
   if(!data[todayStr()]){
     data[todayStr()] = {glucose:[],insulin:[],vomit:[],stool:[],urine:[],water:[],med:[],food:[],weight:[],respRate:[],bloodKetone:[],urinalysis:[],mood:[],appetite:[],noteEntries:[],notes:''};
   }
@@ -2672,7 +2674,11 @@ function render(){
   }
   const dates = allDates.slice(0, renderedDaysLimit);
   const hasMore = allDates.length > renderedDaysLimit;
-  main.innerHTML = buildRemindersBanner() + dates.map((dateStr, idx)=>{
+  main.innerHTML = buildRemindersBanner() + `<details id="homeDayCurve" ${openDayCurve?'open':''}
+    style="margin:10px 16px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper-raised);">
+    <summary style="cursor:pointer;min-height:44px;padding:12px 0;font-size:14px;font-weight:600;">📈 今日血糖曲線</summary>
+    <div id="homeDayCurveBody" style="padding-bottom:12px;"></div>
+  </details>` + dates.map((dateStr, idx)=>{
     const day = data[dateStr];
     const rowsHtml = renderDayRows(dateStr, day);
     const plannedMealsHtml = buildPlannedMealHtml(dateStr,day);
@@ -2710,6 +2716,14 @@ function render(){
       render();
     });
   }
+
+  const dayCurve = main.querySelector('#homeDayCurve');
+  const drawDayCurve = ()=>{
+    const body=dayCurve.querySelector('#homeDayCurveBody');
+    if(dayCurve.open && !body.hasChildNodes()) renderHomeDayCurve(body, data[todayStr()], dayCurveMeter);
+  };
+  dayCurve.addEventListener('toggle',drawDayCurve);
+  drawDayCurve();
 
   main.querySelector('#homePetbankRefilledBtn')?.addEventListener('click',()=>{
     const status=petbankStatus(loadFeedingPlan());
@@ -5459,11 +5473,31 @@ function wireColCheckDrag(grid){
 renderColCheckGrid();
 
 // ---- Weekly summary report ----
-function buildMiniDayChart(day){
-  const entries = filteredGlucoseReadings(day.glucose).filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
+function renderHomeDayCurve(body,day,previousMeter){
+  const readings=(day.glucose||[]).flatMap(glucoseReadings).filter(e=>
+    /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(e.time||'') &&
+    e.value!=null && e.value!=='' && Number.isFinite(Number(e.value)));
+  if(!readings.length){
+    body.innerHTML='<p class="no-data-msg">今天還沒有可繪製的血糖紀錄。</p>';
+    return;
+  }
+  const meters=new Map(readings.map(e=>[e.meterNameKey,e.meterLabel]));
+  const defaultMeter=meters.has(previousMeter)?previousMeter:meters.has('alphatrak')?'alphatrak':meters.keys().next().value;
+  body.innerHTML=`<label for="homeDayCurveMeter">血糖機 · mmol/L</label>
+    <select id="homeDayCurveMeter">${Array.from(meters,([key,label])=>`<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`).join('')}</select>
+    <div class="home-day-curve-plot"></div>`;
+  const meter=body.querySelector('select');
+  const plot=body.querySelector('.home-day-curve-plot');
+  const draw=()=>{plot.innerHTML=buildMiniDayChart(day, readings.filter(e=>e.meterNameKey===meter.value));};
+  meter.value=defaultMeter;
+  meter.addEventListener('change',draw);
+  draw();
+}
+function buildMiniDayChart(day,readings=filteredGlucoseReadings(day.glucose)){
+  const entries = readings.filter(e=>/^\d{1,2}:\d{2}$/.test(e.time||''));
   if(entries.length===0) return '<p class="no-data-msg" style="font-size:12px;margin:0;">沒有血糖記錄</p>';
-  const sorted = [...entries].sort((a,b)=>a.time.localeCompare(b.time));
   const toMinutes = t => { const [h,m]=t.split(':').map(Number); return h*60+m; };
+  const sorted = [...entries].sort((a,b)=>toMinutes(a.time)-toMinutes(b.time));
   const vals = sorted.map(e=>e.value);
   const yMin = Math.floor(Math.min(Math.min(...vals),4)/2)*2;
   const yMax = Math.ceil(Math.max(Math.max(...vals),20)/2)*2;
