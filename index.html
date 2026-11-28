@@ -2057,17 +2057,24 @@ function petbankStatus(plan,now=new Date(),state=loadPetbankState()){
   return {position,remaining,events,slotsUsed,refillAt,warning:remaining<=refillAt,
     empty:remaining<2,nextAt,meals:meals.length};
 }
+function refillPetbank(position,refillAt){
+  if(!confirm(`確定已補滿 15 格乾糧，而且目前轉盤在 ${position} 號？`))return false;
+  savePetbankState({anchorAt:new Date().toISOString(),anchorSlot:position,filledSlots:15,refillAt,lastCheck:null});
+  return true;
+}
 function petbankHomeHtml(plan){
   const st=petbankStatus(plan);
   if(!st)return '';
-  const state=loadPetbankState();
-  const text=st.empty?'⚠️ Petbank 已無足夠格數，請補糧並校正':
+  const text=st.empty?'⚠️ Petbank 已無足夠格數，請補糧':
     st.warning?`⚠️ Petbank 剩 ${st.remaining} 格（${Math.floor(st.remaining/2)} 餐），請準備補糧`:
     `🐟 目前位置 ${st.position} 號｜剩 ${st.remaining} 格`;
   const next=st.nextAt?`｜下次 ${st.nextAt.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
   return `<div style="margin:8px 16px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;line-height:1.6;box-sizing:border-box;">
     <strong>${text}</strong>${next}
-    <button type="button" class="edit-feeding-plan-link" style="display:block;border:0;background:none;text-decoration:underline;color:var(--ink-soft);padding:5px 0 0;font-size:12px;">核對轉盤／補糧</button>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:5px 0;">
+      <button type="button" class="tag-add-btn" id="homePetbankRefilledBtn" style="min-height:44px;">✓ 已補滿 15 格</button>
+      <button type="button" class="edit-feeding-plan-link" style="border:0;background:none;text-decoration:underline;color:var(--ink-soft);min-height:44px;font-size:12px;">核對轉盤／調整格數</button>
+    </div>
     <div style="font-size:10.5px;color:var(--ink-soft);">依排程推算，非實際落糧確認。</div>
   </div>`;
 }
@@ -2704,6 +2711,13 @@ function render(){
     });
   }
 
+  main.querySelector('#homePetbankRefilledBtn')?.addEventListener('click',()=>{
+    const status=petbankStatus(loadFeedingPlan());
+    if(status&&refillPetbank(status.position,status.refillAt)){
+      render();
+      showSavedToast();
+    }
+  });
   main.querySelector('#homeLancetChangedBtn')?.addEventListener('click',recordLancetReplacement);
   main.querySelectorAll('.reminder-line').forEach(line=>{
     line.addEventListener('click', ()=>{
@@ -8452,13 +8466,13 @@ function showFeedingPlanModal(){
         savePetbankState({...state,refillAt:threshold()});
         renderPetbankPanel();
       };
-      function calibrate(full){
-        const v=observed(),f=full?15:filled();
+      function calibrate(){
+        const v=observed(),f=filled();
         if(v===null||f===null){alert('請確認格號 1–16、剩餘格數 0–15。');return;}
         const next={anchorAt:new Date().toISOString(),anchorSlot:v,filledSlots:f,refillAt:threshold(),lastCheck:null};
         savePetbankState(next);renderPetbankPanel();window.render();
       }
-      panel.querySelector('#petbankCalibrateBtn').onclick=()=>calibrate(false);
+      panel.querySelector('#petbankCalibrateBtn').onclick=calibrate;
       panel.querySelector('#petbankSaveRemainingBtn').onclick=()=>{
         const f=filled();
         if(f===null){alert('請輸入 0–15 的整數格數。');return;}
@@ -8469,8 +8483,9 @@ function showFeedingPlanModal(){
         renderPetbankPanel();window.render();
       };
       panel.querySelector('#petbankRefilledBtn').onclick=()=>{
-        if(!confirm('確定已經補滿 15 格乾糧？這會將剩餘格數重置為 15。'))return;
-        calibrate(true);
+        const position=observed();
+        if(position===null){alert('請確認實際位置為 1–16 號。');return;}
+        if(refillPetbank(position,threshold())){renderPetbankPanel();window.render();}
       };
     }
     renderPetbankPanel();
